@@ -1,3 +1,4 @@
+from fastapi import HTTPException
 from sqlmodel import Session, select, delete, update
 import app.database as db
 from app.logger import logger
@@ -130,7 +131,17 @@ class DuplicateProcessor:
             return
         if rule is DuplicateHandlingRule.DELETE:
             logger.info("Auto-deleting duplicate file id=%s path=%s", media.id, media.path)
-            delete_file(session, media.id)
+            try:
+                delete_file(session, media.id)
+            except HTTPException as exc:
+                if exc.status_code == 403:
+                    logger.warning(
+                        "Skip deleting duplicate id=%s because path is read-only: %s",
+                        media.id,
+                        exc.detail,
+                    )
+                    return
+                raise
             return
 
     def _auto_resolve_media_items(

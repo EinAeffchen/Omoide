@@ -51,9 +51,7 @@ def list_missing_media(
             cursor_time = datetime.fromisoformat(cursor_time_str)
             cursor_id = int(cursor_id_str)
         except ValueError as exc:
-            raise HTTPException(
-                status_code=400, detail="Invalid cursor"
-            ) from exc
+            raise HTTPException(status_code=400, detail="Invalid cursor") from exc
 
         stmt = stmt.where(
             or_(
@@ -74,15 +72,11 @@ def list_missing_media(
             next_cursor = f"{last.missing_since.isoformat()}_{last.id}"
 
     total = (
-        session.exec(select(func.count(Media.id)).where(*conditions))
-        .scalars()
-        .first()
+        session.exec(select(func.count(Media.id)).where(*conditions)).scalars().first()
         or 0
     )
     try:
-        summary_rows = session.exec(
-            select(Media.path).where(*conditions)
-        ).all()
+        summary_rows = session.exec(select(Media.path).where(*conditions)).all()
         summary = build_summary((row[0] for row in summary_rows))
     except IndexError:
         summary = []
@@ -121,21 +115,17 @@ def confirm_missing(
     payload: MissingBulkActionRequest,
     session: Session = Depends(get_session),
 ):
-    if settings.general.read_only:
+    if settings.general.presentation_mode:
         raise HTTPException(
             status_code=403,
-            detail="Not allowed in read_only mode.",
+            detail="Not allowed in presentation_mode mode.",
         )
 
     target_ids = _resolve_target_ids(session, payload)
     if not target_ids:
         return MissingConfirmResponse(deleted=0)
 
-    medias = (
-        session.exec(select(Media).where(Media.id.in_(target_ids)))
-        .scalars()
-        .all()
-    )
+    medias = session.exec(select(Media).where(Media.id.in_(target_ids))).scalars().all()
     deleted = 0
     for media in medias:
         if media.missing_since is None and not media.missing_confirmed:
@@ -154,21 +144,17 @@ def reset_missing_flags(
     payload: MissingBulkActionRequest,
     session: Session = Depends(get_session),
 ):
-    if settings.general.read_only:
+    if settings.general.presentation_mode:
         raise HTTPException(
             status_code=403,
-            detail="Not allowed in read_only mode.",
+            detail="Not allowed in presentation_mode mode.",
         )
 
     target_ids = _resolve_target_ids(session, payload)
     if not target_ids:
         return MissingResetResponse(cleared=0)
 
-    medias = (
-        session.exec(select(Media).where(Media.id.in_(target_ids)))
-        .scalars()
-        .all()
-    )
+    medias = session.exec(select(Media).where(Media.id.in_(target_ids))).scalars().all()
     cleared = 0
     for media in medias:
         if media.missing_since is None and not media.missing_confirmed:

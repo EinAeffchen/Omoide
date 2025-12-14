@@ -18,8 +18,9 @@ from app.models import ProcessingTask
 from app.tagging import sanitize_custom_tag_list
 from app.tasks import schedule_custom_auto_tagging
 
+
 def _ensure_config_access_allowed() -> None:
-    if settings.general.read_only:
+    if settings.general.presentation_mode:
         raise HTTPException(
             status_code=403,
             detail="Configuration endpoints are disabled in read-only mode.",
@@ -57,9 +58,7 @@ async def save_settings_endpoint(
     settings_model: AppSettings,
 ):
     """Saves the settings model to the config.yaml file."""
-    incoming_custom = sanitize_custom_tag_list(
-        settings_model.tagging.custom_tags
-    )
+    incoming_custom = sanitize_custom_tag_list(settings_model.tagging.custom_tags)
     existing_custom = sanitize_custom_tag_list(settings.tagging.custom_tags)
 
     existing_normalized = {tag.lower() for tag in existing_custom}
@@ -135,22 +134,16 @@ def pick_directory():
             pass
         return {"path": path or ""}
     except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Folder picker failed: {e}"
-        )
+        raise HTTPException(status_code=500, detail=f"Folder picker failed: {e}")
 
 
 @router.get("/profiles")
 def list_profiles():
     if settings.general.is_docker:
-        raise HTTPException(
-            status_code=400, detail="Profiles not supported in Docker."
-        )
+        raise HTTPException(status_code=400, detail="Profiles not supported in Docker.")
     bs = read_bootstrap() or {}
     return {
-        "active_path": bs.get(
-            "active_profile", str(settings.general.data_dir)
-        ),
+        "active_path": bs.get("active_profile", str(settings.general.data_dir)),
         "profiles": bs.get("profiles", []),
     }
 
@@ -383,9 +376,7 @@ def remove_profile(req: RemoveProfileRequest):
     # Normalize paths for comparison
     try:
         target = str(Path(req.path).expanduser().resolve())
-        active_norm = (
-            str(Path(active).expanduser().resolve()) if active else None
-        )
+        active_norm = str(Path(active).expanduser().resolve()) if active else None
     except Exception:
         target = req.path
         active_norm = active
@@ -416,9 +407,7 @@ def add_profile(req: AddProfileRequest):
     attempt to mutate the directory structure.
     """
     if settings.general.is_docker:
-        raise HTTPException(
-            status_code=400, detail="Profiles not supported in Docker."
-        )
+        raise HTTPException(status_code=400, detail="Profiles not supported in Docker.")
     _assert_no_active_tasks()
 
     p = Path(req.path).expanduser()

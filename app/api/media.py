@@ -10,9 +10,7 @@ from sqlalchemy import and_, func, or_, text, tuple_
 from sqlalchemy.orm import aliased, selectinload
 from sqlmodel import Session, select
 
-from app.config import (
-    settings,
-)
+from app.config import ReadOnlyMediaError, settings
 from app.database import get_session
 from app.logger import logger
 from app.models import ExifData, Face, Media, Person, Scene, Tag
@@ -624,10 +622,10 @@ def scenes_vtt(
     status_code=status.HTTP_204_NO_CONTENT,
 )
 def delete_media_file(media_id: int, session: Session = Depends(get_session)):
-    if settings.general.read_only:
+    if settings.general.presentation_mode:
         return HTTPException(
             status_code=403,
-            detail="Not allowed in settings.general.read_only mode.",
+            detail="Not allowed in settings.general.presentation_mode mode.",
         )
     delete_file(session, media_id)
 
@@ -641,10 +639,10 @@ def delete_media_record(
     media_id: int,
     session: Session = Depends(get_session),
 ):
-    if settings.general.read_only:
+    if settings.general.presentation_mode:
         return HTTPException(
             status_code=403,
-            detail="Not allowed in settings.general.read_only mode.",
+            detail="Not allowed in settings.general.presentation_mode mode.",
         )
     delete_record(media_id, session)
 
@@ -712,16 +710,20 @@ def update_geolocation(
     data: GeoUpdate,
     session: Session = Depends(get_session),
 ):
-    if settings.general.read_only:
+    if settings.general.presentation_mode:
         return HTTPException(
             status_code=403,
-            detail="Not allowed in settings.general.read_only mode.",
+            detail="Not allowed in settings.general.presentation_mode mode.",
         )
     media = session.exec(
         select(Media).options(selectinload(Media.exif)).where(Media.id == media_id)
     ).first()
     if not media:
         raise HTTPException(404, "Media not found")
+    try:
+        settings.general.ensure_media_path_writable(Path(media.path))
+    except ReadOnlyMediaError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
     media.exif.lat = data.latitude
     media.exif.lon = data.longitude
     update_exif_gps(media.path, data.longitude, data.latitude)

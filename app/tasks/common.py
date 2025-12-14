@@ -30,9 +30,9 @@ def create_and_run_task(
     Creates a processing task in the database and adds the actual job to the
     background task queue.
     """
-    if settings.general.read_only:
+    if settings.general.presentation_mode:
         raise HTTPException(
-            status_code=403, detail="Not allowed in read_only mode."
+            status_code=403, detail="Not allowed in presentation_mode mode."
         )
 
     try:

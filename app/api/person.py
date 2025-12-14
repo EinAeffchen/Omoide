@@ -38,11 +38,11 @@ from app.schemas.person import (
     MergePersonsBulkRequest,
     MergePersonsRequest,
     MergePersonsResult,
+    PersonBulkDeleteRequest,
+    PersonBulkDeleteResponse,
     PersonDetail,
     PersonRead,
     PersonReadSimple,
-    PersonBulkDeleteRequest,
-    PersonBulkDeleteResponse,
     PersonUpdate,
     ProfileFace,
     RelationshipEdge,
@@ -507,10 +507,10 @@ def update_person(
     data: PersonUpdate,
     session: Session = Depends(get_session),
 ):
-    if settings.general.read_only:
+    if settings.general.presentation_mode:
         return HTTPException(
             status_code=403,
-            detail="Not allowed in settings.general.read_only mode.",
+            detail="Not allowed in settings.general.presentation_mode mode.",
         )
     person = session.get(Person, person_id)
     if not person:
@@ -530,10 +530,10 @@ def set_profile_face(
     face_id: int | None,
     session: Session = Depends(get_session),
 ):
-    if settings.general.read_only:
+    if settings.general.presentation_mode:
         return HTTPException(
             status_code=403,
-            detail="Not allowed in settings.general.read_only mode.",
+            detail="Not allowed in settings.general.presentation_mode mode.",
         )
     person = session.get(Person, person_id)
     if not person:
@@ -553,10 +553,10 @@ def auto_profile_face(
     person_id: int,
     session: Session = Depends(get_session),
 ):
-    if settings.general.read_only:
+    if settings.general.presentation_mode:
         return HTTPException(
             status_code=403,
-            detail="Not allowed in settings.general.read_only mode.",
+            detail="Not allowed in settings.general.presentation_mode mode.",
         )
     person = session.get(Person, person_id)
     if not person:
@@ -712,10 +712,10 @@ def merge_persons(
     body: MergePersonsRequest,
     session: Session = Depends(get_session),
 ):
-    if settings.general.read_only:
+    if settings.general.presentation_mode:
         return HTTPException(
             status_code=403,
-            detail="Not allowed in settings.general.read_only mode.",
+            detail="Not allowed in settings.general.presentation_mode mode.",
         )
     merged = _merge_person_into_target(session, body.source_id, body.target_id)
     return merged
@@ -731,10 +731,10 @@ def merge_multiple_persons(
     request: MergePersonsBulkRequest,
     session: Session = Depends(get_session),
 ):
-    if settings.general.read_only:
+    if settings.general.presentation_mode:
         return HTTPException(
             status_code=403,
-            detail="Not allowed in settings.general.read_only mode.",
+            detail="Not allowed in settings.general.presentation_mode mode.",
         )
     merged_ids: list[int] = []
     skipped_ids: list[int] = []
@@ -766,10 +766,10 @@ def delete_persons_bulk(
     payload: PersonBulkDeleteRequest,
     session: Session = Depends(get_session),
 ):
-    if settings.general.read_only:
+    if settings.general.presentation_mode:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not allowed in settings.general.read_only mode.",
+            detail="Not allowed in settings.general.presentation_mode mode.",
         )
 
     deleted_ids: list[int] = []
@@ -796,11 +796,9 @@ def delete_persons_bulk(
                 person_id,
                 exc.detail,
             )
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception:  # pragma: no cover - defensive
             skipped_ids.append(person_id)
-            logger.exception(
-                "Unexpected error while deleting person %s", person_id
-            )
+            logger.exception("Unexpected error while deleting person %s", person_id)
 
     return PersonBulkDeleteResponse(
         deleted_ids=deleted_ids,
@@ -896,10 +894,10 @@ def auto_merge_similar_persons(
     person_id: int,
     session: Session = Depends(get_session),
 ):
-    if settings.general.read_only:
+    if settings.general.presentation_mode:
         return HTTPException(
             status_code=403,
-            detail="Not allowed in settings.general.read_only mode.",
+            detail="Not allowed in settings.general.presentation_mode mode.",
         )
 
     threshold = float(

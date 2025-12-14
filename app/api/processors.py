@@ -1,15 +1,17 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
-from sqlmodel import Session
-from app.models import Media, ProcessingTask
-import app.database as db
-from app.database import get_session
-from app.processor_registry import load_processors
-from datetime import datetime, timezone
-from app.config import settings
-from app.logger import logger
 import subprocess
-import ffmpeg
+from datetime import datetime, timezone
 from pathlib import Path
+
+import ffmpeg
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from sqlmodel import Session
+
+import app.database as db
+from app.config import ReadOnlyMediaError, settings
+from app.database import get_session
+from app.logger import logger
+from app.models import Media, ProcessingTask
+from app.processor_registry import load_processors
 from app.subprocess_helpers import popen_silent
 
 router = APIRouter()
@@ -44,13 +46,18 @@ def start_conversion(
     background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
 ):
-    if settings.general.read_only:
+    if settings.general.presentation_mode:
         return HTTPException(
-            status_code=403, detail="Not allowed in settings.general.read_only mode."
+            status_code=403,
+            detail="Not allowed in settings.general.presentation_mode mode.",
         )
     media = session.get(Media, media_id)
     if not media:
         raise HTTPException(404, "Media not found")
+    try:
+        settings.general.ensure_media_path_writable(Path(media.path))
+    except ReadOnlyMediaError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
     task = ProcessingTask(
         task_type="convert",
         status="pending",
@@ -61,9 +68,7 @@ def start_conversion(
     session.add(task)
     session.commit()
     session.refresh(task)
-    background_tasks.add_task(
-        _run_conversion, task.id, str(media.path), media.id
-    )
+    background_tasks.add_task(_run_conversion, task.id, str(media.path), media.id)
     return task
 
 
@@ -81,6 +86,17 @@ def _run_conversion(task_id: str, media_path: str, media_id: int):
 
         media_path_obj = Path(media_path)
         temp_output_path = media_path_obj.with_name(media_path_obj.stem + "_temp.mp4")
+
+        try:
+            settings.general.ensure_media_path_writable(media_path_obj)
+        except ReadOnlyMediaError as exc:
+            logger.warning("Conversion blocked: %s", exc)
+            task.status = "failed"
+            task.error = str(exc)
+            task.finished_at = datetime.now(timezone.utc)
+            session.add(task)
+            session.commit()
+            return
 
         try:
             info = ffmpeg.probe(str(media_path_obj))

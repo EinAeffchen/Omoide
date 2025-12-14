@@ -36,15 +36,15 @@ export const reloadConfig = async (): Promise<AppConfig> => {
   const latest = await getConfig();
 
   // In production builds, config getters read from window.runtimeConfig.
-  // Update these values so components referencing config.READ_ONLY (etc.)
+  // Update these values so components referencing config.PRESENTATION_MODE (etc.)
   // see the new values without a full page refresh.
   if (!import.meta.env.DEV) {
-    const ro = String(!!latest.general.read_only);
+    const ro = String(!!latest.general.presentation_mode);
     const people = String(!!latest.general.enable_people);
     const meme = String(!!latest.general.meme_mode);
     window.runtimeConfig = {
       ...(window.runtimeConfig ?? {}),
-      VITE_API_READ_ONLY: ro,
+      VITE_API_PRESENTATION_MODE: ro,
       VITE_API_ENABLE_PEOPLE: people,
       VITE_API_MEME_MODE: meme,
       PERSON_RELATIONSHIP_MAX_NODES: String(

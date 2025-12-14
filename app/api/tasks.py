@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from sqlalchemy import func, text, update
 from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, select
 
@@ -20,8 +19,14 @@ from app.tasks import (
     run_media_processing,
     run_person_clustering,
     run_scan,
+)
+from app.tasks import (
     reset_clustering as reset_clustering_task,
+)
+from app.tasks import (
     reset_processing as reset_processing_task,
+)
+from app.tasks import (
     state as task_state,
 )
 from app.utils import get_image_taken_date
@@ -59,9 +64,7 @@ async def start_creation_refresh(
     batch_count = 0
     offset = 0
     while True:
-        media_batch = session.exec(
-            select(Media).offset(offset).limit(batch_size)
-        ).all()
+        media_batch = session.exec(select(Media).offset(offset).limit(batch_size)).all()
 
         if not media_batch:
             break
@@ -108,9 +111,7 @@ def start_scan(
     session: Session = Depends(get_session),
 ):
     if not settings.general.media_dirs:
-        raise HTTPException(
-            status_code=400, detail="No media directories configured."
-        )
+        raise HTTPException(status_code=400, detail="No media directories configured.")
     task = create_and_run_task(
         session=session,
         background_tasks=background_tasks,
@@ -134,9 +135,7 @@ def start_duplicate_detection(
         session=session,
         background_tasks=background_tasks,
         task_type="find_duplicates",
-        callable_task=lambda task_id: run_duplicate_detection(
-            task_id, threshold
-        ),
+        callable_task=lambda task_id: run_duplicate_detection(task_id, threshold),
     )
     return task
 
@@ -160,20 +159,20 @@ async def start_missing_files_cleanup(
 
 @router.post("/reset/processing", summary="Resets media processing status")
 def reset_processing(session: Session = Depends(get_session)):
-    if settings.general.read_only:
+    if settings.general.presentation_mode:
         return HTTPException(
             status_code=403,
-            detail="Not allowed in settings.general.read_only mode.",
+            detail="Not allowed in settings.general.presentation_mode mode.",
         )
     return reset_processing_task(session)
 
 
 @router.post("/reset/clustering", summary="Resets person clustering")
 def reset_clustering(session: Session = Depends(get_session)):
-    if settings.general.read_only:
+    if settings.general.presentation_mode:
         return HTTPException(
             status_code=403,
-            detail="Not allowed in settings.general.read_only mode.",
+            detail="Not allowed in settings.general.presentation_mode mode.",
         )
     return reset_clustering_task(session)
 
@@ -183,10 +182,10 @@ def cancel_task(
     task_id: str,
     session: Session = Depends(get_session),
 ):
-    if settings.general.read_only:
+    if settings.general.presentation_mode:
         return HTTPException(
             status_code=403,
-            detail="Not allowed in settings.general.read_only mode.",
+            detail="Not allowed in settings.general.presentation_mode mode.",
         )
     task = session.get(ProcessingTask, task_id)
     if not task:
@@ -237,9 +236,7 @@ def list_active_tasks(session: Session = Depends(get_session)):
     response_model=list[task_state.TaskFailure],
     summary="List captured errors for a task",
 )
-def get_task_failures_endpoint(
-    task_id: str, session: Session = Depends(get_session)
-):
+def get_task_failures_endpoint(task_id: str, session: Session = Depends(get_session)):
     task = session.get(ProcessingTask, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")

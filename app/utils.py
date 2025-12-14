@@ -20,7 +20,7 @@ from sqlalchemy import delete, distinct, func, or_, text
 from sqlmodel import Session, delete, select, text, update
 from tqdm import tqdm
 
-from app.config import settings
+from app.config import ReadOnlyMediaError, settings
 from app.database import safe_commit
 from app.ffmpeg import ensure_ffmpeg_available
 from app.logger import logger
@@ -1017,10 +1017,15 @@ def delete_file(session: Session, media_id: int):
     if not media:
         raise HTTPException(status_code=404, detail="Media not found")
 
+    orig = Path(media.path)
+    try:
+        settings.general.ensure_media_path_writable(orig)
+    except ReadOnlyMediaError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
     delete_record(media_id, session)
 
     # delete original file
-    orig = Path(media.path)
     try:
         orig.unlink()
     except FileNotFoundError:
@@ -1042,10 +1047,10 @@ def delete_file(session: Session, media_id: int):
 
 
 def remove_person(person_id, session):
-    if settings.general.read_only:
+    if settings.general.presentation_mode:
         return HTTPException(
             status_code=403,
-            detail="Not allowed in settings.general.read_only mode.",
+            detail="Not allowed in settings.general.presentation_mode mode.",
         )
     person = session.get(Person, person_id)
     if not person:

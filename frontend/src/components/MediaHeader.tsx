@@ -93,7 +93,7 @@ export function MediaHeader({
           <MoreVert />
         </IconButton>
 
-        {!config.READ_ONLY && (
+        {!config.PRESENTATION_MODE && (
           <Menu anchorEl={anchorEl} open={menuOpen} onClose={handleMenuClose}>
             <>
               <Divider />

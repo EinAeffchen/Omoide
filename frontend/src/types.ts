@@ -347,10 +347,15 @@ export interface VersionUpdateInfo {
   error?: string | null;
 }
 
+export interface MediaDirectory {
+  path: string;
+  read_only?: boolean;
+}
+
 export interface AppConfig {
   general: {
     port: number;
-    read_only: boolean;
+    presentation_mode: boolean;
     enable_people: boolean;
   meme_mode: boolean;
   is_docker: boolean;
@@ -362,7 +367,7 @@ export interface AppConfig {
     database_dir: string;
     omoide_dir: string;
     thumb_dir: string;
-    media_dirs: string[];
+    media_dirs: MediaDirectory[];
     static_dir: string;
     models_dir: string;
     database_url: string;

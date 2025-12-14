@@ -82,7 +82,7 @@ export default function DetectedFaces({
   const [openCreateDialog, setOpenCreateDialog] = useState(false);
   const [newPersonName, setNewPersonName] = useState("");
 
-  const canMutate = !config.READ_ONLY;
+  const canMutate = !config.PRESENTATION_MODE;
   const isAnythingSelected = selectedFaceIds.length > 0;
 
   const resolveProfileThumb = useCallback((person: Person) => {

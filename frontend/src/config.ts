@@ -17,11 +17,11 @@ const config = {
    * Checks if the application is in read-only mode.
    * Accesses the correct source based on the environment (dev vs. prod).
    */
-  get READ_ONLY(): boolean {
+  get PRESENTATION_MODE(): boolean {
     if (import.meta.env.DEV) {
-      return getBooleanEnv(import.meta.env.VITE_API_READ_ONLY);
+      return getBooleanEnv(import.meta.env.VITE_API_PRESENTATION_MODE);
     }
-    return getBooleanEnv(window.runtimeConfig?.VITE_API_READ_ONLY);
+    return getBooleanEnv(window.runtimeConfig?.VITE_API_PRESENTATION_MODE);
   },
 
   /**
@@ -65,7 +65,7 @@ const config = {
 console.log(import.meta.env);
 if (import.meta.env.DEV) {
   console.log("[App Config] API Base URL:", API);
-  console.log("[App Config] Read-Only Mode:", config.READ_ONLY);
+  console.log("[App Config] Read-Only Mode:", config.PRESENTATION_MODE);
   console.log("[App Config] People tracking enabled:", config.ENABLE_PEOPLE);
   console.log("[App Config] Meme mode:", config.MEME_MODE);
 }

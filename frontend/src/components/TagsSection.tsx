@@ -24,7 +24,7 @@ export function TagsSection({
   const ownerId = owner.id;
   return (
     <Box mt={4}>
-      {!config.READ_ONLY && (
+      {!config.PRESENTATION_MODE && (
         <Box mb={2}>
           <Typography variant="h6" gutterBottom>
             Add tag to media

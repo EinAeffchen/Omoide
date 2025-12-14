@@ -26,6 +26,7 @@ def run_scan(task_id: str) -> None:
     discovery_update_interval = 2.0
     progress_batch_threshold = 50
     progress_update_interval = 2.0
+    media_dirs = [base for base, _ in settings.general.resolved_media_dirs()]
 
     with Session(db.engine) as sess:
         task = sess.get(ProcessingTask, task_id)
@@ -39,10 +40,8 @@ def run_scan(task_id: str) -> None:
         set_task_progress(task_id, current_step="indexing", current_item=None)
 
     def walk_candidates():
-        for media_dir in settings.general.media_dirs:
-            for root, dirs, files in os.walk(
-                media_dir, topdown=True, followlinks=True
-            ):
+        for media_dir in media_dirs:
+            for root, dirs, files in os.walk(media_dir, topdown=True, followlinks=True):
                 if ".omoide" in dirs:
                     dirs.remove(".omoide")
                 for fname in files:
@@ -61,7 +60,7 @@ def run_scan(task_id: str) -> None:
 
     with Session(db.engine) as sess:
         try:
-            for d in settings.general.media_dirs:
+            for d in media_dirs:
                 try:
                     prefix = os.fspath(Path(d).resolve())
                 except Exception:

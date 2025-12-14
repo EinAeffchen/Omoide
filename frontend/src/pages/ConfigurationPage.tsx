@@ -10,7 +10,12 @@ import {
   removeProfile as apiRemoveProfile,
   getProfileHealth,
 } from "../services/config";
-import { AppConfig, ProfileListResponse, VersionUpdateInfo } from "../types";
+import {
+  AppConfig,
+  MediaDirectory,
+  ProfileListResponse,
+  VersionUpdateInfo,
+} from "../types";
 import { IconButton } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
@@ -229,17 +234,26 @@ export default function ConfigurationPage() {
     if (!config) return;
     setIsSaving(true);
     try {
+      const normalizedMediaDirs = (config.general.media_dirs ?? []).map((dir) => ({
+        path: (dir?.path ?? "").trim(),
+        read_only: Boolean(dir?.read_only),
+      }));
+      const mediaDirMap = normalizedMediaDirs.reduce(
+        (acc, entry) => {
+          if (!entry.path || acc.has(entry.path)) {
+            return acc;
+          }
+          acc.set(entry.path, entry);
+          return acc;
+        },
+        new Map<string, MediaDirectory>()
+      );
+
       const sanitized = {
         ...config,
         general: {
           ...config.general,
-          media_dirs: Array.from(
-            new Set(
-              (config.general.media_dirs ?? [])
-                .map((s) => s.trim())
-                .filter(Boolean)
-            )
-          ),
+          media_dirs: Array.from(mediaDirMap.values()),
         },
       };
 
@@ -296,21 +310,36 @@ export default function ConfigurationPage() {
     const value = chosen || "";
     setConfig((prev) => {
       if (!prev) return prev;
+      const next = prev.general.media_dirs ?? [];
       return {
         ...prev,
         general: {
           ...prev.general,
-          media_dirs: [...prev.general.media_dirs, value],
+          media_dirs: [...next, { path: value, read_only: false }],
         },
       };
     });
   };
 
-  const updateMediaDir = (index: number, value: string) => {
+  const updateMediaDirPath = (index: number, value: string) => {
     setConfig((prev) => {
       if (!prev) return prev;
-      const next = [...prev.general.media_dirs];
-      next[index] = value;
+      const next = [...(prev.general.media_dirs ?? [])];
+      const existing = next[index] ?? { path: "", read_only: false };
+      next[index] = { ...existing, path: value };
+      return {
+        ...prev,
+        general: { ...prev.general, media_dirs: next },
+      };
+    });
+  };
+
+  const updateMediaDirReadOnly = (index: number, value: boolean) => {
+    setConfig((prev) => {
+      if (!prev) return prev;
+      const next = [...(prev.general.media_dirs ?? [])];
+      const existing = next[index] ?? { path: "", read_only: false };
+      next[index] = { ...existing, read_only: value };
       return {
         ...prev,
         general: { ...prev.general, media_dirs: next },
@@ -332,7 +361,7 @@ export default function ConfigurationPage() {
   const browseMediaDir = async (index: number) => {
     const path = await pickDirectory();
     if (path && config) {
-      updateMediaDir(index, path);
+      updateMediaDirPath(index, path);
     }
   };
 
@@ -868,9 +897,23 @@ export default function ConfigurationPage() {
                     fullWidth
                     margin="normal"
                     label={`Media directory #${idx + 1}`}
-                    value={dir}
-                    onChange={(e) => updateMediaDir(idx, e.target.value)}
+                    value={dir?.path ?? ""}
+                    onChange={(e) => updateMediaDirPath(idx, e.target.value)}
+                    sx={{ flex: 1 }}
                     helperText="Absolute path."
+                  />
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        size="small"
+                        checked={Boolean(dir?.read_only)}
+                        onChange={(e) =>
+                          updateMediaDirReadOnly(idx, e.target.checked)
+                        }
+                      />
+                    }
+                    label="Read only"
+                    sx={{ ml: 1, mr: 0 }}
                   />
                   <IconButton
                     aria-label="browse for media directory"
@@ -901,27 +944,15 @@ export default function ConfigurationPage() {
           )}
           <Grid size={{ xs: 12 }}>
             <FormGroup>
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={config.general.read_only}
-                    onChange={(e) =>
-                      handleValueChange(
-                        "general",
-                        "read_only",
-                        e.target.checked
-                      )
-                    }
-                  />
-                }
-                label="Read Only"
-              />
-              <Typography
-                variant="caption"
-                sx={{ ml: 6, mt: -1, display: "block" }}
-              >
-                Prevents writes: no deletes/moves or DB changes. Safe viewing
-                mode.
+              <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                Read Only (Presentation Mode)
+              </Typography>
+              <Typography variant="body2" sx={{ ml: 0, mb: 1 }}>
+                Managed only via Docker run environment (e.g.,
+                <code style={{ marginLeft: 4 }}>
+                  -e OMOIDE_GENERAL__PRESENTATION_MODE=true
+                </code>
+                ). Current: {config.general.presentation_mode ? "Enabled" : "Disabled"}.
               </Typography>
               <FormControlLabel
                 control={

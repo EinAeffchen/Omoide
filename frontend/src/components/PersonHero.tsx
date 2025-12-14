@@ -72,7 +72,7 @@ export function PersonHero({
               : "No appearances"}
           </Typography>
 
-          {!config.READ_ONLY && (
+          {!config.PRESENTATION_MODE && (
             <Stack
               direction="row"
               spacing={1}
@@ -116,7 +116,7 @@ export function PersonHero({
       </Grid>
 
       {/* The Edit Form is now more cleanly integrated */}
-      {!config.READ_ONLY && (
+      {!config.PRESENTATION_MODE && (
         <Paper
           sx={{
             p: { xs: 2, md: 3 },

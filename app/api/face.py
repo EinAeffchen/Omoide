@@ -33,10 +33,10 @@ async def assign_faces(
     body: FaceAssign = Body(...),
     session: Session = Depends(get_session),
 ):
-    if settings.general.read_only:
+    if settings.general.presentation_mode:
         raise HTTPException(
             status_code=403,
-            detail="Not allowed in settings.general.read_only mode.",
+            detail="Not allowed in settings.general.presentation_mode mode.",
         )
     new_person_id = body.person_id
     new_person = session.get(Person, new_person_id)
@@ -50,9 +50,7 @@ async def assign_faces(
     for face_id in body.face_ids:
         face = session.get(Face, face_id)
         if not face:
-            logger.warning(
-                f"Face with ID {face_id} not found, skipping assignment."
-            )
+            logger.warning(f"Face with ID {face_id} not found, skipping assignment.")
             continue
 
         original_person_id = face.person_id
@@ -84,10 +82,10 @@ async def detach_faces(
     face_ids: list[int] = Body(..., embed=True),
     session: Session = Depends(get_session),
 ):
-    if settings.general.read_only:
+    if settings.general.presentation_mode:
         raise HTTPException(
             status_code=403,
-            detail="Not allowed in settings.general.read_only mode.",
+            detail="Not allowed in settings.general.presentation_mode mode.",
         )
 
     affected_person_ids: set[int] = set()
@@ -95,9 +93,7 @@ async def detach_faces(
     for face_id in face_ids:
         face = session.get(Face, face_id)
         if not face:
-            logger.warning(
-                f"Face with ID {face_id} not found, skipping detachment."
-            )
+            logger.warning(f"Face with ID {face_id} not found, skipping detachment.")
             continue
 
         person_id = face.person_id
@@ -127,10 +123,10 @@ def update_face_embedding(
     person_id: int | None,
     delete_face: bool = False,
 ):
-    if settings.general.read_only:
+    if settings.general.presentation_mode:
         return HTTPException(
             status_code=403,
-            detail="Not allowed in settings.general.read_only mode.",
+            detail="Not allowed in settings.general.presentation_mode mode.",
         )
     if not delete_face and person_id:
         sql = text(
@@ -157,18 +153,16 @@ def delete_faces(
     face_ids: list[int] = Query(..., alias="face_ids"),
     session: Session = Depends(get_session),
 ):
-    if settings.general.read_only:
+    if settings.general.presentation_mode:
         raise HTTPException(
             status_code=403,
-            detail="Not allowed in settings.general.read_only mode.",
+            detail="Not allowed in settings.general.presentation_mode mode.",
         )
     affected_person_ids: set[int] = set()
     for face_id in face_ids:
         face = session.get(Face, face_id)
         if not face:
-            logger.warning(
-                f"Face with ID {face_id} not found, skipping deletion."
-            )
+            logger.warning(f"Face with ID {face_id} not found, skipping deletion.")
             continue
 
         # remove thumbnail from disk
@@ -203,16 +197,16 @@ def get_orphans(
     session: Session = Depends(get_session),
     cursor: str | None = Query(
         None,
-        description="encoded as `<id>`; e.g. `2025-05-05T12:34:56.789012_1234` or `2500_1234`",
+        description=(
+            "encoded as `<id>`; e.g. `2025-05-05T12:34:56.789012_1234` or `2500_1234`"
+        ),
     ),
     limit: int = 48,
 ):
     before_id = None
     if cursor:
         before_id = int(cursor)
-    query = (
-        select(Face).where(Face.person_id.is_(None)).order_by(Face.id.desc())
-    )
+    query = select(Face).where(Face.person_id.is_(None)).order_by(Face.id.desc())
     if before_id:
         query = query.where(Face.id < before_id)
     orphans = safe_execute(session, query.limit(limit)).all()
@@ -235,10 +229,10 @@ async def create_person_from_faces(
     name: str | None = Body(None),
     session: Session = Depends(get_session),
 ):
-    if settings.general.read_only:
+    if settings.general.presentation_mode:
         raise HTTPException(
             status_code=403,
-            detail="Not allowed in settings.general.read_only mode.",
+            detail="Not allowed in settings.general.presentation_mode mode.",
         )
     if not face_ids:
         raise HTTPException(status_code=400, detail="No face IDs provided")

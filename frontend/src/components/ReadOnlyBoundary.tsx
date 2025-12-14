@@ -54,7 +54,7 @@ export function WriteModeBoundary({
       );
   }, []);
 
-  if (config.READ_ONLY) {
+  if (config.PRESENTATION_MODE) {
     return <ReadOnlyNotice title={title} description={description} />;
   }
 

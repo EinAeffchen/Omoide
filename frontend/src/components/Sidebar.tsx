@@ -97,7 +97,7 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
   ];
   const pathsToExcludeInPeopleDisabled: string[] = ["/people", "/orphanfaces"];
   const shouldHidePath = (path: string) =>
-    (config.READ_ONLY && pathsToExcludeInReadOnly.includes(path)) ||
+    (config.PRESENTATION_MODE && pathsToExcludeInReadOnly.includes(path)) ||
     (!config.ENABLE_PEOPLE && pathsToExcludeInPeopleDisabled.includes(path));
 
   const navSections: NavSection[] = RAW_SECTIONS.map((section) => ({

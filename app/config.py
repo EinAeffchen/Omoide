@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 import yaml
-from pydantic import BaseModel, Field, PlainSerializer, computed_field
+from pydantic import BaseModel, Field, PlainSerializer, computed_field, field_validator
 from typing_extensions import Annotated
 
 from app.logger import configure_file_logging, logger
@@ -192,6 +192,36 @@ class DuplicateHandlingRule(Enum):
         return self.value
 
 
+class MediaDirectory(BaseModel):
+    path: Path
+    read_only: bool = False
+
+
+class ReadOnlyMediaError(PermissionError):
+    def __init__(self, target: Path, base: Path):
+        self.target = target
+        self.base = base
+        super().__init__(f"Media directory '{base}' is read-only.")
+
+
+def _resolve_path_safe(value: Path) -> Path:
+    try:
+        return value.expanduser().resolve()
+    except Exception:
+        try:
+            return value.expanduser()
+        except Exception:
+            return value
+
+
+def _is_within(path: Path, base: Path) -> bool:
+    try:
+        path.relative_to(base)
+        return True
+    except ValueError:
+        return False
+
+
 class ClipModel(Enum):
     ROBERTA_LARGE_VIT_H_14 = (
         "xlm-roberta-large-ViT-H-14",
@@ -236,8 +266,8 @@ class ClipModel(Enum):
 
 class GeneralSettings(BaseModel):
     port: int = 8123
-    # Run system in read_only mode or not
-    read_only: bool = False
+    # Run system in presentation_mode mode or not
+    presentation_mode: bool = False
     # Enable face recognition and other person related features
     enable_people: bool = True
     meme_mode: bool = False
@@ -278,7 +308,7 @@ class GeneralSettings(BaseModel):
         return self.omoide_dir / "thumbnails"
 
     # only relevant when run as binary
-    media_dirs: list[Path] = []
+    media_dirs: list[MediaDirectory] = Field(default_factory=list)
     static_dir: Path = get_static_assets_dir()
 
     @computed_field
@@ -296,7 +326,31 @@ class GeneralSettings(BaseModel):
             "&_journal_mode=WAL&_synchronous=NORMAL"
         )
 
+    @field_validator("media_dirs", mode="before")
+    @classmethod
+    def _coerce_media_dirs(cls, value):
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            return value
+        normalized: list[dict[str, object]] = []
+        for item in value:
+            if isinstance(item, dict):
+                path_value = item.get("path") or item.get("dir") or item.get("value")
+                if path_value is None:
+                    continue
+                read_only = bool(item.get("read_only", False))
+                normalized.append({"path": path_value, "read_only": read_only})
+            elif isinstance(item, (str, Path)):
+                normalized.append({"path": item, "read_only": False})
+        return normalized
+
     def model_post_init(self, context) -> None:
+        # Presentation/read-only mode is only configurable via Docker runtime env.
+        # Force it off in binaries/local runs so the UI/config file cannot enable it.
+        if not IS_DOCKER:
+            self.presentation_mode = False
+
         # Ensure required directories exist based on current data_dir
         self.database_dir.mkdir(parents=True, exist_ok=True)
         self.omoide_dir.mkdir(parents=True, exist_ok=True)
@@ -333,7 +387,28 @@ class GeneralSettings(BaseModel):
             except Exception as e:
                 logger.warning("Could not migrate legacy models directory: %s", e)
         if IS_DOCKER:
-            self.media_dirs = [Path("/app/media")]
+            self.media_dirs = [MediaDirectory(path=Path("/app/media"))]
+
+    def resolved_media_dirs(self) -> list[tuple[Path, bool]]:
+        """Return unique, resolved media directories paired with read-only flag."""
+        resolved: list[tuple[Path, bool]] = []
+        seen: set[Path] = set()
+        for entry in self.media_dirs:
+            base = _resolve_path_safe(entry.path)
+            if base in seen:
+                continue
+            seen.add(base)
+            resolved.append((base, bool(entry.read_only)))
+        return resolved
+
+    def ensure_media_path_writable(self, target: Path) -> None:
+        """Raise if the path lives inside a read-only media directory."""
+        normalized = _resolve_path_safe(target)
+        for base, read_only in self.resolved_media_dirs():
+            if _is_within(normalized, base):
+                if read_only:
+                    raise ReadOnlyMediaError(normalized, base)
+                return
 
 
 class TaggingSettings(BaseModel):
@@ -851,6 +926,7 @@ def reload_settings():
             if assignable_keys and key not in assignable_keys:
                 # Skip computed or non-settable attributes
                 continue
+            value = getattr(section_settings, key, value)
             if section_name == "ai" and key == "clip_model":
                 setattr(section, key, ClipModel(value))
             else:

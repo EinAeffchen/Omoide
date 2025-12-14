@@ -1,15 +1,12 @@
-from fastapi import APIRouter, Query, Depends, HTTPException, status, Body
-from sqlmodel import Session, select
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlalchemy import delete
 from sqlalchemy.orm import selectinload
+from sqlmodel import Session, select
 
-from app.database import get_session
-from app.models import Tag, Media, Person, MediaTagLink, PersonTagLink
-from app.schemas.tag import TagRead
-from app.database import safe_commit
 from app.config import settings
-from app.schemas.tag import CursorPage
-
+from app.database import get_session, safe_commit
+from app.models import Media, MediaTagLink, Person, PersonTagLink, Tag
+from app.schemas.tag import CursorPage, TagRead
 
 router = APIRouter()
 
@@ -19,7 +16,10 @@ def list_tags(
     limit: int = 50,
     cursor: str | None = Query(
         None,
-        description="encoded as `<value>_<id>`; e.g. `2025-05-05T12:34:56.789012_1234` or `2500_1234`",
+        description=(
+            "encoded as `<value>_<id>`; e.g. `2025-05-05T12:34:56.789012_1234` or"
+            " `2500_1234`"
+        ),
     ),
     session: Session = Depends(get_session),
 ):
@@ -82,9 +82,10 @@ def create_tag(
     name: str = Body(..., embed=True),
     session: Session = Depends(get_session),
 ):
-    if settings.general.read_only:
+    if settings.general.presentation_mode:
         return HTTPException(
-            status_code=403, detail="Not allowed in settings.general.read_only mode."
+            status_code=403,
+            detail="Not allowed in settings.general.presentation_mode mode.",
         )
     tag = get_or_create_tag(name, session)
     return tag
@@ -100,28 +101,26 @@ def get_tag(tag_id: int, session: Session = Depends(get_session)):
 
 
 # Assign / remove on Media
-@router.post(
-    "/media/{media_id}/{tag_id}", status_code=status.HTTP_204_NO_CONTENT
-)
+@router.post("/media/{media_id}/{tag_id}", status_code=status.HTTP_204_NO_CONTENT)
 def add_tag_to_media(
     media_id: int, tag_id: int, session: Session = Depends(get_session)
 ):
-    if settings.general.read_only:
+    if settings.general.presentation_mode:
         return HTTPException(
-            status_code=403, detail="Not allowed in settings.general.read_only mode."
+            status_code=403,
+            detail="Not allowed in settings.general.presentation_mode mode.",
         )
     attach_tag_to_media(media_id, tag_id, session)
 
 
-@router.delete(
-    "/media/{media_id}/{tag_id}", status_code=status.HTTP_204_NO_CONTENT
-)
+@router.delete("/media/{media_id}/{tag_id}", status_code=status.HTTP_204_NO_CONTENT)
 def remove_tag_from_media(
     media_id: int, tag_id: int, session: Session = Depends(get_session)
 ):
-    if settings.general.read_only:
+    if settings.general.presentation_mode:
         return HTTPException(
-            status_code=403, detail="Not allowed in settings.general.read_only mode."
+            status_code=403,
+            detail="Not allowed in settings.general.presentation_mode mode.",
         )
     session.exec(
         delete(MediaTagLink).where(
@@ -133,9 +132,10 @@ def remove_tag_from_media(
 
 @router.delete("/{tag_id}", status_code=status.HTTP_204_NO_CONTENT)
 def remove_tag(tag_id: int, session: Session = Depends(get_session)):
-    if settings.general.read_only:
+    if settings.general.presentation_mode:
         return HTTPException(
-            status_code=403, detail="Not allowed in settings.general.read_only mode."
+            status_code=403,
+            detail="Not allowed in settings.general.presentation_mode mode.",
         )
     session.exec(delete(MediaTagLink).where(MediaTagLink.tag_id == tag_id))
     session.exec(delete(Tag).where(Tag.id == tag_id))
@@ -143,15 +143,14 @@ def remove_tag(tag_id: int, session: Session = Depends(get_session)):
 
 
 # Assign / remove on Person
-@router.post(
-    "/person/{person_id}/{tag_id}", status_code=status.HTTP_204_NO_CONTENT
-)
+@router.post("/person/{person_id}/{tag_id}", status_code=status.HTTP_204_NO_CONTENT)
 def add_tag_to_person(
     person_id: int, tag_id: int, session: Session = Depends(get_session)
 ):
-    if settings.general.read_only:
+    if settings.general.presentation_mode:
         return HTTPException(
-            status_code=403, detail="Not allowed in settings.general.read_only mode."
+            status_code=403,
+            detail="Not allowed in settings.general.presentation_mode mode.",
         )
     if not session.get(Person, person_id):
         raise HTTPException(404, "Person not found")
@@ -162,15 +161,14 @@ def add_tag_to_person(
     safe_commit(session)
 
 
-@router.delete(
-    "/person/{person_id}/{tag_id}", status_code=status.HTTP_204_NO_CONTENT
-)
+@router.delete("/person/{person_id}/{tag_id}", status_code=status.HTTP_204_NO_CONTENT)
 def remove_tag_from_person(
     person_id: int, tag_id: int, session: Session = Depends(get_session)
 ):
-    if settings.general.read_only:
+    if settings.general.presentation_mode:
         return HTTPException(
-            status_code=403, detail="Not allowed in settings.general.read_only mode."
+            status_code=403,
+            detail="Not allowed in settings.general.presentation_mode mode.",
         )
     session.exec(
         delete(PersonTagLink).where(

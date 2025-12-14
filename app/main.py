@@ -67,21 +67,16 @@ def scheduled_scan_job():
                         ProcessingTask.status == "running",
                         ProcessingTask.status == "pending",
                     ),
-                    ProcessingTask.created_at
-                    > datetime.now() - timedelta(hours=6),
+                    ProcessingTask.created_at > datetime.now() - timedelta(hours=6),
                 )
             )
         ).first()
         if running_task:
-            logger.info(
-                "A processing task is already running. Skipping scheduled run."
-            )
+            logger.info("A processing task is already running. Skipping scheduled run.")
             return
 
         # Create the first task in the chain
-        task = ProcessingTask(
-            task_type="clean_missing_files", total=0, processed=0
-        )
+        task = ProcessingTask(task_type="clean_missing_files", total=0, processed=0)
         session.add(task)
         session.commit()
         session.refresh(task)
@@ -122,9 +117,7 @@ def configure_auto_scan_job() -> None:
             misfire_grace_time=60,
             replace_existing=True,
         )
-        logger.info(
-            "Auto scan enabled. Scan job scheduled every %s minutes.", interval
-        )
+        logger.info("Auto scan enabled. Scan job scheduled every %s minutes.", interval)
 
     if not scheduler.running:
         scheduler.start()
@@ -277,9 +270,7 @@ async def serve_original_media(file_path: str):
     requested_path = Path(file_path)
 
     logger.info("PATH obj: %s", requested_path)
-    media_dirs = [
-        Path(media_dir).resolve() for media_dir in settings.general.media_dirs
-    ]
+    media_dirs = [base for base, _ in settings.general.resolved_media_dirs()]
     candidates: list[Path] = []
 
     if requested_path.is_absolute():
@@ -310,9 +301,7 @@ async def serve_original_media(file_path: str):
             continue
         seen.add(normalized)
 
-        if not any(
-            _is_within(normalized, media_dir) for media_dir in media_dirs
-        ):
+        if not any(_is_within(normalized, media_dir) for media_dir in media_dirs):
             continue
 
         if not normalized.is_file():
@@ -396,22 +385,18 @@ async def spa_catch_all(full_path: str):
         return "true" if value else "false"
 
     config = {
-        "VITE_API_READ_ONLY": _bool_to_js(bool(settings.general.read_only)),
-        "VITE_API_ENABLE_PEOPLE": _bool_to_js(
-            bool(settings.general.enable_people)
+        "VITE_API_PRESENTATION_MODE": _bool_to_js(
+            bool(settings.general.presentation_mode)
         ),
+        "VITE_API_ENABLE_PEOPLE": _bool_to_js(bool(settings.general.enable_people)),
         "VITE_API_MEME_MODE": _bool_to_js(bool(settings.general.meme_mode)),
         "PERSON_RELATIONSHIP_MAX_NODES": str(
             settings.general.person_relationship_max_nodes
         ),
         "APP_VERSION": APP_VERSION,
     }
-    config_script = (
-        f"<script>window.runtimeConfig = {json.dumps(config)};</script>"
-    )
-    modified_html = html_content.replace(
-        "</head>", f"{config_script}</head>", 1
-    )
+    config_script = f"<script>window.runtimeConfig = {json.dumps(config)};</script>"
+    modified_html = html_content.replace("</head>", f"{config_script}</head>", 1)
 
     return HTMLResponse(
         content=modified_html,

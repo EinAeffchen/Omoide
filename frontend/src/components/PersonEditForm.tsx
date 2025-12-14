@@ -36,8 +36,8 @@ export function PersonEditForm({
     onSave(form);
   };
 
-  // This component is now self-contained and doesn't render if in config.READ_ONLY mode
-  if (config.READ_ONLY) {
+  // This component is now self-contained and doesn't render if in config.PRESENTATION_MODE mode
+  if (config.PRESENTATION_MODE) {
     return null;
   }
 
