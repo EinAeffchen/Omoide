@@ -11,6 +11,7 @@ interface MediaDisplayProps {
 export function MediaDisplay({ media, initialTime }: MediaDisplayProps) {
   const mediaUrl = (media) ? `${API}/originals/${media.path}` : `${API}/static/brand/404.png`;
   const filename = (media) ? media.filename : "404 Not found";
+  const isVideo = typeof media?.duration === "number";
   
   return (
     <Box display="flex" justifyContent="center" mb={2} sx={{ width: "100%" }}>
@@ -25,7 +26,7 @@ export function MediaDisplay({ media, initialTime }: MediaDisplayProps) {
           boxShadow: { xs: "none", sm: 4 },
         }}
       >
-        {media && media.duration ? (
+        {media && isVideo ? (
           <VideoWithPreview
             key={media.id}
             media={media}

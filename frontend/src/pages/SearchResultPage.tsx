@@ -1,5 +1,5 @@
 import { Box, CircularProgress, Container, Typography } from "@mui/material";
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useInView } from "react-intersection-observer";
 import Masonry from "react-masonry-css";
 import { useLocation, useSearchParams } from "react-router-dom";
@@ -62,6 +62,7 @@ export default function SearchResultsPage() {
   const isLoading = listState?.isLoading || defaultListState.isLoading;
   const { fetchInitial, loadMore, removeItem } = useListStore();
   const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
+  const [showModelWarmup, setShowModelWarmup] = useState(false);
 
   useEffect(() => {
     if (inView && hasMore && !isLoading) {
@@ -108,6 +109,22 @@ export default function SearchResultsPage() {
     | Tag
     | SceneSearchResult
   )[];
+  const hasResults = displayItems.length > 0;
+  const shouldShowWarmup =
+    !hasResults &&
+    isLoading &&
+    (category === "media" || category === "scene");
+
+  useEffect(() => {
+    setShowModelWarmup(false);
+    if (!shouldShowWarmup) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setShowModelWarmup(true);
+    }, 700);
+    return () => window.clearTimeout(timer);
+  }, [shouldShowWarmup, listKey]);
 
   const renderItem = (
     item: MediaPreview | Person | Tag | SceneSearchResult
@@ -163,6 +180,23 @@ export default function SearchResultsPage() {
       <Typography variant="h4" gutterBottom>
         {title}
       </Typography>
+      {showModelWarmup && (
+        <Box
+          sx={{
+            mb: 3,
+            display: "flex",
+            alignItems: "center",
+            gap: 2,
+            color: "text.secondary",
+          }}
+        >
+          <CircularProgress size={20} />
+          <Typography>
+            Warming up AI models for search. The first search can take a
+            minute.
+          </Typography>
+        </Box>
+      )}
 
       <Masonry
         breakpointCols={breakpointColumnsObj}

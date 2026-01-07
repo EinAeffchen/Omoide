@@ -21,6 +21,13 @@ from .state import clear_task_progress, record_task_failure, set_task_progress
 __all__ = ["run_scan"]
 
 
+def _scan_path_key(value: str | Path) -> str:
+    try:
+        return os.path.normcase(os.path.abspath(os.fspath(value)))
+    except Exception:
+        return os.fspath(value)
+
+
 def run_scan(task_id: str) -> None:
     discovery_update_batch = 200
     discovery_update_interval = 2.0
@@ -40,8 +47,18 @@ def run_scan(task_id: str) -> None:
         set_task_progress(task_id, current_step="indexing", current_item=None)
 
     def walk_candidates():
+        def on_walk_error(err: OSError) -> None:
+            logger.warning(
+                "Scan walk error in %s: %s", err.filename or "unknown", err
+            )
+
         for media_dir in media_dirs:
-            for root, dirs, files in os.walk(media_dir, topdown=True, followlinks=True):
+            for root, dirs, files in os.walk(
+                media_dir,
+                topdown=True,
+                followlinks=True,
+                onerror=on_walk_error,
+            ):
                 if ".omoide" in dirs:
                     dirs.remove(".omoide")
                 for fname in files:
@@ -52,7 +69,17 @@ def run_scan(task_id: str) -> None:
                         + settings.scan.IMAGE_SUFFIXES
                     ):
                         continue
-                    yield (Path(root) / fname).resolve()
+                    try:
+                        candidate = Path(root) / fname
+                    except Exception as exc:
+                        logger.warning(
+                            "Skipping %s in %s due to path error: %s",
+                            fname,
+                            root,
+                            exc,
+                        )
+                        continue
+                    yield candidate
 
     new_files: list[Path] = []
     existing_paths: set[str] = set()
@@ -77,9 +104,10 @@ def run_scan(task_id: str) -> None:
                         ).where(Media.path >= lo, Media.path < hi)
                     ).all()
                     for media_id, p, missing_since, missing_confirmed in rows:
-                        existing_paths.add(p)
+                        path_key = _scan_path_key(p)
+                        existing_paths.add(path_key)
                         if missing_since is not None or missing_confirmed:
-                            missing_candidates[p] = media_id
+                            missing_candidates[path_key] = media_id
                 except Exception:
                     pass
         except Exception:
@@ -90,14 +118,15 @@ def run_scan(task_id: str) -> None:
         next_total_update = time.monotonic() + discovery_update_interval
         recovered_ids: set[int] = set()
         for path in walk_candidates():
-            spath = str(path)
-            candidate_id = missing_candidates.pop(spath, None)
+            spath = os.fspath(path)
+            path_key = _scan_path_key(spath)
+            candidate_id = missing_candidates.pop(path_key, None)
             if candidate_id is not None:
                 recovered_ids.add(candidate_id)
-            if spath in existing_paths:
+            if path_key in existing_paths:
                 continue
             new_files.append(path)
-            existing_paths.add(spath)
+            existing_paths.add(path_key)
             since_update += 1
             if (
                 since_update >= discovery_update_batch

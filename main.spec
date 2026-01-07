@@ -316,6 +316,27 @@ APP_VERSION = _resolve_version()
 APP_VERSION_FS = re.sub(r"[^A-Za-z0-9._-]", "_", APP_VERSION)
 APP_NAME = f"omoide-{APP_VERSION_FS}"
 
+def _pick_icon_path() -> str | None:
+    candidates: list[str]
+    if sys.platform.startswith("win"):
+        candidates = ["frontend/public/brand/favicon.ico"]
+    elif sys.platform == "darwin":
+        candidates = [
+            "frontend/public/brand/favicon.icns",
+            "frontend/public/brand/favicon.ico",
+        ]
+    else:
+        candidates = [
+            "frontend/public/brand/app-icon.png",
+            "frontend/public/brand/favicon.ico",
+        ]
+    for candidate in candidates:
+        if Path(candidate).exists():
+            return candidate
+    return None
+
+ICON_PATH = _pick_icon_path()
+
 # Remove duplicate data/binary entries that can cause PyInstaller symlink collisions (macOS frameworks)
 
 datas = _filter_qt_plugins(datas)
@@ -363,7 +384,7 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name=APP_NAME,
-    icon="frontend/public/brand/favicon.ico",
+    icon=ICON_PATH,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

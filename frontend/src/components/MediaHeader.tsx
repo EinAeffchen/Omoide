@@ -33,6 +33,7 @@ export function MediaHeader({
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const menuOpen = Boolean(anchorEl);
   const filename = media ? media.filename : "File not found!";
+  const isVideo = typeof media?.duration === "number";
   const handleMenuClick = (event: React.MouseEvent<HTMLElement>) => {
     setAnchorEl(event.currentTarget);
   };
@@ -110,7 +111,7 @@ export function MediaHeader({
                   <ListItemText>Open Containing Folder</ListItemText>
                 </MenuItem>
               )}
-              {media && media.duration && (
+              {media && isVideo && (
                 <MenuItem onClick={() => handleAction("convert")}>
                   <ListItemIcon>
                     <Vrpano fontSize="small" />

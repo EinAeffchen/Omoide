@@ -2,10 +2,12 @@ import json
 import math
 import os
 import subprocess
+import sys
 from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Literal
+from urllib.parse import quote
 
 import cv2
 import ffmpeg
@@ -215,33 +217,52 @@ def _ffprobe_json(path: Path, timeout: int = 15) -> dict | None:
     Using subprocess directly allows us to enforce a timeout to avoid hangs
     on corrupted or tricky media files.
     """
-    cmd = [
-        "ffprobe",
-        "-v",
-        "error",
-        "-print_format",
-        "json",
-        "-show_format",
-        "-show_streams",
-        os.fspath(path),
-    ]
-    try:
-        result = run_silent(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
+    def _run(arg_path: str) -> tuple[dict | None, str | None]:
+        cmd = [
+            "ffprobe",
+            "-v",
+            "error",
+            "-print_format",
+            "json",
+            "-show_format",
+            "-show_streams",
+            arg_path,
+        ]
+        try:
+            result = run_silent(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            return None, f"timeout after {timeout}s"
+        except Exception as exc:
+            return None, str(exc)
         if result.returncode != 0:
-            logger.warning("ffprobe failed for %s: %s", path, result.stderr.strip())
-            return None
-        return json.loads(result.stdout or "{}")
-    except subprocess.TimeoutExpired:
-        logger.error("ffprobe timeout for %s after %ss", path, timeout)
-        return None
-    except Exception as e:
-        logger.error("ffprobe exception for %s: %s", path, e)
-        return None
+            stderr = (result.stderr or "").strip()
+            return None, stderr or f"ffprobe exited with {result.returncode}"
+        try:
+            return json.loads(result.stdout or "{}"), None
+        except json.JSONDecodeError as exc:
+            return None, f"invalid ffprobe output: {exc}"
+
+    data, err = _run(os.fspath(path))
+    if data is not None:
+        return data
+
+    if sys.platform.startswith("win"):
+        encoded = "file:" + quote(path.as_posix(), safe="/:")
+        if encoded != os.fspath(path):
+            data, err = _run(encoded)
+            if data is not None:
+                return data
+
+    if err:
+        logger.warning("ffprobe failed for %s: %s", path, err)
+    return None
 
 
 def process_file(filepath: Path) -> tuple[Media | None, str | None]:
@@ -285,6 +306,8 @@ def process_file(filepath: Path) -> tuple[Media | None, str | None]:
                     height = height or None
             else:
                 logger.warning("Skipping video probe metadata for %s", filepath)
+                # Preserve video classification even if metadata probe fails.
+                duration = 0.0
         else:
             # Images: avoid ffprobe entirely; use PIL for dimensions if possible
             try:

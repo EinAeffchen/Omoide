@@ -118,7 +118,7 @@ class EmbeddingExtractor(MediaProcessor):
             else:
                 logger.warning("Got instance: %s", type(scene))
 
-        if not media.duration:  # is photo/picture
+        if media.duration is None:  # is photo/picture
             vec_embedding = embeddings[0]
         else:
             arr = np.stack([np.array(e, dtype=np.float32) for e in embeddings])

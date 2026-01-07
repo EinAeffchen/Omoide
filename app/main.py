@@ -493,6 +493,34 @@ if __name__ == "__main__":
     </html>
     """
 
+    def _resolve_window_icon() -> str | None:
+        if sys.platform.startswith("win"):
+            candidates = [
+                "dist/brand/favicon.ico",
+                "frontend/public/brand/favicon.ico",
+            ]
+        elif sys.platform == "darwin":
+            candidates = [
+                "dist/brand/favicon.icns",
+                "frontend/public/brand/favicon.icns",
+                "dist/brand/favicon.ico",
+                "frontend/public/brand/favicon.ico",
+            ]
+        else:
+            candidates = [
+                "dist/brand/app-icon.png",
+                "frontend/public/brand/app-icon.png",
+                "dist/brand/favicon.ico",
+                "frontend/public/brand/favicon.ico",
+            ]
+        for rel in candidates:
+            candidate = resolve_path(rel)
+            if candidate.exists():
+                return os.fspath(candidate)
+        return None
+
+    window_icon = _resolve_window_icon()
+
     window = webview.create_window(
         "omoide",
         html=loading_html,
@@ -527,8 +555,6 @@ if __name__ == "__main__":
         except Exception:
             pass
 
-    threading.Thread(target=_boot_and_switch, daemon=True).start()
-
     # Register shutdown and enter UI loop immediately
     window.events.closed += shutdown
-    webview.start()
+    webview.start(_boot_and_switch)
