@@ -44,6 +44,7 @@ export default function MediaDetailPage() {
   const location = useLocation();
   const backgroundLocation = location.state?.backgroundLocation;
   const sceneStartTime: number | null = location.state?.sceneStart ?? null;
+  const shouldAutoplayVideo = location.state?.autoplayVideo === true;
   const buildNavigationState = useCallback(
     (extra: Record<string, unknown> = {}) => {
       const baseState = location.state ? { ...location.state } : {};
@@ -123,20 +124,23 @@ export default function MediaDetailPage() {
       return null;
     };
 
+    if (navigationIdsFromState.length > 0) {
+      const numericId = id ? Number(id) : NaN;
+      if (
+        !Number.isNaN(numericId) &&
+        !navigationIdsFromState.includes(numericId)
+      ) {
+        return [...navigationIdsFromState, numericId];
+      }
+      return navigationIdsFromState;
+    }
+
     const idsFromList = items
       .map(extractItemId)
       .filter((value): value is number => value !== null);
 
     if (idsFromList.length > 0) {
       return Array.from(new Set(idsFromList));
-    }
-
-    if (navigationIdsFromState.length > 0) {
-      const numericId = id ? Number(id) : NaN;
-      if (!Number.isNaN(numericId) && !navigationIdsFromState.includes(numericId)) {
-        return [...navigationIdsFromState, numericId];
-      }
-      return navigationIdsFromState;
     }
 
     if (id) {
@@ -202,7 +206,7 @@ export default function MediaDetailPage() {
       if (!targetId) return;
 
       navigate(`/medium/${targetId}`, {
-        state: buildNavigationState({ media: null }),
+        state: buildNavigationState({ media: null, autoplayVideo: true }),
       });
     },
     [navigate, neighbors, buildNavigationState]
@@ -457,6 +461,7 @@ export default function MediaDetailPage() {
                   <MediaDisplay
                     media={detail.media}
                     initialTime={sceneStartTime ?? undefined}
+                    autoplay={shouldAutoplayVideo}
                   />
                 </Box>
                 {showSwipeHint && <SwipeHint />}

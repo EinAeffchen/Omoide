@@ -1,6 +1,13 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useParams, Link as RouterLink } from "react-router-dom";
-import { Container, Box, Typography, Grid } from "@mui/material";
+import {
+  Container,
+  Box,
+  Typography,
+  Grid,
+  ToggleButton,
+  ToggleButtonGroup,
+} from "@mui/material";
 import MediaCard from "../components/MediaCard";
 import PersonCard from "../components/PersonCard";
 import { Tag, Media, Person } from "../types";
@@ -10,9 +17,12 @@ const BG_SECTION = "background.default";
 const TEXT_PRIMARY = "text.primary";
 const ACCENT = "accent.main";
 
+type MediaFilter = "all" | "image" | "video";
+
 export default function TagDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [tag, setTag] = useState<Tag | null>(null);
+  const [mediaFilter, setMediaFilter] = useState<MediaFilter>("all");
 
   useEffect(() => {
     if (!id) return;
@@ -20,6 +30,19 @@ export default function TagDetailPage() {
       .then(setTag)
       .catch(console.error);
   }, [id]);
+
+  const mediaItems = useMemo(() => tag?.media ?? [], [tag?.media]);
+  const filteredMediaItems = useMemo(() => {
+    if (mediaFilter === "all") return mediaItems;
+    if (mediaFilter === "video") {
+      return mediaItems.filter((item) => typeof item.duration === "number");
+    }
+    return mediaItems.filter((item) => typeof item.duration !== "number");
+  }, [mediaFilter, mediaItems]);
+  const mediaIds = useMemo(
+    () => filteredMediaItems.map((m) => m.id),
+    [filteredMediaItems]
+  );
 
   if (!tag) {
     return (
@@ -40,13 +63,36 @@ export default function TagDetailPage() {
 
       {/* Media Section */}
       <Box mb={6}>
-        <Typography variant="h5" gutterBottom sx={{ color: TEXT_PRIMARY }}>
-          Media
-        </Typography>
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: 2,
+            mb: 2,
+          }}
+        >
+          <Typography variant="h5" sx={{ color: TEXT_PRIMARY }}>
+            Media
+          </Typography>
+          <ToggleButtonGroup
+            exclusive
+            size="small"
+            value={mediaFilter}
+            onChange={(_, next) => {
+              if (next) setMediaFilter(next);
+            }}
+          >
+            <ToggleButton value="all">All</ToggleButton>
+            <ToggleButton value="image">Images</ToggleButton>
+            <ToggleButton value="video">Videos</ToggleButton>
+          </ToggleButtonGroup>
+        </Box>
         <Grid container spacing={2}>
-          {(tag.media ?? []).map((m: Media) => (
+          {filteredMediaItems.map((m: Media) => (
             <Grid key={m.id} size={{ xs: 12, sm: 6, md: 4, lg: 3 }}>
-              <MediaCard media={m} />
+              <MediaCard media={m} navigationContext={{ ids: mediaIds }} />
             </Grid>
           ))}
         </Grid>

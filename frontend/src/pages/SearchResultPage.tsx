@@ -1,4 +1,11 @@
-import { Box, CircularProgress, Container, Typography } from "@mui/material";
+import {
+  Box,
+  CircularProgress,
+  Container,
+  Typography,
+  ToggleButton,
+  ToggleButtonGroup,
+} from "@mui/material";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useInView } from "react-intersection-observer";
 import Masonry from "react-masonry-css";
@@ -27,6 +34,8 @@ const breakpointColumnsObj = {
   600: 2,
 };
 
+type MediaFilter = "all" | "image" | "video";
+
 function isMedia(item: MediaPreview | Person | Tag): item is MediaPreview {
   return item && "thumbnail_path" in item;
 }
@@ -37,6 +46,9 @@ function isTag(item: MediaPreview | Person | Tag): item is Tag {
   return (
     item && !("tags" in item) && "name" in item && !("profile_face" in item)
   );
+}
+function isVideoMedia(item: MediaPreview): boolean {
+  return typeof item.duration === "number";
 }
 
 export default function SearchResultsPage() {
@@ -63,6 +75,7 @@ export default function SearchResultsPage() {
   const { fetchInitial, loadMore, removeItem } = useListStore();
   const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
   const [showModelWarmup, setShowModelWarmup] = useState(false);
+  const [mediaFilter, setMediaFilter] = useState<MediaFilter>("all");
 
   useEffect(() => {
     if (inView && hasMore && !isLoading) {
@@ -109,7 +122,34 @@ export default function SearchResultsPage() {
     | Tag
     | SceneSearchResult
   )[];
-  const hasResults = displayItems.length > 0;
+  const mediaItems = useMemo(
+    () => (category === "media" ? displayItems.filter(isMedia) : []),
+    [category, displayItems]
+  );
+  const filteredMediaItems = useMemo(() => {
+    if (mediaFilter === "all") return mediaItems;
+    if (mediaFilter === "video") {
+      return mediaItems.filter(isVideoMedia);
+    }
+    return mediaItems.filter((item) => !isVideoMedia(item));
+  }, [mediaFilter, mediaItems]);
+  const navigationContext = useMemo(
+    () =>
+      category === "media"
+        ? { ids: filteredMediaItems.map((item) => item.id) }
+        : undefined,
+    [category, filteredMediaItems]
+  );
+  const visibleItems =
+    category === "media"
+      ? (filteredMediaItems as (
+          | MediaPreview
+          | Person
+          | Tag
+          | SceneSearchResult
+        )[])
+      : displayItems;
+  const hasResults = visibleItems.length > 0;
   const shouldShowWarmup =
     !hasResults &&
     isLoading &&
@@ -137,7 +177,11 @@ export default function SearchResultsPage() {
     if (isMedia(item)) {
       return (
         <div key={itemKey}>
-          <MediaCard media={item} mediaListKey={listKey} />
+          <MediaCard
+            media={item}
+            mediaListKey={listKey}
+            navigationContext={navigationContext}
+          />
         </div>
       );
     }
@@ -180,6 +224,22 @@ export default function SearchResultsPage() {
       <Typography variant="h4" gutterBottom>
         {title}
       </Typography>
+      {category === "media" && (
+        <Box sx={{ mb: 3, display: "flex", alignItems: "center", gap: 2 }}>
+          <ToggleButtonGroup
+            exclusive
+            size="small"
+            value={mediaFilter}
+            onChange={(_, next) => {
+              if (next) setMediaFilter(next);
+            }}
+          >
+            <ToggleButton value="all">All</ToggleButton>
+            <ToggleButton value="image">Images</ToggleButton>
+            <ToggleButton value="video">Videos</ToggleButton>
+          </ToggleButtonGroup>
+        </Box>
+      )}
       {showModelWarmup && (
         <Box
           sx={{
@@ -203,7 +263,7 @@ export default function SearchResultsPage() {
         className="my-masonry-grid"
         columnClassName="my-masonry-grid_column"
       >
-        {displayItems.map(renderItem)}
+        {visibleItems.map(renderItem)}
       </Masonry>
 
       {isLoading && (
@@ -212,7 +272,7 @@ export default function SearchResultsPage() {
         </Box>
       )}
       {hasMore && !isLoading && <Box ref={loaderRef} sx={{ height: "1px" }} />}
-      {!isLoading && displayItems.length === 0 && (
+      {!isLoading && visibleItems.length === 0 && (
         <Typography sx={{ mt: 4 }}>No results found.</Typography>
       )}
     </Container>

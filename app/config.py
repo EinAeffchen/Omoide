@@ -9,7 +9,13 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 import yaml
-from pydantic import BaseModel, Field, PlainSerializer, computed_field, field_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    PlainSerializer,
+    computed_field,
+    field_validator,
+)
 from typing_extensions import Annotated
 
 from app.logger import configure_file_logging, logger
@@ -438,6 +444,8 @@ class ScanSettings(BaseModel):
     # this option automatically rotates them to the correct direction and removes
     # the exif rotation information
     auto_rotate: bool = True
+    # Skip files that look like thumbnails while scanning media directories
+    skip_thumbnails_on_scan: bool = True
     VIDEO_SUFFIXES: list[str] = [
         ".mp4",
         ".mov",

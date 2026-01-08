@@ -4,14 +4,41 @@ import ReactPlayer from "react-player";
 import { Media } from "../types";
 import { API } from "../config";
 
+const VOLUME_STORAGE_KEY = "smol.video.volume";
+const DEFAULT_VOLUME = 1;
+
+const clampVolume = (value: number) => Math.min(1, Math.max(0, value));
+
+const getStoredVolume = () => {
+  if (typeof window === "undefined") return DEFAULT_VOLUME;
+  try {
+    const stored = window.localStorage.getItem(VOLUME_STORAGE_KEY);
+    if (!stored) return DEFAULT_VOLUME;
+    const parsed = Number(stored);
+    return Number.isFinite(parsed) ? clampVolume(parsed) : DEFAULT_VOLUME;
+  } catch {
+    return DEFAULT_VOLUME;
+  }
+};
+
+const persistVolume = (value: number) => {
+  try {
+    window.localStorage.setItem(VOLUME_STORAGE_KEY, String(value));
+  } catch {
+    // Ignore storage write failures.
+  }
+};
+
 interface VideoWithPreviewProps {
   media: Media;
   initialTime?: number;
+  autoplay?: boolean;
 }
 
 export function VideoWithPreview({
   media,
   initialTime = 0,
+  autoplay = false,
 }: VideoWithPreviewProps) {
   const [isLoading, setIsLoading] = useState(false);
   const mediaUrl = media
@@ -26,6 +53,7 @@ export function VideoWithPreview({
   const [hasAudio, setHasAudio] = useState(true); //Used to calculate timeline width offset
 
   const [cues, setCues] = useState([]);
+  const [volume, setVolume] = useState(() => getStoredVolume());
   const [hoverData, setHoverData] = useState({
     visible: false,
     image: "",
@@ -130,6 +158,39 @@ export function VideoWithPreview({
     setIsReady(true);
   };
 
+  const handleVolumeChange = (nextVolume: number) => {
+    if (!Number.isFinite(nextVolume)) return;
+    const clamped = clampVolume(nextVolume);
+    setVolume(clamped);
+    persistVolume(clamped);
+  };
+
+  useEffect(() => {
+    if (!isReady) return;
+    const internalPlayer = playerRef.current?.getInternalPlayer?.();
+    if (!internalPlayer || !internalPlayer.addEventListener) return;
+
+    const handleInternalVolumeChange = () => {
+      if (!internalPlayer || typeof internalPlayer.volume !== "number") return;
+      handleVolumeChange(internalPlayer.volume);
+    };
+
+    internalPlayer.addEventListener(
+      "volumechange",
+      handleInternalVolumeChange
+    );
+    return () => {
+      try {
+        internalPlayer.removeEventListener(
+          "volumechange",
+          handleInternalVolumeChange
+        );
+      } catch {
+        // Ignore cleanup errors when the player is already disposed.
+      }
+    };
+  }, [isReady]);
+
   useEffect(() => {
     if (!isReady || !playerRef.current) return;
     if (initialTime && initialTime > 0) {
@@ -177,10 +238,11 @@ export function VideoWithPreview({
         url={mediaUrl}
         controls
         playing
+        volume={volume}
         width="100%"
         height="100%"
         style={{ position: "absolute", top: 0, left: 0 }} // Disable pointer events on the player itself
-        light={thumbnailUrl}
+        light={autoplay ? false : thumbnailUrl}
         onReady={handleReady}
         onError={() => setIsLoading(false)}
         // The config track is not needed for the manual implementation

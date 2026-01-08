@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,6 +20,52 @@ from app.utils import generate_thumbnail, process_file
 from .state import clear_task_progress, record_task_failure, set_task_progress
 
 __all__ = ["run_scan"]
+
+THUMBNAIL_DIR_NAMES = {
+    ".thumbs",
+    ".thumbnails",
+    "thumb",
+    "thumbs",
+    "thumbnail",
+    "thumbnails",
+}
+THUMBNAIL_NAME_TOKENS = {"thumb", "thumbs", "thumbnail", "thumbnails"}
+
+
+def _looks_like_thumbnail(path: Path) -> bool:
+    try:
+        parts = [part.lower() for part in path.parts]
+    except Exception:
+        parts = [os.fspath(path).lower()]
+    for part in parts[:-1]:
+        if part in THUMBNAIL_DIR_NAMES:
+            return True
+
+    name = path.stem.lower()
+    if not name:
+        return False
+    tokens = [t for t in re.split(r"[^a-z0-9]+", name) if t]
+    if any(token in THUMBNAIL_NAME_TOKENS for token in tokens):
+        return True
+
+    def has_affix(value: str, affix: str, is_prefix: bool) -> bool:
+        if is_prefix:
+            if not value.startswith(affix):
+                return False
+            if len(value) == len(affix):
+                return True
+            return not value[len(affix)].isalpha()
+        if not value.endswith(affix):
+            return False
+        if len(value) == len(affix):
+            return True
+        return not value[-len(affix) - 1].isalpha()
+
+    for affix in ("thumb", "thumbnail"):
+        if has_affix(name, affix, True) or has_affix(name, affix, False):
+            return True
+
+    return False
 
 
 def _scan_path_key(value: str | Path) -> str:
@@ -78,6 +125,11 @@ def run_scan(task_id: str) -> None:
                             root,
                             exc,
                         )
+                        continue
+                    if (
+                        settings.scan.skip_thumbnails_on_scan
+                        and _looks_like_thumbnail(candidate)
+                    ):
                         continue
                     yield candidate
 

@@ -1174,6 +1174,28 @@ export default function ConfigurationPage() {
               >
                 Applies EXIF orientation to files and normalizes rotation.
               </Typography>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={config.scan.skip_thumbnails_on_scan}
+                    onChange={(e) =>
+                      handleValueChange(
+                        "scan",
+                        "skip_thumbnails_on_scan",
+                        e.target.checked
+                      )
+                    }
+                  />
+                }
+                label="Skip Thumbnails on Scan"
+              />
+              <Typography
+                variant="caption"
+                sx={{ ml: 6, mt: -1, display: "block" }}
+              >
+                Ignores files and folders named like thumbnails (for example,
+                thumb_* or a thumbnails folder).
+              </Typography>
             </FormGroup>
           </Grid>
         </Grid>

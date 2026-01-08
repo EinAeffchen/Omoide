@@ -6,9 +6,10 @@ import { API } from "../config";
 interface MediaDisplayProps {
   media: Media;
   initialTime?: number | null;
+  autoplay?: boolean;
 }
 
-export function MediaDisplay({ media, initialTime }: MediaDisplayProps) {
+export function MediaDisplay({ media, initialTime, autoplay }: MediaDisplayProps) {
   const mediaUrl = (media) ? `${API}/originals/${media.path}` : `${API}/static/brand/404.png`;
   const filename = (media) ? media.filename : "404 Not found";
   const isVideo = typeof media?.duration === "number";
@@ -31,6 +32,7 @@ export function MediaDisplay({ media, initialTime }: MediaDisplayProps) {
             key={media.id}
             media={media}
             initialTime={initialTime ?? undefined}
+            autoplay={autoplay}
           />
         ) : (
           <Box

@@ -383,6 +383,7 @@ export interface AppConfig {
     auto_cleanup_grace_hours: number;
     auto_cluster_on_scan: boolean;
     auto_rotate: boolean;
+    skip_thumbnails_on_scan: boolean;
     VIDEO_SUFFIXES: string[];
     IMAGE_SUFFIXES: string[];
   };
