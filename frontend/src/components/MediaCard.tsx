@@ -23,6 +23,44 @@ function formatDuration(d?: number): string {
   return `${m}:${s}`;
 }
 
+const WINDOWS_ABS_RE = /^[a-zA-Z]:[\\/]/;
+
+function isAbsolutePath(value: string): boolean {
+  return value.startsWith("/") || WINDOWS_ABS_RE.test(value);
+}
+
+function toFileUri(value: string): string | null {
+  if (!value) return null;
+  const normalized = value.replace(/\\/g, "/");
+  if (!isAbsolutePath(normalized)) return null;
+  if (WINDOWS_ABS_RE.test(normalized)) {
+    return `file:///${encodeURI(normalized)}`;
+  }
+  return `file://${encodeURI(normalized)}`;
+}
+
+function guessMimeType(filename: string): string {
+  const ext = filename.split(".").pop()?.toLowerCase();
+  switch (ext) {
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "png":
+      return "image/png";
+    case "gif":
+      return "image/gif";
+    case "bmp":
+      return "image/bmp";
+    case "webp":
+      return "image/webp";
+    case "tif":
+    case "tiff":
+      return "image/tiff";
+    default:
+      return "application/octet-stream";
+  }
+}
+
 interface MediaNavigationContext {
   ids: number[];
 }
@@ -54,6 +92,7 @@ export default function MediaCard({
   const useOriginalGif = memeModeEnabled && isGif;
 
   const isVideo = media ? typeof media.duration === "number" : false;
+  const isDraggable = !!media && !isVideo;
 
   const mediaUrl = media
     ? `${API}/originals/${media.path}`
@@ -111,6 +150,28 @@ export default function MediaCard({
     setIsPlayerActive(false);
   };
 
+  const handleDragStart = (event: React.DragEvent<HTMLElement>) => {
+    if (!media || isVideo) return;
+    const filePath = media.path;
+    const fileUri = toFileUri(filePath);
+    const fallbackUri = fileUri ?? mediaUrl;
+    const downloadUrl = mediaUrl;
+
+    event.dataTransfer.effectAllowed = "copy";
+    const uriList = [downloadUrl, fileUri].filter(Boolean).join("\r\n");
+    event.dataTransfer.setData("text/uri-list", uriList || downloadUrl);
+    event.dataTransfer.setData(
+      "text/plain",
+      isAbsolutePath(filePath) ? filePath : fallbackUri
+    );
+    event.dataTransfer.setData(
+      "DownloadURL",
+      `${guessMimeType(media.filename)}:${media.filename}:${downloadUrl}`
+    );
+    event.dataTransfer.setData("text/html", `<img src="${mediaUrl}">`);
+    event.stopPropagation();
+  };
+
   return (
     <Card
       elevation={0}
@@ -136,16 +197,19 @@ export default function MediaCard({
         replace={!!location.state?.backgroundLocation}
         style={{ textDecoration: "none", color: "inherit" }}
       >
-        <CardActionArea
-          onMouseEnter={isVideo ? handleMouseEnter : undefined}
-          onMouseLeave={isVideo ? handleMouseLeave : undefined}
-          sx={{
-            position: "relative",
-            display: "block",
-            width: "100%",
-            paddingTop: "100%", // 1:1 Aspect Ratio
-          }}
-        >
+          <CardActionArea
+            draggable={isDraggable}
+            onDragStart={isDraggable ? handleDragStart : undefined}
+            onMouseEnter={isVideo ? handleMouseEnter : undefined}
+            onMouseLeave={isVideo ? handleMouseLeave : undefined}
+            sx={{
+              position: "relative",
+              display: "block",
+              width: "100%",
+              paddingTop: "100%", // 1:1 Aspect Ratio
+              cursor: isDraggable ? "grab" : "pointer",
+            }}
+          >
           <Box
             sx={{
               position: "absolute",
