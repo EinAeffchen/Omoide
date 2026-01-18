@@ -29,7 +29,7 @@
         "react-leaflet": "^4.2.1",
         "react-masonry-css": "1.0.16",
         "react-player": "2.16.0",
-        "react-router-dom": "^6.11.2",
+        "react-router-dom": "^7.12.0",
         "react-window": "1.8.11",
         "sucrase": "^3.35.1",
         "use-resize-observer": "9.1.0",

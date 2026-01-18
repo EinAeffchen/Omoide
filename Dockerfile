@@ -1,9 +1,17 @@
 # ---- Stage 0: UV Installer ----
 FROM debian:bookworm-slim AS uv-installer
 ARG UV_VERSION=0.8.3
+ARG TARGETARCH
 RUN apt-get update && apt-get install -y curl ca-certificates --no-install-recommends && \
     mkdir -p /opt/uv && \
-    curl -LsSf "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-x86_64-unknown-linux-gnu.tar.gz" | tar -zxvf - -C /opt/uv && \
+    ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
+    case "${ARCH}" in \
+        amd64|x86_64) UV_TARGET="x86_64-unknown-linux-gnu" ;; \
+        arm64|aarch64) UV_TARGET="aarch64-unknown-linux-gnu" ;; \
+        *) echo "Unsupported architecture: ${ARCH}" && exit 1 ;; \
+    esac && \
+    curl -LsSf "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${UV_TARGET}.tar.gz" | tar -zxf - -C /opt/uv && \
+    cp /opt/uv/uv-${UV_TARGET}/uv /opt/uv/uv && \
     rm -rf /var/lib/apt/lists/*
 
 # ---- Stage 1: Build Frontend (No changes here) ----
@@ -20,6 +28,8 @@ FROM python:3.12-slim
 ARG APP_VERSION=0.0.0-dev
 ARG APP_UID=1000
 ARG APP_GID=1000
+ARG SQLITE_VEC_ARM64_VERSION=0.1.7a2
+ARG TARGETARCH
 ENV UV_PYTHON_DOWNLOADS=never \
     UV_LINK_MODE=copy \
     UV_PROJECT_ENVIRONMENT=/usr/local \
@@ -38,7 +48,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
-COPY --from=uv-installer /opt/uv/uv-x86_64-unknown-linux-gnu/uv /usr/local/bin/uv
+COPY --from=uv-installer /opt/uv/uv /usr/local/bin/uv
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
@@ -53,6 +63,10 @@ ENV HF_HOME=${DATA_DIR}/.omoide/models \
 
 COPY pyproject.toml uv.lock* ./
 RUN uv sync --frozen --no-dev --no-cache
+RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
+    if [ "${ARCH}" = "arm64" ] || [ "${ARCH}" = "aarch64" ]; then \
+        UV_NO_CACHE=1 uv pip install --system "sqlite-vec==${SQLITE_VEC_ARM64_VERSION}"; \
+    fi
 RUN apt-get remove -y build-essential || true
 # 4. Copy application source code, setting ownership directly.
 # This is now separate from the dependency layers.

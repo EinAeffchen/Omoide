@@ -83,7 +83,7 @@ Perfect for NAS or always-on servers.
 
 4.  **Open**: `http://localhost:8123`
 
-> **Note for arm64**: Ensure `sqlite-vec` matches your platform (e.g. 0.1.7a2) and build with `docker buildx`.
+> **Note for arm64**: Ensure `sqlite-vec` matches your platform (e.g. 0.1.7a2) and build with `docker buildx` or `make build-image-arm64`.
 
 ---
 

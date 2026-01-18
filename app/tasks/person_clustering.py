@@ -668,6 +668,18 @@ def assign_to_existing_persons(
 
     with Session(db.engine) as session:
         affected_person_ids: set[int] = set()
+
+        def bump_progress(task: ProcessingTask) -> None:
+            task.processed += 1
+            if task.processed % 100 == 0:
+                if affected_person_ids:
+                    recalculate_person_appearance_counts(
+                        session, affected_person_ids
+                    )
+                    affected_person_ids.clear()
+                session.add(task)
+                safe_commit(session)
+
         for face_id, emb in tqdm(zip(face_ids, embs), total=len(face_ids)):
             face = session.get(Face, face_id)
             task = session.get(ProcessingTask, task_id)
@@ -682,20 +694,12 @@ def assign_to_existing_persons(
                     "Skipping face %s due to invalid embedding payload",
                     face_id,
                 )
-                task.processed += 1
-                if task.processed % 100 == 0:
-                    if affected_person_ids:
-                        recalculate_person_appearance_counts(
-                            session, affected_person_ids
-                        )
-                        affected_person_ids.clear()
-                    session.add(task)
-                    safe_commit(session)
+                bump_progress(task)
                 continue
 
             sql = text(
                 """
-                    SELECT distance FROM person_embeddings
+                    SELECT person_id, distance FROM person_embeddings
                     WHERE embedding MATCH :vec
                     and k = 2
                     ORDER BY distance
@@ -703,12 +707,14 @@ def assign_to_existing_persons(
             ).bindparams(vec=vec_param)
             rows = session.exec(sql).all()
 
-            if not rows or not len(rows[0]) > 1:
+            if not rows or len(rows[0]) < 2:
                 unassigned.append(face_id)
+                bump_progress(task)
                 continue
 
             if not _distance_to_similarity(rows[0][1]) >= threshold_per:
                 unassigned.append(face_id)
+                bump_progress(task)
                 continue
 
             person_id = rows[0][0]
@@ -723,15 +729,7 @@ def assign_to_existing_persons(
                 )
                 if (best_cos - second_cos) < float(min_margin):
                     unassigned.append(face_id)
-                    task.processed += 1
-                    if task.processed % 100 == 0:
-                        if affected_person_ids:
-                            recalculate_person_appearance_counts(
-                                session, affected_person_ids
-                            )
-                            affected_person_ids.clear()
-                        session.add(task)
-                        safe_commit(session)
+                    bump_progress(task)
                     continue
 
             if person_id is None:
@@ -742,15 +740,7 @@ def assign_to_existing_persons(
                     text("DELETE FROM person_embeddings WHERE person_id IS NULL")
                 )
                 unassigned.append(face_id)
-                task.processed += 1
-                if task.processed % 100 == 0:
-                    if affected_person_ids:
-                        recalculate_person_appearance_counts(
-                            session, affected_person_ids
-                        )
-                        affected_person_ids.clear()
-                    session.add(task)
-                    safe_commit(session)
+                bump_progress(task)
                 continue
 
             person = session.get(Person, person_id)
@@ -768,15 +758,7 @@ def assign_to_existing_persons(
                     ).bindparams(p_id=person_id)
                 )
                 unassigned.append(face_id)
-                task.processed += 1
-                if task.processed % 100 == 0:
-                    if affected_person_ids:
-                        recalculate_person_appearance_counts(
-                            session, affected_person_ids
-                        )
-                        affected_person_ids.clear()
-                    session.add(task)
-                    safe_commit(session)
+                bump_progress(task)
                 continue
 
             min_apps = getattr(
@@ -786,15 +768,7 @@ def assign_to_existing_persons(
             )
             if (person.appearance_count or 0) < int(min_apps):
                 unassigned.append(face_id)
-                task.processed += 1
-                if task.processed % 100 == 0:
-                    if affected_person_ids:
-                        recalculate_person_appearance_counts(
-                            session, affected_person_ids
-                        )
-                        affected_person_ids.clear()
-                    session.add(task)
-                    safe_commit(session)
+                bump_progress(task)
                 continue
 
             if face is not None:
@@ -818,14 +792,7 @@ def assign_to_existing_persons(
                     face_id,
                 )
 
-            task.processed += 1
-
-            if task.processed % 100 == 0:
-                if affected_person_ids:
-                    recalculate_person_appearance_counts(session, affected_person_ids)
-                    affected_person_ids.clear()
-                session.add(task)
-                safe_commit(session)
+            bump_progress(task)
 
         if affected_person_ids:
             recalculate_person_appearance_counts(session, affected_person_ids)

@@ -41,17 +41,22 @@ docker-down:
 backup:
 	sqlite3 ".backup ${HOST_DATA_DIR}/omoide.db '${HOST_MEDIA_DIR}/db.backup'"
 
-build-image:
+build-image: build-image-arm64
 	docker build --build-arg APP_VERSION=${VERSION} -t omoide .
 	docker tag omoide einaeffchen/omoide:latest
 	docker tag omoide einaeffchen/omoide:${VERSION}
 
+build-image-arm64:
+	docker buildx build --platform=linux/arm64 --build-arg APP_VERSION=${VERSION} -t omoide:${VERSION}.arm64 --load .
+	docker tag omoide:${VERSION}.arm64 einaeffchen/omoide:${VERSION}.arm64
+
 build-release: build-image
 	git tag v${VERSION} -m "Release v${VERSION}"
 
-push: build-image
+push: #build-release
 	docker push einaeffchen/omoide:latest
-	docker push einaeffchen/omoide:${VERSION}
+	docker push einaeffchen/omoide:${VERSION}	
+	docker push einaeffchen/omoide:${VERSION}.arm64	
 	git push origin v${VERSION}
 
 alembic-generate:

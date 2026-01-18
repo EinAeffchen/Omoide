@@ -154,7 +154,13 @@ class AutoTagger(MediaProcessor):
         session: Session,
         scenes: list[tuple[Scene, MatLike]] | list[ImageFile] | list[Scene],
     ) -> bool | None:
-        if media.ran_auto_tagging is True or media.embeddings_created is False:
+        if media.ran_auto_tagging is True:
+            return True
+        if media.embeddings_created is False:
+            if not settings.processors.image_embedding_processor_active:
+                media.ran_auto_tagging = True
+                session.add(media)
+                safe_commit(session)
             return True
 
         sql = text(
@@ -175,8 +181,10 @@ class AutoTagger(MediaProcessor):
             )
 
             media.embeddings_created = False
+            if not settings.processors.image_embedding_processor_active:
+                media.ran_auto_tagging = True
             session.add(media)
-            session.commit()
+            safe_commit(session)
             return True
         media_embedding = vector_from_stored(raw_media_embedding_bytes[0])
         if media_embedding is None or media_embedding.size == 0:
@@ -184,6 +192,11 @@ class AutoTagger(MediaProcessor):
                 "AutoTagger: Failed to decode embedding for %s; skipping",
                 media.path,
             )
+            media.embeddings_created = False
+            if not settings.processors.image_embedding_processor_active:
+                media.ran_auto_tagging = True
+            session.add(media)
+            safe_commit(session)
             return True
         for tag, tag_vector in self.tag_map.items():
             similarity_score = np.dot(media_embedding, tag_vector)
