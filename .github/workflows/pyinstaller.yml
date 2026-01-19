@@ -229,12 +229,13 @@ jobs:
           import shutil
 
           src = pathlib.Path(os.environ['APP_ARTIFACT_PATH']).resolve()
-          base = pathlib.Path(os.environ['APP_ARTIFACT_BASENAME']).resolve()
-          archive = base.with_suffix('.zip')
+          archive = pathlib.Path(os.environ['APP_ARTIFACT_ARCHIVE']).resolve()
+          base = archive.with_suffix('')
           archive.parent.mkdir(parents=True, exist_ok=True)
           if archive.exists():
               archive.unlink()
-          shutil.make_archive(str(base), 'zip', root_dir=src.parent, base_dir=src.name)
+          result = shutil.make_archive(str(base), 'zip', root_dir=src.parent, base_dir=src.name)
+          archive = pathlib.Path(result).resolve()
           print(f'Created archive at {archive}')
 
           limit = int(os.environ.get('APP_ARTIFACT_SPLIT_BYTES', str(1900 * 1024 * 1024)))
