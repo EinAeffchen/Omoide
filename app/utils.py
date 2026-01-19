@@ -22,6 +22,7 @@ from sqlalchemy import delete, distinct, func, or_, text
 from sqlmodel import Session, delete, select, text, update
 from tqdm import tqdm
 
+from app.accelerators import get_ffmpeg_accel_config
 from app.config import ReadOnlyMediaError, settings
 from app.database import safe_commit
 from app.ffmpeg import ensure_ffmpeg_available
@@ -530,8 +531,11 @@ def generate_thumbnail(media: Media) -> tuple[str | None, str | None]:
     filepath = Path(media.path)
     if filepath.suffix.lower() in settings.scan.VIDEO_SUFFIXES:
         # Use direct subprocess to enforce a timeout; skip on failure
+        prefer_gpu = settings.general.enable_gpu
+        accel = get_ffmpeg_accel_config(prefer_gpu)
         cmd = [
             "ffmpeg",
+            *accel.hwaccel_args,
             "-hide_banner",
             "-loglevel",
             "error",
@@ -730,6 +734,8 @@ def _split_by_frames(media: Media) -> list[tuple[Scene, cv2.typing.MatLike]]:
             "ffmpeg is required to extract scenes but could not be provisioned."
         )
         return []
+    prefer_gpu = settings.general.enable_gpu
+    accel = get_ffmpeg_accel_config(prefer_gpu)
 
     duration = media.duration or 0.0
     if not duration:
@@ -758,6 +764,7 @@ def _split_by_frames(media: Media) -> list[tuple[Scene, cv2.typing.MatLike]]:
         try:
             cmd = [
                 str(ffmpeg_binary),
+                *accel.hwaccel_args,
                 "-hide_banner",
                 "-loglevel",
                 "error",

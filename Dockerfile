@@ -30,10 +30,14 @@ ARG APP_UID=1000
 ARG APP_GID=1000
 ARG SQLITE_VEC_ARM64_VERSION=0.1.7a2
 ARG TARGETARCH
+ARG OMOIDE_BUILD_FLAVOR=cpu
 ENV UV_PYTHON_DOWNLOADS=never \
     UV_LINK_MODE=copy \
     UV_PROJECT_ENVIRONMENT=/usr/local \
-    OMOIDE_VERSION=${APP_VERSION}
+    OMOIDE_VERSION=${APP_VERSION} \
+    OMOIDE_BUILD_FLAVOR=${OMOIDE_BUILD_FLAVOR} \
+    OMOIDE_GPU_BUILD=${OMOIDE_BUILD_FLAVOR} \
+    OMOIDE_FFMPEG_VARIANT=${OMOIDE_BUILD_FLAVOR}
 # Create a non-root user and group first
 RUN groupadd --gid ${APP_GID} appgroup && \
     useradd --uid ${APP_UID} --gid appgroup -s /bin/sh -m appuser
@@ -67,12 +71,21 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     if [ "${ARCH}" = "arm64" ] || [ "${ARCH}" = "aarch64" ]; then \
         UV_NO_CACHE=1 uv pip install --system "sqlite-vec==${SQLITE_VEC_ARM64_VERSION}"; \
     fi
+RUN if [ "${OMOIDE_BUILD_FLAVOR}" = "gpu" ]; then \
+        python -m pip uninstall -y onnxruntime || true; \
+        python -m pip install --index-url https://download.pytorch.org/whl/cu121 \
+            "torch>=2.8.0" "torchvision>=0.23.0" "torchaudio>=2.8.0"; \
+        python -m pip install "onnxruntime-gpu==1.21.1"; \
+    fi
 RUN apt-get remove -y build-essential || true
 # 4. Copy application source code, setting ownership directly.
 # This is now separate from the dependency layers.
 COPY --chown=appuser:appgroup ./app ./app
 COPY --chown=appuser:appgroup alembic /app/alembic
 COPY --chown=appuser:appgroup alembic.ini /app/alembic.ini
+RUN if [ "${OMOIDE_BUILD_FLAVOR}" = "gpu" ]; then \
+        touch /app/app/GPU_BUILD; \
+    fi
 
 # 5. Copy frontend assets from the build stage.
 COPY --from=frontend-builder --chown=appuser:appgroup /app/frontend/dist /app/static

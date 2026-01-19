@@ -72,6 +72,55 @@ def _build_breadcrumbs(parts: list[str]) -> list[MediaFolderBreadcrumb]:
     return breadcrumbs
 
 
+def _is_within(path: Path, base: Path) -> bool:
+    try:
+        path.relative_to(base)
+        return True
+    except ValueError:
+        return False
+
+
+def _resolve_media_parent(path_value: str) -> tuple[Path | None, Path | None]:
+    raw = Path(path_value)
+    media_dirs = [base for base, _ in settings.general.resolved_media_dirs()]
+    candidates: list[Path] = []
+
+    if raw.is_absolute():
+        candidates.append(raw)
+    else:
+        candidates.append(Path("/") / raw)
+
+    for media_dir in media_dirs:
+        candidates.append(media_dir / raw)
+
+    seen: set[Path] = set()
+    for candidate in candidates:
+        try:
+            normalized = candidate.resolve(strict=False)
+        except RuntimeError:
+            continue
+
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+
+        if media_dirs and not any(
+            _is_within(normalized, media_dir) for media_dir in media_dirs
+        ):
+            continue
+
+        if normalized.exists():
+            if normalized.is_dir():
+                return normalized, None
+            return normalized.parent, normalized
+
+        parent = normalized.parent
+        if parent.exists():
+            return parent, None
+
+    return None, None
+
+
 @dataclass
 class _FolderAccumulator:
     path: str
@@ -472,16 +521,21 @@ def open_media_folder(
     if not media:
         raise HTTPException(404, "Media not found")
 
-    media_path = Path(media.path)
-    parent = media_path.parent
-    if not parent.exists():
+    parent, resolved_file = _resolve_media_parent(media.path)
+    if not parent or not parent.exists():
         raise HTTPException(404, "Media directory not found")
 
     try:
         if sys.platform.startswith("win"):
-            popen_silent(["explorer", str(parent)])
+            if resolved_file and resolved_file.exists():
+                popen_silent(["explorer", "/select,", str(resolved_file)])
+            else:
+                popen_silent(["explorer", str(parent)])
         elif sys.platform == "darwin":
-            popen_silent(["open", str(parent)])
+            if resolved_file and resolved_file.exists():
+                popen_silent(["open", "-R", str(resolved_file)])
+            else:
+                popen_silent(["open", str(parent)])
         else:
             # Linux and others
             popen_silent(["xdg-open", str(parent)])

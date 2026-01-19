@@ -14,12 +14,16 @@ jobs:
   build:
     name: Build ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    env:
+      APP_FLAVOR: ${{ matrix.flavor }}
+      OMOIDE_BUILD_FLAVOR: ${{ matrix.flavor }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest] #, macos-latest]
         python-version: [ '3.12' ]
         node-version: [ '20' ]
+        flavor: [cpu, gpu]
 
     steps:
       - name: Checkout
@@ -87,21 +91,36 @@ jobs:
           # Handle renamed package on newer Ubuntu
           sudo apt-get install -y libasound2 || sudo apt-get install -y libasound2t64
 
-      - name: Install Python dependencies
+      - name: Install Python dependencies (CPU)
+        if: matrix.flavor == 'cpu'
         shell: bash
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip wheel
           # Preinstall CPU torch/torchvision to avoid GPU wheels
-          python -m pip install --extra-index-url https://download.pytorch.org/whl/cpu torch>=2.8.0 torchvision>=0.23.0
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch>=2.8.0 torchvision>=0.23.0
           # Install remaining project dependencies (excluding torch/vision)
           python -m pip install -r requirements-ci.txt
+
+      - name: Install Python dependencies (GPU)
+        if: matrix.flavor == 'gpu'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip wheel
+          # Install CUDA-enabled torch/torchvision
+          python -m pip install --index-url https://download.pytorch.org/whl/cu121 torch>=2.8.0 torchvision>=0.23.0
+          # Install remaining project dependencies (excluding torch/vision)
+          python -m pip install -r requirements-ci.txt
+          # Swap to GPU ONNX runtime
+          python -m pip uninstall -y onnxruntime || true
+          python -m pip install onnxruntime-gpu==1.21.1
 
       - name: Set artifact metadata
         shell: bash
         run: |
           VERSION_SAFE=${APP_VERSION_SAFE:-$APP_VERSION}
-          BASENAME="omoide-${VERSION_SAFE}"
+          BASENAME="omoide-${VERSION_SAFE}-${{ matrix.flavor }}"
           OS_SUFFIX="${RUNNER_OS,,}"
           echo "APP_NAME=${BASENAME}" >> $GITHUB_ENV
           echo "APP_ARTIFACT_PATH=dist/${BASENAME}" >> $GITHUB_ENV
@@ -111,6 +130,16 @@ jobs:
         run: |
           python -V
           pip list
+
+      - name: Mark GPU build
+        if: matrix.flavor == 'gpu'
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          Path("app").mkdir(parents=True, exist_ok=True)
+          Path("app/GPU_BUILD").write_text("gpu", encoding="utf-8")
+          PY
 
       - name: Clean previous build artifacts
         run: python -c "import shutil, pathlib; [shutil.rmtree(pathlib.Path(p), ignore_errors=True) for p in ('build','dist')]"
@@ -212,7 +241,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: omoide-${{ runner.os }}-${{ env.APP_VERSION }}
+          name: omoide-${{ runner.os }}-${{ env.APP_VERSION }}-${{ matrix.flavor }}
           path: ${{ env.APP_ARTIFACT_ARCHIVE }}
           if-no-files-found: error
 

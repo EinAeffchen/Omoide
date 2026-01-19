@@ -96,6 +96,8 @@ datas = [
     ('app/models/scrfd_2.5g_bnkps.onnx', '.'),
     ('app/VERSION', 'app'),
 ]
+if Path('app/GPU_BUILD').exists():
+    datas.append(('app/GPU_BUILD', 'app'))
 datas += collect_data_files('open_clip', include_py_files=True)
 
 # Collect all submodules of our in-repo `app` package to ensure they are bundled.
@@ -314,7 +316,12 @@ def _resolve_version():
 
 APP_VERSION = _resolve_version()
 APP_VERSION_FS = re.sub(r"[^A-Za-z0-9._-]", "_", APP_VERSION)
-APP_NAME = f"omoide-{APP_VERSION_FS}"
+APP_FLAVOR = os.environ.get('APP_FLAVOR') or os.environ.get('OMOIDE_BUILD_FLAVOR')
+if APP_FLAVOR:
+    APP_FLAVOR_FS = re.sub(r"[^A-Za-z0-9._-]", "_", APP_FLAVOR)
+    APP_NAME = f"omoide-{APP_VERSION_FS}-{APP_FLAVOR_FS}"
+else:
+    APP_NAME = f"omoide-{APP_VERSION_FS}"
 
 def _pick_icon_path() -> str | None:
     candidates: list[str]

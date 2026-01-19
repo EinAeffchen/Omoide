@@ -4,6 +4,7 @@ import os
 import platform
 import shutil
 import stat
+import tarfile
 import tempfile
 import zipfile
 from pathlib import Path
@@ -18,12 +19,69 @@ FFMPEG_RELEASES: dict[str, dict[str, str]] = {
         "archive_name": "ffmpeg-release-essentials.zip",
         "binary_name": "ffmpeg.exe",
     },
+    # GPU-oriented Windows build (GPL). Prefer only when explicitly requested.
+    "windows-gpu": {
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip",
+        "archive_name": "ffmpeg-gpu.zip",
+        "binary_name": "ffmpeg.exe",
+    },
+    # GPU-oriented Linux builds (GPL). Prefer only when explicitly requested.
+    "linux-gpu-x86_64": {
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz",
+        "archive_name": "ffmpeg-gpu-linux.tar.xz",
+        "binary_name": "ffmpeg",
+    },
+    "linux-gpu-arm64": {
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linuxarm64-gpl.tar.xz",
+        "archive_name": "ffmpeg-gpu-linuxarm64.tar.xz",
+        "binary_name": "ffmpeg",
+    },
     "darwin": {
         "url": "https://evermeet.cx/ffmpeg/ffmpeg-6.1.zip",
         "archive_name": "ffmpeg-macos.zip",
         "binary_name": "ffmpeg",
     },
 }
+
+
+def _is_truthy(value: str | None) -> bool:
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on", "gpu"}
+
+
+def _gpu_build_marker() -> bool:
+    try:
+        return (Path(__file__).resolve().parent / "GPU_BUILD").exists()
+    except Exception:
+        return False
+
+
+def _is_x86_64(machine: str) -> bool:
+    return machine in {"x86_64", "amd64"}
+
+
+def _is_arm64(machine: str) -> bool:
+    return machine in {"arm64", "aarch64"}
+
+
+def _select_release(current_platform: str) -> dict[str, str] | None:
+    variant = os.environ.get("OMOIDE_FFMPEG_VARIANT", "").strip().lower()
+    if current_platform == "windows":
+        if variant in {"gpu", "full", "btbn", "gpl"} or _is_truthy(
+            os.environ.get("OMOIDE_GPU_BUILD")
+        ) or _gpu_build_marker():
+            return FFMPEG_RELEASES.get("windows-gpu")
+    if current_platform == "linux":
+        if variant in {"gpu", "full", "btbn", "gpl"} or _is_truthy(
+            os.environ.get("OMOIDE_GPU_BUILD")
+        ) or _gpu_build_marker():
+            machine = platform.machine().lower()
+            if _is_arm64(machine):
+                return FFMPEG_RELEASES.get("linux-gpu-arm64")
+            if _is_x86_64(machine):
+                return FFMPEG_RELEASES.get("linux-gpu-x86_64")
+    return FFMPEG_RELEASES.get(current_platform)
 
 
 def _find_existing_ffmpeg(custom_path: Path | None) -> Path | None:
@@ -64,9 +122,13 @@ def _download_and_extract(url: str, archive_name: str, target_dir: Path) -> Path
         archive_path = Path(tmpdir) / archive_name
         archive_path.write_bytes(data)
         try:
-            with zipfile.ZipFile(archive_path) as zf:
-                zf.extractall(target_dir)
-        except zipfile.BadZipFile as exc:
+            if archive_name.endswith((".tar.xz", ".txz", ".tar.gz", ".tgz")):
+                with tarfile.open(archive_path, mode="r:*") as tf:
+                    tf.extractall(target_dir)
+            else:
+                with zipfile.ZipFile(archive_path) as zf:
+                    zf.extractall(target_dir)
+        except (zipfile.BadZipFile, tarfile.TarError) as exc:
             logger.warning("Downloaded ffmpeg archive is invalid: %s", exc)
             return None
 
@@ -99,13 +161,13 @@ def ensure_ffmpeg_available() -> Path | None:
         return existing
 
     current_platform = platform.system().lower()
-    if current_platform not in FFMPEG_RELEASES:
+    release_info = _select_release(current_platform)
+    if not release_info:
         logger.warning(
             "ffmpeg not found on PATH. Please install ffmpeg manually and set OMOIDE_GENERAL__ffmpeg_path."
         )
         return None
 
-    release_info = FFMPEG_RELEASES[current_platform]
     tools_dir = settings.general.data_dir / "tools"
     install_dir = tools_dir / "ffmpeg"
     install_dir.mkdir(parents=True, exist_ok=True)

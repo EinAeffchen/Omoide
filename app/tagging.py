@@ -11,6 +11,13 @@ from app.config import get_clip_bundle
 SIMILARITY_THRESHOLD: float = 0.2
 
 
+def _clip_device(model: torch.nn.Module) -> torch.device:
+    try:
+        return next(model.parameters()).device
+    except StopIteration:
+        return torch.device("cpu")
+
+
 def sanitize_custom_tag_list(raw_tags: Iterable[str]) -> list[str]:
     """Normalize user-provided tag strings while preserving order.
 
@@ -40,6 +47,9 @@ def build_tag_vector_map(tags: Sequence[str]) -> dict[str, np.ndarray]:
 
     model, _, tokenizer = get_clip_bundle()
     tokens = tokenizer(list(tags))
+    device = _clip_device(model)
+    if hasattr(tokens, "to"):
+        tokens = tokens.to(device)
     with torch.no_grad():
         embeddings = model.encode_text(tokens)
         embeddings = embeddings / embeddings.norm(dim=-1, keepdim=True)

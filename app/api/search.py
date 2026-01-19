@@ -37,6 +37,12 @@ def encode_uploaded_image(image_bytes: bytes) -> np.ndarray:
     import torch
     clip_model, preprocess, _ = get_clip_bundle()
     image_transformed = preprocess(image).unsqueeze(0)
+    try:
+        device = next(clip_model.parameters()).device
+    except StopIteration:
+        device = torch.device("cpu")
+    if hasattr(image_transformed, "to"):
+        image_transformed = image_transformed.to(device)
     with torch.no_grad():
         image_feat = clip_model.encode_image(image_transformed)
         image_feat /= image_feat.norm(dim=-1, keepdim=True)
@@ -49,6 +55,12 @@ def encode_text_query(query: str) -> np.ndarray:
     import torch
     clip_model, _, tokenizer = get_clip_bundle()
     tokenized = tokenizer([query])
+    try:
+        device = next(clip_model.parameters()).device
+    except StopIteration:
+        device = torch.device("cpu")
+    if hasattr(tokenized, "to"):
+        tokenized = tokenized.to(device)
     with torch.no_grad():
         text_feat = clip_model.encode_text(tokenized)
     text_feat /= text_feat.norm(dim=-1, keepdim=True)

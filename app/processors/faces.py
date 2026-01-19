@@ -11,6 +11,7 @@ from sqlmodel import select, text
 from tqdm import tqdm
 
 from app.api.media import delete_media_record
+from app.accelerators import resolve_onnx_providers
 from app.config import settings
 from app.database import safe_commit
 from app.logger import logger
@@ -184,15 +185,18 @@ class FaceProcessor(MediaProcessor):
         os.environ.setdefault("ORT_DISABLE_MEMORY_ARENA", "1")
         # Import InsightFace lazily to speed up application startup
         from insightface.app import FaceAnalysis
+        prefer_gpu = settings.general.enable_gpu
+        providers, uses_gpu = resolve_onnx_providers(prefer_gpu)
         self.model = FaceAnalysis(
             "buffalo_l",
             root=str(settings.general.models_dir),
             # Avoid 3D landmark module which can error on some frames.
             allowed_modules=["detection", "landmark_2d_106", "recognition"],
-            providers=["CPUExecutionProvider"],
+            providers=providers,
         )
-        # Use CPU explicitly. Set a stable detector input size.
-        self.model.prepare(ctx_id=-1, det_size=(640, 640))
+        # Use CPU explicitly when GPU providers are unavailable.
+        ctx_id = 0 if uses_gpu else -1
+        self.model.prepare(ctx_id=ctx_id, det_size=(640, 640))
 
     def unload(self):
         try:

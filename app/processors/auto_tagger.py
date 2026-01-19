@@ -140,6 +140,12 @@ class AutoTagger(MediaProcessor):
 
     def _tag_to_vector(self, tag) -> np.ndarray:
         tokenized_text = self._tokenizer([tag])
+        try:
+            device = next(self._clip_model.parameters()).device
+        except StopIteration:
+            device = torch.device("cpu")
+        if hasattr(tokenized_text, "to"):
+            tokenized_text = tokenized_text.to(device)
         with torch.no_grad():
             # Encode the tokenized text
             text_embedding = self._clip_model.encode_text(tokenized_text)

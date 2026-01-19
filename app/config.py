@@ -280,6 +280,8 @@ class GeneralSettings(BaseModel):
     is_docker: bool = bool(os.environ.get("IS_DOCKER", False))
     # Whether the app is running as a packaged/binary executable (e.g., PyInstaller)
     is_binary: bool = bool(getattr(sys, "frozen", False))
+    # Prefer GPU acceleration when available.
+    enable_gpu: bool = True
     # Maximum nodes to request for the person relationship graph
     person_relationship_max_nodes: int = 100
     # Which host the system runs on. Mostly only relevant if hosted online.
@@ -762,7 +764,11 @@ def load_settings() -> AppSettings:
 
     _apply_env_overrides(config_data)
     # 3. Load into Pydantic model. This applies defaults for any missing values.
-    return AppSettings.model_validate(config_data)
+    settings_model = AppSettings.model_validate(config_data)
+    # Runtime-only flags should not be overridden by persisted config.
+    settings_model.general.is_binary = bool(getattr(sys, "frozen", False))
+    settings_model.general.is_docker = bool(os.environ.get("IS_DOCKER", False))
+    return settings_model
 
 
 def _sanitize_for_save(settings_model: AppSettings) -> dict:
@@ -785,6 +791,8 @@ def _sanitize_for_save(settings_model: AppSettings) -> dict:
         "models_dir",
         "static_dir",
         "database_url",
+        "is_binary",
+        "is_docker",
     ]:
         general.pop(k, None)
     data["general"] = general
@@ -804,17 +812,20 @@ def save_settings(settings_model: AppSettings):
 
 
 def get_model(settings: AppSettings):
-    """Create a new OpenCLIP model bundle on CPU.
+    """Create a new OpenCLIP model bundle on the selected device.
 
     Note: This constructs a fresh model; callers should prefer the
     acquire_clip()/get_clip_bundle() helpers below to reuse a shared instance.
     """
     import open_clip
+    from app.accelerators import resolve_torch_device
 
+    prefer_gpu = settings.general.enable_gpu
+    device = resolve_torch_device(prefer_gpu)
     model, preprocess, _ = open_clip.create_model_and_transforms(
         settings.ai.clip_model.model_name,
         pretrained=settings.ai.clip_model_pretrained,
-        device="cpu",
+        device=device,
     )
 
     tokenizer = open_clip.get_tokenizer(settings.ai.clip_model.model_name)

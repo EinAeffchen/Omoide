@@ -7,6 +7,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlmodel import Session
 
 import app.database as db
+from app.accelerators import get_ffmpeg_accel_config
 from app.config import ReadOnlyMediaError, settings
 from app.database import get_session
 from app.logger import logger
@@ -102,14 +103,18 @@ def _run_conversion(task_id: str, media_path: str, media_id: int):
             info = ffmpeg.probe(str(media_path_obj))
             dur_s = float(info["format"]["duration"])
             dur_us = dur_s * 1000000
+            prefer_gpu = settings.general.enable_gpu
+            accel = get_ffmpeg_accel_config(prefer_gpu)
+            video_encoder = accel.video_encoder or "libx264"
             # run ffmpeg with stderr piped so we can parse “progress=…”
             # Here’s one way using the “-progress” flag:
             cmd = [
                 "ffmpeg",
+                *accel.hwaccel_args,
                 "-i",
                 str(media_path_obj),
                 "-c:v",
-                "libx264",
+                video_encoder,
                 "-filter:v",
                 "fps=30",
                 "-pix_fmt",

@@ -25,6 +25,10 @@ class EmbeddingExtractor(MediaProcessor):
             self.active = True
             # Use shared CLIP bundle; keep it warm to avoid repeated init
             self._clip_model, self._preprocess, _ = get_clip_bundle()
+            try:
+                self._clip_device = next(self._clip_model.parameters()).device
+            except StopIteration:
+                self._clip_device = torch.device("cpu")
 
     def unload(self):
         # Keep CLIP warm; no action needed here to avoid per-task reinit
@@ -40,6 +44,8 @@ class EmbeddingExtractor(MediaProcessor):
         except OSError as e:
             logger.error("EmbeddingExtractor: failed to preprocess image for %s due to %s", getattr(media_obj, 'filename', 'image'), e)
             return False
+        if hasattr(self, "_clip_device"):
+            img_tensor = img_tensor.to(self._clip_device)
         with torch.no_grad():
             img_features = self._clip_model.encode_image(img_tensor)
         img_features /= img_features.norm(dim=-1, keepdim=True)
