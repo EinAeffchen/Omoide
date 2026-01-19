@@ -124,7 +124,9 @@ jobs:
           OS_SUFFIX="${RUNNER_OS,,}"
           echo "APP_NAME=${BASENAME}" >> $GITHUB_ENV
           echo "APP_ARTIFACT_PATH=dist/${BASENAME}" >> $GITHUB_ENV
+          echo "APP_ARTIFACT_BASENAME=dist/${BASENAME}-${OS_SUFFIX}" >> $GITHUB_ENV
           echo "APP_ARTIFACT_ARCHIVE=dist/${BASENAME}-${OS_SUFFIX}.zip" >> $GITHUB_ENV
+          echo "APP_ARTIFACT_PATTERN=dist/${BASENAME}-${OS_SUFFIX}*" >> $GITHUB_ENV
 
       - name: Show dependency versions (debug)
         run: |
@@ -217,6 +219,7 @@ jobs:
         shell: pwsh
         env:
           APP_ARTIFACT_PATH: ${{ env.APP_ARTIFACT_PATH }}
+          APP_ARTIFACT_BASENAME: ${{ env.APP_ARTIFACT_BASENAME }}
           APP_ARTIFACT_ARCHIVE: ${{ env.APP_ARTIFACT_ARCHIVE }}
         run: |
           $ErrorActionPreference = 'Stop'
@@ -226,13 +229,53 @@ jobs:
           import shutil
 
           src = pathlib.Path(os.environ['APP_ARTIFACT_PATH']).resolve()
-          archive = pathlib.Path(os.environ['APP_ARTIFACT_ARCHIVE']).resolve()
+          base = pathlib.Path(os.environ['APP_ARTIFACT_BASENAME']).resolve()
+          archive = base.with_suffix('.zip')
           archive.parent.mkdir(parents=True, exist_ok=True)
           if archive.exists():
               archive.unlink()
-          base = archive.with_suffix('')
           shutil.make_archive(str(base), 'zip', root_dir=src.parent, base_dir=src.name)
           print(f'Created archive at {archive}')
+
+          limit = int(os.environ.get('APP_ARTIFACT_SPLIT_BYTES', str(1900 * 1024 * 1024)))
+          size = archive.stat().st_size
+          if size <= limit:
+              raise SystemExit(0)
+
+          parts = []
+          part_idx = 1
+          buffer_size = 8 * 1024 * 1024
+          with archive.open('rb') as src_f:
+              while True:
+                  part_path = archive.with_name(f"{archive.name}.part{part_idx:02d}")
+                  written = 0
+                  with part_path.open('wb') as dst_f:
+                      while written < limit:
+                          chunk = src_f.read(min(buffer_size, limit - written))
+                          if not chunk:
+                              break
+                          dst_f.write(chunk)
+                          written += len(chunk)
+                  if written == 0:
+                      part_path.unlink(missing_ok=True)
+                      break
+                  parts.append(part_path)
+                  if written < limit:
+                      break
+                  part_idx += 1
+
+          if parts:
+              archive.unlink(missing_ok=True)
+              note = archive.with_suffix(archive.suffix + '.parts.txt')
+              note.write_text(
+                  'Archive split into parts because it exceeded the 2GB GitHub release limit.\\n'
+                  'Reassemble on Windows: copy /b ' +
+                  ' + '.join(p.name for p in parts) + f' {archive.name}\\n'
+                  'Reassemble on Linux/macOS: cat ' +
+                  ' '.join(p.name for p in parts) + f' > {archive.name}\\n',
+                  encoding='utf-8'
+              )
+              print(f'Split archive into {len(parts)} parts')
           '@
           $tempPath = Join-Path $env:RUNNER_TEMP 'package_artifact.py'
           Set-Content -Path $tempPath -Value $packageScript -Encoding UTF8
@@ -242,7 +285,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: omoide-${{ runner.os }}-${{ env.APP_VERSION }}-${{ matrix.flavor }}
-          path: ${{ env.APP_ARTIFACT_ARCHIVE }}
+          path: ${{ env.APP_ARTIFACT_PATTERN }}
           if-no-files-found: error
 
   release:
