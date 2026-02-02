@@ -17,7 +17,6 @@ jobs:
     env:
       APP_FLAVOR: ${{ matrix.flavor }}
       OMOIDE_BUILD_FLAVOR: ${{ matrix.flavor }}
-      PIP_NO_CACHE_DIR: "1"
     strategy:
       fail-fast: false
       matrix:
@@ -54,6 +53,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
+          cache-dependency-path: requirements-ci.txt
 
       - name: Free disk space (Linux)
         if: runner.os == 'Linux'
@@ -116,9 +116,9 @@ jobs:
           set -euo pipefail
           python -m pip install --upgrade pip wheel
           # Preinstall CPU torch/torchvision to avoid GPU wheels
-          python -m pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch>=2.8.0 torchvision>=0.23.0
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch>=2.8.0 torchvision>=0.23.0
           # Install remaining project dependencies (excluding torch/vision)
-          python -m pip install --no-cache-dir -r requirements-ci.txt
+          python -m pip install -r requirements-ci.txt
 
       - name: Install Python dependencies (GPU)
         if: matrix.flavor == 'gpu'
@@ -127,12 +127,12 @@ jobs:
           set -euo pipefail
           python -m pip install --upgrade pip wheel
           # Install CUDA-enabled torch/torchvision
-          python -m pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu121 torch>=2.8.0 torchvision>=0.23.0
+          python -m pip install --index-url https://download.pytorch.org/whl/cu121 torch>=2.8.0 torchvision>=0.23.0
           # Install remaining project dependencies (excluding torch/vision)
-          python -m pip install --no-cache-dir -r requirements-ci.txt
+          python -m pip install -r requirements-ci.txt
           # Swap to GPU ONNX runtime
           python -m pip uninstall -y onnxruntime || true
-          python -m pip install --no-cache-dir onnxruntime-gpu==1.21.1
+          python -m pip install onnxruntime-gpu==1.21.1
 
       - name: Set artifact metadata
         shell: bash
@@ -160,6 +160,27 @@ jobs:
           Path("app").mkdir(parents=True, exist_ok=True)
           Path("app/GPU_BUILD").write_text("gpu", encoding="utf-8")
           PY
+
+      - name: Fetch WebView2 fixed runtime (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pkgUrl = "https://www.nuget.org/api/v2/package/WebView2.Runtime.X64"
+          $pkgPath = Join-Path $env:RUNNER_TEMP "webview2runtime.nupkg"
+          Invoke-WebRequest -Uri $pkgUrl -OutFile $pkgPath
+          $extractRoot = Join-Path $env:RUNNER_TEMP "webview2runtime_pkg"
+          if (Test-Path $extractRoot) { Remove-Item $extractRoot -Recurse -Force }
+          Expand-Archive -Path $pkgPath -DestinationPath $extractRoot
+          $runtimeExe = Get-ChildItem -Path $extractRoot -Recurse -Filter "msedgewebview2.exe" | Select-Object -First 1
+          if (-not $runtimeExe) {
+            throw "WebView2 runtime executable not found in package"
+          }
+          $runtimeRoot = $runtimeExe.Directory.FullName
+          $dest = Join-Path $PWD "webview2runtime"
+          if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
+          Copy-Item -Path $runtimeRoot -Destination $dest -Recurse
+          Write-Host "Bundled WebView2 runtime into $dest"
 
       - name: Clean previous build artifacts
         run: python -c "import shutil, pathlib; [shutil.rmtree(pathlib.Path(p), ignore_errors=True) for p in ('build','dist')]"
@@ -214,7 +235,7 @@ jobs:
                   candidates.extend(libs_dir.glob('vcomp140*.dll'))
 
           if not candidates:
-              system_root = pathlib.Path(os.environ.get('SystemRoot', r'C\Windows'))
+              system_root = pathlib.Path(os.environ.get('SystemRoot', r'C:\\Windows'))
               for rel in ('System32', 'SysWOW64'):
                   candidate = system_root / rel / 'vcomp140.dll'
                   if candidate.exists():

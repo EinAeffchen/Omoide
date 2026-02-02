@@ -84,6 +84,7 @@ def get_package_path(package_name):
         return None
 
 
+platform_is_windows = sys.platform.startswith("win")
 pyside6_path = get_package_path('PySide6')
 open_clip_path = get_package_path('open_clip')
 binaries = []
@@ -98,6 +99,8 @@ datas = [
 ]
 if Path('app/GPU_BUILD').exists():
     datas.append(('app/GPU_BUILD', 'app'))
+if Path('webview2runtime').exists():
+    datas.append(('webview2runtime', 'webview2runtime'))
 datas += collect_data_files('open_clip', include_py_files=True)
 
 # Collect all submodules of our in-repo `app` package to ensure they are bundled.
@@ -216,39 +219,43 @@ except Exception:
     pass
 
 # Include optional Qt config if present to help PySide6 discover plugins.
-if Path('qt.conf').exists():
+if not platform_is_windows and Path('qt.conf').exists():
     datas.append(('qt.conf', '.'))
 
 # Collect PySide6 (Qt) resources, plugins and hidden imports so pywebview's Qt backend works.
 # We both force-import the WebEngine modules (hiddenimports) and pull in all package data via collect_all.
 hiddenimports_list = []
-try:
-    # Ensure PySide6 Qt modules are discovered, even if imported dynamically by pywebview
-    hiddenimports_list += [
-        'PySide6',
-        'PySide6.QtCore',
-        'PySide6.QtGui',
-        'PySide6.QtWidgets',
-        'PySide6.QtNetwork',
-        'PySide6.QtWebEngineCore',
-        'PySide6.QtWebEngineWidgets',
-        'PySide6.QtWebChannel',
-        'PySide6.QtOpenGL',
-        'PySide6.QtOpenGLWidgets',
-    ]
-    # Pull in all PySide6 package data/binaries (platform plugins, imageformats, translations, WebEngine helpers, etc.)
-    pyside_datas, pyside_bins, pyside_hidden = collect_all('PySide6')
-    datas += pyside_datas
-    binaries += pyside_bins
-    hiddenimports_list += pyside_hidden
-except Exception:
-    # PySide6 might not be present during analysis in some environments
-    pass
+if not platform_is_windows:
+    try:
+        # Ensure PySide6 Qt modules are discovered, even if imported dynamically by pywebview
+        hiddenimports_list += [
+            'PySide6',
+            'PySide6.QtCore',
+            'PySide6.QtGui',
+            'PySide6.QtWidgets',
+            'PySide6.QtNetwork',
+            'PySide6.QtWebEngineCore',
+            'PySide6.QtWebEngineWidgets',
+            'PySide6.QtWebChannel',
+            'PySide6.QtOpenGL',
+            'PySide6.QtOpenGLWidgets',
+        ]
+        # Pull in all PySide6 package data/binaries (platform plugins, imageformats, translations, WebEngine helpers, etc.)
+        pyside_datas, pyside_bins, pyside_hidden = collect_all('PySide6')
+        datas += pyside_datas
+        binaries += pyside_bins
+        hiddenimports_list += pyside_hidden
+    except Exception:
+        # PySide6 might not be present during analysis in some environments
+        pass
 
 # Ensure pywebview and its Qt backend are included when selected dynamically
 try:
     hiddenimports_list += collect_submodules('webview')
-    hiddenimports_list += ['webview.platforms.qt']
+    if platform_is_windows:
+        hiddenimports_list += ['webview.platforms.edgechromium']
+    else:
+        hiddenimports_list += ['webview.platforms.qt']
 except Exception:
     pass
 
@@ -259,10 +266,11 @@ except Exception:
     pass
 
 # Ensure qtpy shim is bundled (pywebview's Qt backend depends on it).
-try:
-    hiddenimports_list += ['qtpy']
-except Exception:
-    pass
+if not platform_is_windows:
+    try:
+        hiddenimports_list += ['qtpy']
+    except Exception:
+        pass
 
 # Optionally include dlib model files if present in repo
 possible_model_dirs = [
@@ -353,6 +361,23 @@ datas = _dedupe_toc(datas)
 binaries = _filter_macos_framework_conflicts(binaries)
 binaries = _dedupe_toc(binaries)
 
+excludes_list = [
+    # Ensure only one Qt binding is collected. We use PySide6 on non-Windows.
+    'PyQt5',
+    'PyQt5.QtCore', 'PyQt5.QtGui', 'PyQt5.QtWidgets',
+    'PyQt5.QtWebEngine', 'PyQt5.QtWebEngineCore', 'PyQt5.QtWebEngineWidgets',
+    'PyQt6',
+    'PyQt6.QtCore', 'PyQt6.QtGui', 'PyQt6.QtWidgets',
+    'PyQt6.QtWebEngine', 'PyQt6.QtWebEngineCore', 'PyQt6.QtWebEngineWidgets',
+]
+if platform_is_windows:
+    excludes_list += [
+        'PySide6',
+        'PySide6.QtCore', 'PySide6.QtGui', 'PySide6.QtWidgets',
+        'PySide6.QtWebEngine', 'PySide6.QtWebEngineCore', 'PySide6.QtWebEngineWidgets',
+        'PySide6.QtWebChannel', 'PySide6.QtOpenGL', 'PySide6.QtOpenGLWidgets',
+    ]
+
 a = Analysis(
     ['app/main.py'],
     # Ensure project root is searched during analysis for in-tree packages
@@ -370,15 +395,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[
-        # Ensure only one Qt binding is collected. We use PySide6.
-        'PyQt5',
-        'PyQt5.QtCore', 'PyQt5.QtGui', 'PyQt5.QtWidgets',
-        'PyQt5.QtWebEngine', 'PyQt5.QtWebEngineCore', 'PyQt5.QtWebEngineWidgets',
-        'PyQt6',
-        'PyQt6.QtCore', 'PyQt6.QtGui', 'PyQt6.QtWidgets',
-        'PyQt6.QtWebEngine', 'PyQt6.QtWebEngineCore', 'PyQt6.QtWebEngineWidgets',
-    ],
+    excludes=excludes_list,
     noarchive=False,
     optimize=0,
 )
