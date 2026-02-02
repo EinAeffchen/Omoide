@@ -11,7 +11,50 @@ from pathlib import Path
 
 from app.version import get_app_version
 
+
+def _env_truthy(value: str | None) -> bool:
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _resolve_webview2_runtime_dir() -> Path | None:
+    candidates = []
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        candidates.append(Path(sys._MEIPASS) / "webview2runtime")
+    try:
+        candidates.append(Path(sys.executable).resolve().parent / "webview2runtime")
+    except Exception:
+        pass
+    try:
+        candidates.append(Path(__file__).resolve().parent.parent / "webview2runtime")
+    except Exception:
+        pass
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
 os.environ["QT_API"] = "pyside6"
+_webview_gui_override = os.environ.get("OMOIDE_WEBVIEW_GUI")
+if sys.platform.startswith("win"):
+    gui_choice = (_webview_gui_override or "edgechromium").strip().lower()
+    if gui_choice == "edgechromium":
+        runtime_dir = _resolve_webview2_runtime_dir()
+        if runtime_dir:
+            os.environ.setdefault(
+                "WEBVIEW2_BROWSER_EXECUTABLE_FOLDER", str(runtime_dir)
+            )
+    disable_gpu_raw = os.environ.get("OMOIDE_WEBVIEW_DISABLE_GPU")
+    disable_gpu = disable_gpu_raw is None or _env_truthy(disable_gpu_raw)
+    if gui_choice == "qt" and disable_gpu:
+        flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
+        extra_flags = (
+            "--disable-gpu --disable-gpu-compositing --disable-gpu-rasterization"
+        )
+        if extra_flags not in flags:
+            os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = f"{flags} {extra_flags}".strip()
 import socket
 
 import uvicorn
@@ -54,6 +97,16 @@ logging.getLogger("uvicorn.access").setLevel(logging.INFO)
 scheduler = AsyncIOScheduler()
 SCAN_JOB_ID = "scan_job"
 APP_VERSION = get_app_version()
+server: uvicorn.Server | None = None
+
+
+def _preferred_webview_gui() -> str | None:
+    override = os.environ.get("OMOIDE_WEBVIEW_GUI")
+    if override:
+        return override.strip().lower()
+    if sys.platform.startswith("win"):
+        return "edgechromium"
+    return None
 
 
 def scheduled_scan_job():
@@ -266,10 +319,8 @@ async def serve_thumbnail(file_path: str):
 
 @app.get("/originals/{file_path:path}", include_in_schema=False)
 async def serve_original_media(file_path: str):
-    logger.info(file_path)
     requested_path = Path(file_path)
 
-    logger.info("PATH obj: %s", requested_path)
     media_dirs = [base for base, _ in settings.general.resolved_media_dirs()]
     candidates: list[Path] = []
 
@@ -414,6 +465,8 @@ def run_server():
 
 def shutdown():
     """Signals the Uvicorn server to shut down."""
+    if server is None:
+        return
     if server:
         print("Shutting down Uvicorn server...")
         server.should_exit = True
@@ -557,4 +610,15 @@ if __name__ == "__main__":
 
     # Register shutdown and enter UI loop immediately
     window.events.closed += shutdown
-    webview.start(_boot_and_switch)
+    preferred_gui = _preferred_webview_gui()
+    if preferred_gui:
+        webview.start(
+            _boot_and_switch,
+            gui=preferred_gui,
+            icon=window_icon,
+        )
+    else:
+        webview.start(
+            _boot_and_switch,
+            icon=window_icon,
+        )
