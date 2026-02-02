@@ -17,13 +17,14 @@ jobs:
     env:
       APP_FLAVOR: ${{ matrix.flavor }}
       OMOIDE_BUILD_FLAVOR: ${{ matrix.flavor }}
+      PIP_NO_CACHE_DIR: "1"
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest] #, macos-latest]
         python-version: [ '3.12' ]
         node-version: [ '20' ]
-        flavor: [cpu, gpu]
+        flavor: [cpu] #gpu] 
 
     steps:
       - name: Checkout
@@ -42,11 +43,28 @@ jobs:
           npm ci
           npm run build
 
+      - name: Cleanup frontend deps (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          rm -rf frontend/node_modules ~/.npm/_cacache || true
+
       - name: Setup Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
+
+      - name: Free disk space (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc || true
+          sudo rm -rf /usr/local/share/boost /usr/local/share/powershell || true
+          sudo docker system prune -af || true
+          sudo apt-get clean || true
+          sudo rm -rf /var/lib/apt/lists/* || true
 
       - name: Compute version
         shell: bash
@@ -98,9 +116,9 @@ jobs:
           set -euo pipefail
           python -m pip install --upgrade pip wheel
           # Preinstall CPU torch/torchvision to avoid GPU wheels
-          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch>=2.8.0 torchvision>=0.23.0
+          python -m pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch>=2.8.0 torchvision>=0.23.0
           # Install remaining project dependencies (excluding torch/vision)
-          python -m pip install -r requirements-ci.txt
+          python -m pip install --no-cache-dir -r requirements-ci.txt
 
       - name: Install Python dependencies (GPU)
         if: matrix.flavor == 'gpu'
@@ -109,12 +127,12 @@ jobs:
           set -euo pipefail
           python -m pip install --upgrade pip wheel
           # Install CUDA-enabled torch/torchvision
-          python -m pip install --index-url https://download.pytorch.org/whl/cu121 torch>=2.8.0 torchvision>=0.23.0
+          python -m pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu121 torch>=2.8.0 torchvision>=0.23.0
           # Install remaining project dependencies (excluding torch/vision)
-          python -m pip install -r requirements-ci.txt
+          python -m pip install --no-cache-dir -r requirements-ci.txt
           # Swap to GPU ONNX runtime
           python -m pip uninstall -y onnxruntime || true
-          python -m pip install onnxruntime-gpu==1.21.1
+          python -m pip install --no-cache-dir onnxruntime-gpu==1.21.1
 
       - name: Set artifact metadata
         shell: bash
