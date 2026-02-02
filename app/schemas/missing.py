@@ -22,6 +22,7 @@ class MissingMediaRead(BaseModel):
     missing_since: datetime | None
     missing_confirmed: bool
     parent_directory: str
+    thumbnail_path: str | None
 
     @staticmethod
     def from_media(media: Media) -> "MissingMediaRead":
@@ -33,6 +34,7 @@ class MissingMediaRead(BaseModel):
             missing_since=media.missing_since,
             missing_confirmed=media.missing_confirmed,
             parent_directory=str(Path(media.path).parent),
+            thumbnail_path=media.thumbnail_path,
         )
 
 

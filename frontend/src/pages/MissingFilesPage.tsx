@@ -28,6 +28,7 @@ import SelectAllIcon from "@mui/icons-material/SelectAll";
 import ClearAllIcon from "@mui/icons-material/ClearAll";
 
 import { MissingMediaItem, MissingSummaryEntry } from "../types";
+import { API } from "../config";
 import {
   confirmMissing,
   getMissingMedia,
@@ -61,6 +62,13 @@ const formatDuration = (iso: string | null) => {
   const diffWeeks = Math.floor(diffDays / 7);
   if (diffWeeks < 8) return `${diffWeeks}w ago`;
   return date.toLocaleTimeString();
+};
+
+const buildThumbUrl = (item: MissingMediaItem) => {
+  const thumb = item.thumbnail_path
+    ? encodeURIComponent(item.thumbnail_path)
+    : `${item.id}.jpg`;
+  return `${API}/thumbnails/${thumb}`;
 };
 const MissingFilesPage: React.FC = () => {
   const [items, setItems] = useState<MissingMediaItem[]>([]);
@@ -424,6 +432,7 @@ const MissingFilesPage: React.FC = () => {
                     }}
                   />
                 </TableCell>
+                <TableCell>Preview</TableCell>
                 <TableCell>File</TableCell>
                 <TableCell>Folder</TableCell>
                 <TableCell align="right">Size</TableCell>
@@ -440,6 +449,35 @@ const MissingFilesPage: React.FC = () => {
                         checked={selected}
                         onChange={() => toggleSelection(item.id)}
                       />
+                    </TableCell>
+                    <TableCell>
+                      <Box
+                        sx={{
+                          width: 56,
+                          height: 56,
+                          borderRadius: 1,
+                          overflow: "hidden",
+                          bgcolor: "action.hover",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                        }}
+                      >
+                        <Box
+                          component="img"
+                          src={buildThumbUrl(item)}
+                          alt={item.filename}
+                          sx={{
+                            width: "100%",
+                            height: "100%",
+                            objectFit: "cover",
+                            display: "block",
+                          }}
+                          onError={(e) => {
+                            e.currentTarget.style.visibility = "hidden";
+                          }}
+                        />
+                      </Box>
                     </TableCell>
                     <TableCell sx={{ fontFamily: "monospace" }}>
                       {item.filename}
@@ -460,7 +498,7 @@ const MissingFilesPage: React.FC = () => {
               })}
               {!isLoading && items.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={5} align="center" sx={{ py: 4 }}>
+                  <TableCell colSpan={6} align="center" sx={{ py: 4 }}>
                     No missing files match the current filters.
                   </TableCell>
                 </TableRow>

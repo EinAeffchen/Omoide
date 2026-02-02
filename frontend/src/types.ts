@@ -262,6 +262,7 @@ export interface MissingMediaItem {
   missing_since: string | null;
   missing_confirmed: boolean;
   parent_directory: string;
+  thumbnail_path?: string | null;
 }
 
 export interface MissingSummaryEntry {
