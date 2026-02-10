@@ -358,12 +358,12 @@ export interface AppConfig {
     port: number;
     presentation_mode: boolean;
     enable_people: boolean;
-  meme_mode: boolean;
-  is_docker: boolean;
-  is_binary: boolean;
-  domain: string;
-  person_relationship_max_nodes: number;
-  thumb_dir_folder_size: number;
+    meme_mode: boolean;
+    is_docker: boolean;
+    is_binary: boolean;
+    domain: string;
+    person_relationship_max_nodes: number;
+    thumb_dir_folder_size: number;
     data_dir: string;
     database_dir: string;
     omoide_dir: string;
@@ -404,7 +404,6 @@ export interface AppConfig {
   face_recognition: {
     preset: "strict" | "normal" | "loose" | "custom";
     face_recognition_min_confidence: number;
-    face_match_min_percent: number;
     existing_person_cosine_threshold: number;
     existing_person_min_cosine_margin: number;
     face_recognition_min_face_pixels: number;
@@ -418,6 +417,9 @@ export interface AppConfig {
     hdbscan_min_samples: number;
     hdbscan_cluster_selection_method: string;
     hdbscan_cluster_selection_epsilon: number;
+    cw_threshold: number;
+    cw_k_neighbors: number;
+    cw_iterations: number;
   };
   duplicates: {
     duplicate_auto_handling: string;

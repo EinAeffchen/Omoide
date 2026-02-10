@@ -281,7 +281,6 @@ class GeneralSettings(BaseModel):
     # Whether the app is running as a packaged/binary executable (e.g., PyInstaller)
     is_binary: bool = bool(getattr(sys, "frozen", False))
     # Prefer GPU acceleration when available.
-    enable_gpu: bool = True
     # Maximum nodes to request for the person relationship graph
     person_relationship_max_nodes: int = 100
     # Which host the system runs on. Mostly only relevant if hosted online.
@@ -510,57 +509,65 @@ class FaceClusteringPreset(str, Enum):
     CUSTOM = "custom"
 
 
-FACE_RECOGNITION_PRESETS: dict[FaceClusteringPreset, dict[str, float | int | str]] = {
+FACE_RECOGNITION_PRESETS: dict[
+    FaceClusteringPreset, dict[str, float | int | str | bool]
+] = {
     FaceClusteringPreset.STRICT: {
         "face_recognition_min_confidence": 0.6,
-        "face_match_min_percent": 80,
         "existing_person_cosine_threshold": 0.86,
         "existing_person_min_cosine_margin": 0.07,
         "face_recognition_min_face_pixels": 1600,
         "person_min_face_count": 3,
         "person_min_media_count": 2,
-        "person_merge_search_k": 20,
+        "person_merge_search_k": 30,
         "person_cluster_max_l2_radius": 0.95,
-        "person_merge_percent_similarity": 80,
+        "person_merge_percent_similarity": 78,
         "cluster_batch_size": 15000,
         "hdbscan_min_cluster_size": 6,
         "hdbscan_min_samples": 12,
         "hdbscan_cluster_selection_method": "eom",
         "hdbscan_cluster_selection_epsilon": 0.07,
+        "cw_threshold": 0.6,
+        "cw_k_neighbors":10,
+        "cw_iterations": 20,
     },
     FaceClusteringPreset.NORMAL: {
         "face_recognition_min_confidence": 0.5,
-        "face_match_min_percent": 75,
         "existing_person_cosine_threshold": 0.80,
         "existing_person_min_cosine_margin": 0.05,
         "face_recognition_min_face_pixels": 1600,
         "person_min_face_count": 2,
         "person_min_media_count": 2,
-        "person_merge_search_k": 20,
+        "person_merge_search_k": 40,
         "person_cluster_max_l2_radius": 1,
-        "person_merge_percent_similarity": 75,
+        "person_merge_percent_similarity": 72,
         "cluster_batch_size": 15000,
         "hdbscan_min_cluster_size": 6,
         "hdbscan_min_samples": 10,
         "hdbscan_cluster_selection_method": "eom",
         "hdbscan_cluster_selection_epsilon": 0.10,
+        "cw_threshold": 0.6,
+        "cw_k_neighbors":10,
+        "cw_iterations": 20,
     },
     FaceClusteringPreset.LOOSE: {
         "face_recognition_min_confidence": 0.4,
-        "face_match_min_percent": 70,
         "existing_person_cosine_threshold": 0.75,
         "existing_person_min_cosine_margin": 0.03,
         "face_recognition_min_face_pixels": 1200,
         "person_min_face_count": 2,
         "person_min_media_count": 2,
-        "person_merge_search_k": 20,
+        "person_merge_search_k": 50,
         "person_cluster_max_l2_radius": 1.02,
-        "person_merge_percent_similarity": 70,
+        "person_merge_percent_similarity": 68,
         "cluster_batch_size": 15000,
         "hdbscan_min_cluster_size": 4,
         "hdbscan_min_samples": 4,
         "hdbscan_cluster_selection_method": "eom",
         "hdbscan_cluster_selection_epsilon": 0.11,
+        "cw_threshold": 0.6,
+        "cw_k_neighbors":10,
+        "cw_iterations": 20,
     },
 }
 
@@ -569,8 +576,6 @@ class FaceRecognitionSettings(BaseModel):
     preset: FaceClusteringPreset = FaceClusteringPreset.LOOSE
     # minimum confidence needed to extract a face
     face_recognition_min_confidence: float = 0.5
-    # minimum threshold for a face needed to be matched to a person
-    face_match_min_percent: int = 70
     # stricter threshold for assigning new faces to existing persons (vs general usage)
     existing_person_cosine_threshold: float = 0.80
     # requires a margin between best and second-best match (cosine space)
@@ -589,11 +594,17 @@ class FaceRecognitionSettings(BaseModel):
     person_merge_percent_similarity: int = 80
     person_merge_search_k: int = 20
     # reduce if ram is an issue, the higher the more accurate the clustering.
-    cluster_batch_size: int = 10000
+    cluster_batch_size: int = 15000
+    # clustering algorithm to use for person discovery
+    # graph k-NN clustering settings (similarity in percent)
+    cw_threshold: float = 0.6
+    cw_iterations: int = 20
+    cw_k_neighbors: int = 10
+    # Cap per-HDBSCAN batch size to keep large datasets from stalling.
     # HDBSCAN tuning to reduce over-merged clusters (e.g., side profiles)
     hdbscan_min_cluster_size: int = 6
     hdbscan_min_samples: int = 10
-    hdbscan_cluster_selection_method: str = "leaf"  # "leaf" for finer clusters
+    hdbscan_cluster_selection_method: str = "eom"  # "leaf" for finer clusters
     hdbscan_cluster_selection_epsilon: float = 0.10
 
     def model_post_init(self, __context: Any) -> None:
@@ -818,10 +829,10 @@ def get_model(settings: AppSettings):
     acquire_clip()/get_clip_bundle() helpers below to reuse a shared instance.
     """
     import open_clip
+
     from app.accelerators import resolve_torch_device
 
-    prefer_gpu = settings.general.enable_gpu
-    device = resolve_torch_device(prefer_gpu)
+    device = resolve_torch_device(False)
     model, preprocess, _ = open_clip.create_model_and_transforms(
         settings.ai.clip_model.model_name,
         pretrained=settings.ai.clip_model_pretrained,

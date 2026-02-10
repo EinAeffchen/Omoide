@@ -71,7 +71,7 @@ def _coerce_vector_array(value: Any) -> np.ndarray | None:
         return None
     if arr.ndim > 1:
         arr = arr.reshape(-1)
-    return arr.astype(np.float32, copy=False)
+    return arr
 
 
 def vector_to_blob(value: Any) -> bytes | None:
@@ -531,7 +531,7 @@ def generate_thumbnail(media: Media) -> tuple[str | None, str | None]:
     filepath = Path(media.path)
     if filepath.suffix.lower() in settings.scan.VIDEO_SUFFIXES:
         # Use direct subprocess to enforce a timeout; skip on failure
-        prefer_gpu = settings.general.enable_gpu
+        prefer_gpu = False # Removed
         accel = get_ffmpeg_accel_config(prefer_gpu)
         cmd = [
             "ffmpeg",
@@ -661,7 +661,6 @@ def update_person_embedding(session: Session, person_id: int):
     centroid = get_person_embedding(session, person_id, new=True)
     if centroid is None:
         return
-    logger.info("Updating person_embedding!")
     del_sql = text(
         """
         DELETE FROM person_embeddings WHERE person_id=:p_id
@@ -734,7 +733,7 @@ def _split_by_frames(media: Media) -> list[tuple[Scene, cv2.typing.MatLike]]:
             "ffmpeg is required to extract scenes but could not be provisioned."
         )
         return []
-    prefer_gpu = settings.general.enable_gpu
+    prefer_gpu = False # REMOVED
     accel = get_ffmpeg_accel_config(prefer_gpu)
 
     duration = media.duration or 0.0

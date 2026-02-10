@@ -1,5 +1,5 @@
-import os
 import gc
+import os
 import time
 from pathlib import Path
 
@@ -10,8 +10,8 @@ from PIL.ImageFile import ImageFile
 from sqlmodel import select, text
 from tqdm import tqdm
 
-from app.api.media import delete_media_record
 from app.accelerators import resolve_onnx_providers
+from app.api.media import delete_media_record
 from app.config import settings
 from app.database import safe_commit
 from app.logger import logger
@@ -24,9 +24,7 @@ class FaceProcessor(MediaProcessor):
     name = "faces"
     order = 20
 
-    def _crop_with_margin(
-        self, img: np.ndarray, bbox: list[int], pad_pct: float = 0.2
-    ):
+    def _crop_with_margin(self, img: np.ndarray, bbox: list[int], pad_pct: float = 0.2):
         """
         img: HxWx3 BGR or RGB array
         bbox: [x, y, w, h]
@@ -57,10 +55,7 @@ class FaceProcessor(MediaProcessor):
                 scene, [x1, y1, x2 - x1, y2 - y1], pad_pct=0.2
             )
             h, w = crop.shape[:2]
-            if (
-                h * w
-                < settings.face_recognition.face_recognition_min_face_pixels
-            ):
+            if h * w < settings.face_recognition.face_recognition_min_face_pixels:
                 continue
 
             ts = int(time.time() * 1000)
@@ -127,14 +122,10 @@ class FaceProcessor(MediaProcessor):
 
             # Guard against invalid/empty frames
             if scene is None:
-                logger.warning(
-                    "Skipping empty scene frame for media: %s", media.path
-                )
+                logger.warning("Skipping empty scene frame for media: %s", media.path)
                 continue
             if not isinstance(scene, np.ndarray) or scene.size == 0:
-                logger.warning(
-                    "Skipping invalid scene array for media: %s", media.path
-                )
+                logger.warning("Skipping invalid scene array for media: %s", media.path)
                 continue
 
             try:
@@ -158,7 +149,8 @@ class FaceProcessor(MediaProcessor):
                 blob = vector_to_blob(embedding_vec)
                 if blob is None:
                     logger.error(
-                        "FaceProcessor: failed to encode embedding for face %s in media %s",
+                        "FaceProcessor: failed to encode embedding for face %s in"
+                        " media %s",
                         face_obj.id,
                         media.path,
                     )
@@ -176,16 +168,14 @@ class FaceProcessor(MediaProcessor):
         return True
 
     def load_model(self):
-        if (
-            settings.general.enable_people
-            and settings.processors.face_processor_active
-        ):
+        if settings.general.enable_people and settings.processors.face_processor_active:
             self.active = True
         # Reduce ORT's long-lived CPU memory arenas so memory is released faster
         os.environ.setdefault("ORT_DISABLE_MEMORY_ARENA", "1")
         # Import InsightFace lazily to speed up application startup
         from insightface.app import FaceAnalysis
-        prefer_gpu = settings.general.enable_gpu
+
+        prefer_gpu = False
         providers, uses_gpu = resolve_onnx_providers(prefer_gpu)
         self.model = FaceAnalysis(
             "buffalo_l",

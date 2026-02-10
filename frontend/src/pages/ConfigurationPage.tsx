@@ -65,54 +65,60 @@ const facePresets: Record<
 > = {
   strict: {
     face_recognition_min_confidence: 0.6,
-    face_match_min_percent: 80,
     existing_person_cosine_threshold: 0.86,
     existing_person_min_cosine_margin: 0.07,
     face_recognition_min_face_pixels: 1600,
     person_min_face_count: 3,
     person_min_media_count: 2,
-    person_merge_search_k: 20,
+    person_merge_search_k: 30,
     person_cluster_max_l2_radius: 0.95,
-    person_merge_percent_similarity: 80,
+    person_merge_percent_similarity: 78,
     cluster_batch_size: 15000,
     hdbscan_min_cluster_size: 6,
     hdbscan_min_samples: 12,
     hdbscan_cluster_selection_method: "eom",
     hdbscan_cluster_selection_epsilon: 0.07,
+    cw_threshold: 0.5,
+    cw_k_neighbors: 10,
+    cw_iterations: 20,
   },
   normal: {
     face_recognition_min_confidence: 0.5,
-    face_match_min_percent: 75,
     existing_person_cosine_threshold: 0.8,
     existing_person_min_cosine_margin: 0.05,
     face_recognition_min_face_pixels: 1600,
     person_min_face_count: 2,
     person_min_media_count: 2,
-    person_merge_search_k: 20,
+    person_merge_search_k: 40,
     person_cluster_max_l2_radius: 1,
-    person_merge_percent_similarity: 75,
+    person_merge_percent_similarity: 72,
     cluster_batch_size: 15000,
     hdbscan_min_cluster_size: 6,
     hdbscan_min_samples: 10,
     hdbscan_cluster_selection_method: "eom",
     hdbscan_cluster_selection_epsilon: 0.1,
+    cw_threshold: 0.6,
+    cw_k_neighbors: 10,
+    cw_iterations: 20,
   },
   loose: {
     face_recognition_min_confidence: 0.4,
-    face_match_min_percent: 70,
     existing_person_cosine_threshold: 0.75,
     existing_person_min_cosine_margin: 0.03,
     face_recognition_min_face_pixels: 1200,
     person_min_face_count: 2,
     person_min_media_count: 2,
-    person_merge_search_k: 20,
+    person_merge_search_k: 50,
     person_cluster_max_l2_radius: 1.02,
-    person_merge_percent_similarity: 70,
+    person_merge_percent_similarity: 68,
     cluster_batch_size: 15000,
     hdbscan_min_cluster_size: 4,
     hdbscan_min_samples: 4,
     hdbscan_cluster_selection_method: "eom",
     hdbscan_cluster_selection_epsilon: 0.11,
+    cw_threshold: 0.6,
+    cw_k_neighbors: 10,
+    cw_iterations: 20,
   },
 };
 
@@ -234,20 +240,19 @@ export default function ConfigurationPage() {
     if (!config) return;
     setIsSaving(true);
     try {
-      const normalizedMediaDirs = (config.general.media_dirs ?? []).map((dir) => ({
-        path: (dir?.path ?? "").trim(),
-        read_only: Boolean(dir?.read_only),
-      }));
-      const mediaDirMap = normalizedMediaDirs.reduce(
-        (acc, entry) => {
-          if (!entry.path || acc.has(entry.path)) {
-            return acc;
-          }
-          acc.set(entry.path, entry);
-          return acc;
-        },
-        new Map<string, MediaDirectory>()
+      const normalizedMediaDirs = (config.general.media_dirs ?? []).map(
+        (dir) => ({
+          path: (dir?.path ?? "").trim(),
+          read_only: Boolean(dir?.read_only),
+        })
       );
+      const mediaDirMap = normalizedMediaDirs.reduce((acc, entry) => {
+        if (!entry.path || acc.has(entry.path)) {
+          return acc;
+        }
+        acc.set(entry.path, entry);
+        return acc;
+      }, new Map<string, MediaDirectory>());
 
       const sanitized = {
         ...config,
@@ -952,7 +957,8 @@ export default function ConfigurationPage() {
                 <code style={{ marginLeft: 4 }}>
                   -e OMOIDE_GENERAL__PRESENTATION_MODE=true
                 </code>
-                ). Current: {config.general.presentation_mode ? "Enabled" : "Disabled"}.
+                ). Current:{" "}
+                {config.general.presentation_mode ? "Enabled" : "Disabled"}.
               </Typography>
               <FormControlLabel
                 control={
@@ -1403,22 +1409,6 @@ export default function ConfigurationPage() {
                 </Grid>
                 <Grid size={{ xs: 12, sm: 6 }}>
                   <TextField
-                    label="Face Match Similarity % Threshold"
-                    value={config.face_recognition.face_match_min_percent}
-                    onChange={(e) =>
-                      setFaceValue(
-                        "face_match_min_percent",
-                        parseInt(e.target.value)
-                      )
-                    }
-                    fullWidth
-                    margin="normal"
-                    type="number"
-                    helperText="Similarity percent threshold for attaching a face to a known person"
-                  />
-                </Grid>
-                <Grid size={{ xs: 12, sm: 6 }}>
-                  <TextField
                     label="Existing Person Cosine Threshold"
                     value={
                       config.face_recognition.existing_person_cosine_threshold
@@ -1511,7 +1501,7 @@ export default function ConfigurationPage() {
                     onChange={(e) =>
                       setFaceValue(
                         "person_merge_search_k",
-                        parseInt(e.target.value, 20)
+                        parseInt(e.target.value, 10)
                       )
                     }
                     fullWidth
@@ -1572,88 +1562,146 @@ export default function ConfigurationPage() {
                     helperText="Faces processed per clustering batch (memory vs. speed)"
                   />
                 </Grid>
-                <Grid size={{ xs: 12, sm: 6 }}>
-                  <TextField
-                    label="HDBSCAN Min Cluster Size"
-                    value={config.face_recognition.hdbscan_min_cluster_size}
-                    onChange={(e) =>
-                      setFaceValue(
-                        "hdbscan_min_cluster_size",
-                        parseInt(e.target.value, 10)
-                      )
-                    }
-                    fullWidth
-                    margin="normal"
-                    type="number"
-                    helperText="Minimum faces to form a cluster; larger merges clusters (fewer small identities)"
-                  />
-                </Grid>
-                <Grid size={{ xs: 12, sm: 6 }}>
-                  <TextField
-                    label="HDBSCAN Min Samples"
-                    value={config.face_recognition.hdbscan_min_samples}
-                    onChange={(e) =>
-                      setFaceValue(
-                        "hdbscan_min_samples",
-                        parseInt(e.target.value, 10)
-                      )
-                    }
-                    fullWidth
-                    margin="normal"
-                    type="number"
-                    helperText="Higher = more conservative (more points marked as noise/outliers)"
-                  />
-                </Grid>
-                <Grid size={{ xs: 12, sm: 6 }}>
-                  <FormControl fullWidth margin="normal">
-                    <InputLabel id="hdbscan-method-manual-label">
-                      HDBSCAN Cluster Selection Method
-                    </InputLabel>
-                    <Select
-                      labelId="hdbscan-method-manual-label"
-                      value={
-                        config.face_recognition.hdbscan_cluster_selection_method
-                      }
-                      label="HDBSCAN Cluster Selection Method"
-                      onChange={(e) =>
-                        setFaceValue(
-                          "hdbscan_cluster_selection_method",
-                          e.target.value as string
-                        )
-                      }
-                    >
-                      <MenuItem value="leaf">
-                        leaf (finer, more granular clusters)
-                      </MenuItem>
-                      <MenuItem value="eom">
-                        eom (more stable, fewer splits)
-                      </MenuItem>
-                    </Select>
-                    <FormHelperText>
-                      Controls granularity of clusters; "leaf" yields finer
-                      segmentation.
-                    </FormHelperText>
-                  </FormControl>
-                </Grid>
-                <Grid size={{ xs: 12, sm: 6 }}>
-                  <TextField
-                    label="HDBSCAN Selection Epsilon"
-                    value={
-                      config.face_recognition.hdbscan_cluster_selection_epsilon
-                    }
-                    onChange={(e) =>
-                      setFaceValue(
-                        "hdbscan_cluster_selection_epsilon",
-                        parseFloat(e.target.value)
-                      )
-                    }
-                    fullWidth
-                    margin="normal"
-                    type="number"
-                    inputProps={{ step: 0.01 }}
-                    helperText="Extra split sensitivity; larger values produce more, smaller clusters"
-                  />
-                </Grid>
+                {config.general.is_binary && (
+                  <>
+                    <Grid size={{ xs: 12, sm: 6 }}>
+                      <TextField
+                        label="Chinese Whispers Threshold"
+                        value={config.face_recognition.cw_threshold}
+                        onChange={(e) =>
+                          setFaceValue(
+                            "cw_threshold",
+                            parseFloat(e.target.value)
+                          )
+                        }
+                        fullWidth
+                        margin="normal"
+                        type="number"
+                        helperText="Threshold for vector distance. Smaller = stricter matching"
+                      />
+                    </Grid>
+                    <Grid size={{ xs: 12, sm: 6 }}>
+                      <TextField
+                        label="Chinese Whispers Iterations"
+                        value={config.face_recognition.cw_iterations}
+                        onChange={(e) =>
+                          setFaceValue(
+                            "cw_iterations",
+                            parseInt(e.target.value, 10)
+                          )
+                        }
+                        fullWidth
+                        margin="normal"
+                        type="number"
+                        helperText="Iterations for clustering. Usually 20 should be sufficient."
+                      />
+                    </Grid>
+                    <Grid size={{ xs: 12, sm: 6 }}>
+                      <TextField
+                        label="Chinese Whispers K nearest neighbors"
+                        value={config.face_recognition.cw_k_neighbors}
+                        onChange={(e) =>
+                          setFaceValue(
+                            "cw_k_neighbors",
+                            parseInt(e.target.value, 10)
+                          )
+                        }
+                        fullWidth
+                        margin="normal"
+                        type="number"
+                        helperText="K neirest neighbors for clustering graph."
+                      />
+                    </Grid>
+                  </>
+                )}
+                {config.general.is_docker && (
+                  <>
+                    <Grid size={{ xs: 12, sm: 6 }}>
+                      <TextField
+                        label="HDBSCAN Min Cluster Size"
+                        value={config.face_recognition.hdbscan_min_cluster_size}
+                        onChange={(e) =>
+                          setFaceValue(
+                            "hdbscan_min_cluster_size",
+                            parseInt(e.target.value, 10)
+                          )
+                        }
+                        fullWidth
+                        margin="normal"
+                        type="number"
+                        helperText="Minimum faces to form a cluster; larger merges clusters (fewer small identities)"
+                      />
+                    </Grid>
+                    <Grid size={{ xs: 12, sm: 6 }}>
+                      <TextField
+                        label="HDBSCAN Min Samples"
+                        value={config.face_recognition.hdbscan_min_samples}
+                        onChange={(e) =>
+                          setFaceValue(
+                            "hdbscan_min_samples",
+                            parseInt(e.target.value, 10)
+                          )
+                        }
+                        fullWidth
+                        margin="normal"
+                        type="number"
+                        helperText="Higher = more conservative (more points marked as noise/outliers)"
+                      />
+                    </Grid>
+                    <Grid size={{ xs: 12, sm: 6 }}>
+                      <FormControl fullWidth margin="normal">
+                        <InputLabel id="hdbscan-method-manual-label">
+                          HDBSCAN Cluster Selection Method
+                        </InputLabel>
+                        <Select
+                          labelId="hdbscan-method-manual-label"
+                          value={
+                            config.face_recognition
+                              .hdbscan_cluster_selection_method
+                          }
+                          label="HDBSCAN Cluster Selection Method"
+                          onChange={(e) =>
+                            setFaceValue(
+                              "hdbscan_cluster_selection_method",
+                              e.target.value as string
+                            )
+                          }
+                        >
+                          <MenuItem value="leaf">
+                            leaf (finer, more granular clusters)
+                          </MenuItem>
+                          <MenuItem value="eom">
+                            eom (more stable, fewer splits)
+                          </MenuItem>
+                        </Select>
+                        <FormHelperText>
+                          Controls granularity of clusters; "leaf" yields finer
+                          segmentation.
+                        </FormHelperText>
+                      </FormControl>
+                    </Grid>
+                    <Grid size={{ xs: 12, sm: 6 }}>
+                      <TextField
+                        label="HDBSCAN Selection Epsilon"
+                        value={
+                          config.face_recognition
+                            .hdbscan_cluster_selection_epsilon
+                        }
+                        onChange={(e) =>
+                          setFaceValue(
+                            "hdbscan_cluster_selection_epsilon",
+                            parseFloat(e.target.value)
+                          )
+                        }
+                        fullWidth
+                        margin="normal"
+                        type="number"
+                        inputProps={{ step: 0.01 }}
+                        helperText="Extra split sensitivity; larger values produce more, smaller clusters"
+                      />
+                    </Grid>
+                  </>
+                )}
               </Grid>
             </Box>
           )}

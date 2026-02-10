@@ -1,4 +1,6 @@
 import subprocess
+import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -10,10 +12,12 @@ import app.database as db
 from app.accelerators import get_ffmpeg_accel_config
 from app.config import ReadOnlyMediaError, settings
 from app.database import get_session
+from app.ffmpeg import ensure_ffmpeg_available
 from app.logger import logger
 from app.models import Media, ProcessingTask
 from app.processor_registry import load_processors
 from app.subprocess_helpers import popen_silent
+from app.tasks.state import set_task_progress
 
 router = APIRouter()
 
@@ -87,6 +91,9 @@ def _run_conversion(task_id: str, media_path: str, media_id: int):
 
         media_path_obj = Path(media_path)
         temp_output_path = media_path_obj.with_name(media_path_obj.stem + "_temp.mp4")
+        progress_path = media_path_obj.with_name(
+            f"{media_path_obj.stem}_{task_id}.progress"
+        )
 
         try:
             settings.general.ensure_media_path_writable(media_path_obj)
@@ -100,16 +107,30 @@ def _run_conversion(task_id: str, media_path: str, media_id: int):
             return
 
         try:
-            info = ffmpeg.probe(str(media_path_obj))
-            dur_s = float(info["format"]["duration"])
+            ffmpeg_bin = ensure_ffmpeg_available()
+            if not ffmpeg_bin:
+                raise RuntimeError(
+                    "ffmpeg is required to convert videos but could not be located."
+                )
+            ffprobe_name = (
+                "ffprobe.exe" if sys.platform.startswith("win") else "ffprobe"
+            )
+            ffprobe_path = ffmpeg_bin.with_name(ffprobe_name)
+            ffprobe_cmd = str(ffprobe_path) if ffprobe_path.exists() else "ffprobe"
+
+            info = ffmpeg.probe(str(media_path_obj), cmd=ffprobe_cmd)
+            try:
+                dur_s = float(info.get("format", {}).get("duration") or 0.0)
+            except Exception:
+                dur_s = 0.0
             dur_us = dur_s * 1000000
-            prefer_gpu = settings.general.enable_gpu
+            prefer_gpu = False
             accel = get_ffmpeg_accel_config(prefer_gpu)
             video_encoder = accel.video_encoder or "libx264"
             # run ffmpeg with stderr piped so we can parse “progress=…”
             # Here’s one way using the “-progress” flag:
             cmd = [
-                "ffmpeg",
+                str(ffmpeg_bin),
                 *accel.hwaccel_args,
                 "-i",
                 str(media_path_obj),
@@ -124,28 +145,90 @@ def _run_conversion(task_id: str, media_path: str, media_id: int):
                 "-movflags",
                 "use_metadata_tags+faststart",
                 "-progress",
-                "pipe:1",  # emits key=value pairs on stdout
+                str(progress_path),
                 "-nostats",
                 "-y",
                 str(temp_output_path),
             ]
             logger.info(f"Running FFmpeg command: {' '.join(cmd)}")
-            proc = popen_silent(cmd, stdout=subprocess.PIPE, text=True)
+            if progress_path.exists():
+                progress_path.unlink()
 
-            for line in proc.stdout:
-                if line.startswith("out_time_ms="):
-                    out_us: str = line.split("=")[1].strip()
-                    if out_us.isnumeric():
-                        out_us = int(out_us)
-                        pct = min(100, int(out_us / dur_us * 100))
+            proc = popen_silent(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+
+            def _parse_out_time(value: str) -> int | None:
+                raw = value.strip()
+                if not raw or raw.upper() == "N/A":
+                    return None
+                if raw.isnumeric():
+                    return int(raw)
+                parts = raw.split(":")
+                if len(parts) != 3:
+                    return None
+                try:
+                    hours = int(parts[0])
+                    minutes = int(parts[1])
+                    seconds = float(parts[2])
+                except Exception:
+                    return None
+                return int((hours * 3600 + minutes * 60 + seconds) * 1_000_000)
+
+            def _read_progress() -> tuple[int | None, bool]:
+                try:
+                    content = progress_path.read_text(errors="ignore")
+                except FileNotFoundError:
+                    return None, False
+                except OSError:
+                    return None, False
+                out_candidates: list[int] = []
+                progress_end = False
+                for line in content.splitlines():
+                    if line.startswith(("out_time_us=", "out_time_ms=")):
+                        value = line.split("=", 1)[1].strip()
+                        parsed = _parse_out_time(value)
+                        if parsed is not None:
+                            out_candidates.append(parsed)
+                    elif line.startswith("out_time="):
+                        value = line.split("=", 1)[1].strip()
+                        parsed = _parse_out_time(value)
+                        if parsed is not None:
+                            out_candidates.append(parsed)
+                    elif line.startswith("progress="):
+                        if line.split("=", 1)[1].strip() == "end":
+                            progress_end = True
+                out_us = max(out_candidates) if out_candidates else None
+                return out_us, progress_end
+
+            try:
+                while True:
+                    out_us, progress_end = _read_progress()
+                    if out_us is not None and dur_us > 0:
+                        pct = min(99, int(out_us / dur_us * 100))
                         if pct > task.processed:
                             task.processed = pct
                             session.add(task)
                             session.commit()
-                if line.startswith("progress=end"):
-                    break
-
-            stdout, stderr = proc.communicate()
+                        set_task_progress(
+                            task_id,
+                            current_step="converting video",
+                            current_item=f"Progress: {pct}%",
+                        )
+                    if proc.poll() is not None:
+                        break
+                    if progress_end and task.processed < 99:
+                        task.processed = 99
+                        session.add(task)
+                        session.commit()
+                    time.sleep(0.5)
+                stdout, stderr = proc.communicate()
+            finally:
+                if progress_path.exists():
+                    progress_path.unlink()
             if proc.returncode != 0:
                 logger.error(
                     f"FFmpeg failed for {media_path} with exit code {proc.returncode}"

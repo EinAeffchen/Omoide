@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import math
+import time
 from collections import deque
 from collections.abc import Iterable
 from datetime import datetime, timezone
 
 import hdbscan
+import networkx as nx
 import numpy as np
+import umap
+from sklearn.neighbors import NearestNeighbors
 from sqlalchemy import func, text, update
 from sqlmodel import Session, select
 from tqdm import tqdm
@@ -34,7 +39,6 @@ from .relationships import rebuild_person_relationships
 from .state import clear_task_progress, set_task_progress
 
 __all__ = [
-    "assign_to_existing_persons",
     "merge_person_with_similar",
     "merge_similar_persons",
     "rebuild_person_embedding",
@@ -58,47 +62,167 @@ def _fetch_faces_and_embeddings(
         """
     ).bindparams(last_id=last_id, limit=limit)
 
+    logger.info("Getting faces!")
     rows = session.exec(sql).all()
+    logger.info("Got %s faces!", len(rows))
     if not rows:
         return [], np.array([])
 
     face_ids: list[int] = []
     vectors: list[np.ndarray] = []
     for face_id, raw_embedding in rows:
-        vec = vector_from_stored(raw_embedding)
-        if vec is None or vec.size == 0:
-            logger.debug(
-                "Skipping face %s for clustering due to missing embedding",
-                face_id,
-            )
-            continue
-        norm = float(np.linalg.norm(vec))
-        if not np.isfinite(norm) or norm == 0.0:
-            logger.debug(
-                "Skipping face %s for clustering due to zero-norm embedding",
-                face_id,
-            )
-            continue
-        face_ids.append(int(face_id))
-        vectors.append((vec / norm).astype(np.float32, copy=False))
+        try:
+            vec = vector_from_stored(raw_embedding)
+            if vec is None or vec.size == 0:
+                logger.debug(
+                    "Skipping face %s for clustering due to missing embedding",
+                    face_id,
+                )
+                continue
+            # norm = float(np.linalg.norm(vec))
+            if not np.all(np.isfinite(vec)) or not np.any(vec):
+                logger.debug(
+                    "Skipping face %s for clustering due to zero-norm embedding",
+                    face_id,
+                )
+                continue
+            face_ids.append(int(face_id))
+            vectors.append(vec.astype(np.float32, copy=False))
+            logger.debug("Appended!")
+        except Exception:
+            logger.exception("Failure while processing face!")
 
     if not face_ids:
         return [], np.array([])
 
+    logger.debug("Transforming embeddings")
     embeddings = np.vstack(vectors).astype(np.float32, copy=False)
     return face_ids, embeddings
 
 
 def _cluster_embeddings(
-    embeddings: np.ndarray, min_cluster_size=None, min_samples=None
+    embeddings: np.ndarray,
+    *,
+    face_ids: list[int] | None = None,
+    min_cluster_size=None,
+    min_samples=None,
 ) -> np.ndarray:
+    logger.info("Running as binary: %s", settings.general.is_binary)
+    if settings.general.is_binary:
+        return _cluster_embeddings_chinese_whispers(
+            face_ids=face_ids, embeddings=embeddings
+        )
+
+    return _cluster_embeddings_hdbscan(
+        embeddings,
+        min_cluster_size=min_cluster_size,
+        min_samples=min_samples,
+    )
+
+
+def _cluster_embeddings_chinese_whispers(
+    face_ids: list[int],
+    embeddings: np.ndarray,
+) -> np.ndarray:
+    """
+    Clustering using Chinese Whispers.
+    """
     if embeddings.size == 0:
         return np.array([], dtype=int)
 
-    embeddings_64 = embeddings.astype(np.float64, copy=False)
+    num_faces = len(face_ids)
+
+    k = settings.face_recognition.cw_k_neighbors  # e.g. 10
+    threshold = settings.face_recognition.cw_threshold  # cosine similarity, e.g. 0.6
+    iterations = settings.face_recognition.cw_iterations
+    mutual_nn = getattr(settings.face_recognition, "cw_mutual_nn", True)
+
+    # 1. Build kNN index (cosine distance = 1 - similarity)
+    logger.info(f"Building kNN graph for {num_faces} faces (k={k})...")
+
+    nn = NearestNeighbors(
+        n_neighbors=min(k + 1, num_faces),  # +1 because first neighbor is self
+        metric="cosine",
+        algorithm="auto",
+    ).fit(embeddings)
+
+    distances, indices = nn.kneighbors(embeddings)
+    neighbor_sets = [set(row[1:]) for row in indices]
+
+    # 2. Build the Graph
+    G = nx.Graph()
+    for i in range(num_faces):
+        G.add_node(i, label=i)  # Initial state: each face is its own cluster
+    edge_count = 0
+
+    for i in range(num_faces):
+        for neighbor_idx, dist in zip(indices[i][1:], distances[i][1:]):
+            if mutual_nn and i not in neighbor_sets[neighbor_idx]:
+                continue
+
+            similarity = 1.0 - dist
+
+            if similarity > threshold:
+                G.add_edge(i, neighbor_idx, weight=similarity)
+                edge_count += 1
+
+    logger.info(f"Similarity graph built with {edge_count} edges")
+
+    # 3. Chinese Whispers Iterations
+    nodes = list(G.nodes())
+    for iteration in range(iterations):
+        np.random.shuffle(nodes)
+        changed = False
+
+        for node in nodes:
+            neighbors = G[node]
+            if not neighbors:
+                continue
+
+            # Count the total weight for each label in the neighborhood
+            label_scores = {}
+            for neighbor, edge_data in neighbors.items():
+                neigh_label = G.nodes[neighbor]["label"]
+                weight = edge_data.get("weight", 1.0)
+                label_scores[neigh_label] = label_scores.get(neigh_label, 0) + weight
+
+            best_label = max(label_scores, key=label_scores.get)
+            if G.nodes[node]["label"] != best_label:
+                G.nodes[node]["label"] = best_label
+                changed = True
+        logger.debug(f"CW iteration {iteration+1}, changed={changed}")
+        if not changed:
+            logger.info(f"Chinese Whispers converged after {iteration+1} iterations")
+            break
+
+    # 4. Map back to HDBSCAN-style labels
+    labels = nx.get_node_attributes(G, "label")
+    unique_labels = {label: i for i, label in enumerate(set(labels.values()))}
+
+    cluster_labels = np.array([unique_labels[labels[i]] for i in range(num_faces)])
+
+    logger.info(f"Found {len(unique_labels)} clusters using Chinese Whispers")
+
+    return cluster_labels
+
+
+def _cluster_embeddings_hdbscan(
+    embeddings: np.ndarray, min_cluster_size=None, min_samples=None
+) -> np.ndarray:
+    logger.info("INSIDE HDBSCAN CLUSTERING")
+    if embeddings.size == 0:
+        return np.array([], dtype=int)
+
+    reducer = umap.UMAP(
+        n_neighbors=15,
+        n_components=10,  # Drastic reduction works best for HDBSCAN
+        metric="cosine",
+        random_state=42,
+    )
+    embeddings_reduced = reducer.fit_transform(embeddings)
 
     min_faces_required = max(2, int(settings.face_recognition.person_min_face_count))
-    sample_count = embeddings_64.shape[0]
+    sample_count = embeddings.shape[0]
 
     base_min_cluster_size = int(
         min_cluster_size
@@ -119,42 +243,51 @@ def _cluster_embeddings(
 
     attempted: set[tuple[int, int]] = set()
     best_labels: np.ndarray | None = None
-    best_score: tuple[int, float] | None = None
+    best_score: float | None = None
 
     current_min_cluster_size = base_min_cluster_size
     current_min_samples = base_min_samples
 
-    for _ in range(3):
+    for i in range(3):
+        logger.info("Running clustering iteration %s", i)
         params = (current_min_cluster_size, current_min_samples)
         if params in attempted:
             break
         attempted.add(params)
 
         clusterer = hdbscan.HDBSCAN(
-            metric="cosine",
+            metric="euclidean",
             min_cluster_size=current_min_cluster_size,
             min_samples=current_min_samples,
             cluster_selection_method=settings.face_recognition.hdbscan_cluster_selection_method,
             cluster_selection_epsilon=settings.face_recognition.hdbscan_cluster_selection_epsilon,
             algorithm="generic",
         )
-        labels = clusterer.fit_predict(embeddings_64)
+        labels = clusterer.fit_predict(embeddings_reduced)
 
-        non_noise = labels[labels >= 0]
-        cluster_count = int(np.unique(non_noise).size)
-        noise_ratio = float(np.mean(labels == -1)) if labels.size else 1.0
+        dbcv_score = float(clusterer.relative_validity_)
+
+        non_noise_mask = labels >= 0
+        cluster_count = int(np.unique(labels[non_noise_mask]).size)
+        noise_ratio = float(np.mean(labels == -1))
+
+        if cluster_count <= 1:
+            current_score = -1.0
+        else:
+            # We weight DBCV heavily, but penalize if noise is extreme
+            # Example: Score = DBCV * (percentage of data that ISN'T noise)
+            current_score = dbcv_score * (1.0 - noise_ratio)
 
         logger.debug(
-            "HDBSCAN attempt clusters=%d noise=%.2f min_cluster_size=%d min_samples=%d",
+            "HDBSCAN attempt clusters=%d noise=%.2f DBCV=%d FinalScore=%d",
             cluster_count,
             noise_ratio,
-            current_min_cluster_size,
-            current_min_samples,
+            dbcv_score,
+            current_score,
         )
 
-        score = (cluster_count, -noise_ratio)
-        if best_score is None or score > best_score:
-            best_score = score
+        if best_score is None or current_score > best_score:
+            best_score = current_score
             best_labels = labels
 
         should_relax = current_min_cluster_size > min_faces_required and (
@@ -172,10 +305,7 @@ def _cluster_embeddings(
             current_min_samples = max(1, current_min_samples // 2)
         else:
             break
-
-    if best_labels is None:
-        return np.array([], dtype=int)
-    return best_labels
+    return best_labels if best_labels is not None else np.full(len(embeddings), -1)
 
 
 def _group_faces_by_cluster(
@@ -189,6 +319,30 @@ def _group_faces_by_cluster(
         clusters[label][0].append(face)
         clusters[label][1].append(emb)
     return clusters
+
+
+def _summarize_labels(labels: np.ndarray) -> tuple[int, float]:
+    if labels.size == 0:
+        return 0, 1.0
+    non_noise = labels[labels >= 0]
+    cluster_count = int(np.unique(non_noise).size)
+    noise_ratio = float(np.mean(labels == -1))
+    return cluster_count, noise_ratio
+
+
+def _run_clustering(
+    *,
+    embeddings: np.ndarray,
+    face_ids: list[int],
+) -> tuple[np.ndarray, int, float, float]:
+    started = time.monotonic()
+    labels = _cluster_embeddings(
+        embeddings,
+        face_ids=face_ids,
+    )
+    elapsed = time.monotonic() - started
+    cluster_count, noise_ratio = _summarize_labels(labels)
+    return labels, cluster_count, noise_ratio, elapsed
 
 
 def rebuild_person_embedding(session: Session, person_id: int) -> None:
@@ -417,6 +571,8 @@ def merge_similar_persons(
     try:
         if candidate_ids:
             merge_processed = 0
+            merge_started = time.monotonic()
+            last_merge_log = merge_started
             last_saved_progress: tuple[int, int] = (-1, -1)
 
             with Session(db.engine) as session:
@@ -428,19 +584,36 @@ def merge_similar_persons(
                     safe_commit(session)
 
             def update_progress(force: bool = False) -> None:
-                nonlocal last_saved_progress
+                nonlocal last_saved_progress, last_merge_log
                 pending_count = len(candidate_ids)
                 total_work = merge_processed + pending_count
                 if total_work <= 0:
                     total_work = max(merge_processed, pending_count)
+                now = time.monotonic()
+                elapsed = now - merge_started
+                merge_rate = merge_processed / max(0.1, elapsed)
                 set_task_progress(
                     task_id,
                     current_step="merging_similar_persons",
-                    current_item=f"queued: {pending_count} (merged {total_merged})",
+                    current_item=(
+                        f"queued: {pending_count} (merged {total_merged}, "
+                        f"{merge_rate:.1f}/s, {elapsed:.0f}s)"
+                    ),
                     merge_processed=merge_processed,
                     merge_total=total_work,
                     merge_pending=pending_count,
                 )
+
+                if (now - last_merge_log) >= 15.0:
+                    logger.info(
+                        "Merging similar persons: processed=%d pending=%d merged=%d"
+                        " (%.1f/s)",
+                        merge_processed,
+                        pending_count,
+                        total_merged,
+                        merge_rate,
+                    )
+                    last_merge_log = now
 
                 progress_tuple = (merge_processed, total_work)
                 if not force and progress_tuple == last_saved_progress:
@@ -475,8 +648,6 @@ def merge_similar_persons(
                     if not person_embedding:
                         logger.debug("No embedding found for person %s", person_id)
                         continue
-
-                    logger.debug("Embeddings: %s", person_embedding)
 
                     rows = session.exec(
                         text(
@@ -566,11 +737,6 @@ def _assign_faces_to_clusters(
     new_person_ids: list[int] = []
     for face_ids, embeddings in tqdm(clusters.values()):
         if len(face_ids) < settings.face_recognition.person_min_face_count:
-            logger.debug(
-                "Skipping cluster with %d faces (< person_min_face_count %d)",
-                len(face_ids),
-                settings.face_recognition.person_min_face_count,
-            )
             continue
 
         embeddings_arr = np.array(embeddings)
@@ -661,147 +827,6 @@ def _assign_faces_to_clusters(
     return created, new_person_ids
 
 
-def assign_to_existing_persons(
-    face_ids: list[int], embs: np.ndarray, task_id: str, threshold_per: float
-) -> list[int]:
-    unassigned: list[int] = []
-
-    with Session(db.engine) as session:
-        affected_person_ids: set[int] = set()
-
-        def bump_progress(task: ProcessingTask) -> None:
-            task.processed += 1
-            if task.processed % 100 == 0:
-                if affected_person_ids:
-                    recalculate_person_appearance_counts(
-                        session, affected_person_ids
-                    )
-                    affected_person_ids.clear()
-                session.add(task)
-                safe_commit(session)
-
-        for face_id, emb in tqdm(zip(face_ids, embs), total=len(face_ids)):
-            face = session.get(Face, face_id)
-            task = session.get(ProcessingTask, task_id)
-            assert task
-
-            if task.status == "cancelled":
-                break
-
-            vec_param = vector_to_blob(emb)
-            if vec_param is None:
-                logger.warning(
-                    "Skipping face %s due to invalid embedding payload",
-                    face_id,
-                )
-                bump_progress(task)
-                continue
-
-            sql = text(
-                """
-                    SELECT person_id, distance FROM person_embeddings
-                    WHERE embedding MATCH :vec
-                    and k = 2
-                    ORDER BY distance
-                """
-            ).bindparams(vec=vec_param)
-            rows = session.exec(sql).all()
-
-            if not rows or len(rows[0]) < 2:
-                unassigned.append(face_id)
-                bump_progress(task)
-                continue
-
-            if not _distance_to_similarity(rows[0][1]) >= threshold_per:
-                unassigned.append(face_id)
-                bump_progress(task)
-                continue
-
-            person_id = rows[0][0]
-
-            if len(rows) > 1:
-                best_cos = 1.0 - 0.5 * float(rows[0][1]) ** 2
-                second_cos = 1.0 - 0.5 * float(rows[1][1]) ** 2
-                min_margin = getattr(
-                    settings.face_recognition,
-                    "existing_person_min_cosine_margin",
-                    0.0,
-                )
-                if (best_cos - second_cos) < float(min_margin):
-                    unassigned.append(face_id)
-                    bump_progress(task)
-                    continue
-
-            if person_id is None:
-                logger.warning(
-                    "Found person_embeddings row with NULL person_id; cleaning up."
-                )
-                session.exec(
-                    text("DELETE FROM person_embeddings WHERE person_id IS NULL")
-                )
-                unassigned.append(face_id)
-                bump_progress(task)
-                continue
-
-            person = session.get(Person, person_id)
-
-            if person is None:
-                logger.warning(
-                    "Dangling person_id %s in person_embeddings; removing and"
-                    " skipping face %s",
-                    person_id,
-                    face_id,
-                )
-                session.exec(
-                    text(
-                        "DELETE FROM person_embeddings WHERE person_id = :p_id"
-                    ).bindparams(p_id=person_id)
-                )
-                unassigned.append(face_id)
-                bump_progress(task)
-                continue
-
-            min_apps = getattr(
-                settings.face_recognition,
-                "existing_person_min_media_count",
-                0,
-            )
-            if (person.appearance_count or 0) < int(min_apps):
-                unassigned.append(face_id)
-                bump_progress(task)
-                continue
-
-            if face is not None:
-                face.person_id = person_id
-                session.add(face)
-
-                session.exec(
-                    text(
-                        """
-                        UPDATE face_embeddings
-                            SET person_id = :p_id
-                            WHERE face_id   = :f_id
-                        """
-                    ).bindparams(p_id=person_id, f_id=face_id)
-                )
-
-                affected_person_ids.add(person_id)
-            else:
-                logger.warning(
-                    "Face %s not found during assignment; skipping update.",
-                    face_id,
-                )
-
-            bump_progress(task)
-
-        if affected_person_ids:
-            recalculate_person_appearance_counts(session, affected_person_ids)
-            affected_person_ids.clear()
-        session.add(task)
-        safe_commit(session)
-    return unassigned
-
-
 def _get_face_total(session: Session) -> int:
     sql = text(
         """
@@ -816,6 +841,7 @@ def _get_face_total(session: Session) -> int:
 
 
 def run_person_clustering(task_id: str) -> None:
+    cluster_chunk_size = settings.face_recognition.cluster_batch_size
     with Session(db.engine) as session:
         task = session.get(ProcessingTask, task_id)
         if not task:
@@ -825,7 +851,11 @@ def run_person_clustering(task_id: str) -> None:
         task.status = "running"
         task.started_at = datetime.now(timezone.utc)
         task.total = _get_face_total(session)
-        logger.info("Got %s faces to cluster!", task.total)
+        logger.info(
+            "Got %s faces to cluster! batch_size=%d",
+            task.total,
+            settings.face_recognition.cluster_batch_size,
+        )
         safe_commit(session)
 
     def is_cancelled() -> bool:
@@ -833,8 +863,23 @@ def run_person_clustering(task_id: str) -> None:
             t = s.get(ProcessingTask, task_id)
             return bool(t and t.status == "cancelled")
 
-    with heavy_writer(name="cluster_persons", cancelled=is_cancelled):
+    with heavy_writer(name="cluster_persons", cancelled=is_cancelled) as acquired:
+        if not acquired:
+            with Session(db.engine) as session:
+                task = session.get(ProcessingTask, task_id)
+                if task:
+                    task.status = "cancelled"
+                    task.finished_at = datetime.now(timezone.utc)
+                    session.add(task)
+                    safe_commit(session)
+            clear_task_progress(task_id)
+            return
+
+        set_task_progress(
+            task_id, current_step="clustering_batches", current_item="starting"
+        )
         last_id = 0
+        batch_index = 0
         new_person_candidates: list[int] = []
         while True:
             logger.info("--- Starting new Clustering Batch ---")
@@ -853,50 +898,188 @@ def run_person_clustering(task_id: str) -> None:
                 break
 
             logger.info("Processing batch of %d faces...", len(batch_face_ids))
+            batch_index += 1
+            batch_started = time.monotonic()
+            set_task_progress(
+                task_id,
+                current_step="clustering_batch",
+                current_item=(
+                    f"batch {batch_index} ({len(batch_face_ids)} faces, last_id"
+                    f" {last_id})"
+                ),
+            )
 
-            person_exists = False
-            with Session(db.engine) as session:
-                person_exists = (
-                    session.exec(select(Person).limit(1)).first() is not None
-                )
-
-            if person_exists:
-                unassigned_face_ids = assign_to_existing_persons(
-                    batch_face_ids,
-                    batch_embeddings,
-                    task_id,
-                    threshold_per=settings.face_recognition.face_match_min_percent,
-                )
-                if not unassigned_face_ids:
-                    logger.info("All faces in batch were assigned to existing persons.")
-                    continue
-
-                new_faces_ids, new_embs = _filter_embeddings_by_id(
-                    batch_face_ids, batch_embeddings, unassigned_face_ids
-                )
-            else:
-                new_faces_ids, new_embs = batch_face_ids, batch_embeddings
-
-            if len(new_embs) >= max(
+            min_faces_required = max(
                 2, int(settings.face_recognition.person_min_face_count)
-            ):
-                labels = _cluster_embeddings(new_embs)
-                clusters = _group_faces_by_cluster(labels, new_faces_ids, new_embs)
-                created_count, created_person_ids = _assign_faces_to_clusters(
-                    clusters,
-                    task_id,
-                    update_progress=not person_exists,
-                )
-                if created_person_ids:
-                    new_person_candidates.extend(created_person_ids)
+            )
+            if len(batch_embeddings) >= min_faces_required:
+                if (
+                    cluster_chunk_size > 0
+                    and len(batch_embeddings) > cluster_chunk_size
+                ):
+                    total_chunks = math.ceil(len(batch_embeddings) / cluster_chunk_size)
+                    logger.info(
+                        "Clustering %d unassigned faces in %d chunks (max %d per"
+                        " chunk)",
+                        len(batch_embeddings),
+                        total_chunks,
+                        cluster_chunk_size,
+                    )
+                    total_created = 0
+                    total_clusters = 0
+                    for chunk_index, start in enumerate(
+                        range(0, len(batch_embeddings), cluster_chunk_size), start=1
+                    ):
+                        if is_cancelled():
+                            logger.info("Clustering cancelled mid-chunk.")
+                            break
+                        end = start + cluster_chunk_size
+                        chunk_faces = batch_face_ids[start:end]
+                        chunk_embs = batch_embeddings[start:end]
+                        set_task_progress(
+                            task_id,
+                            current_step="clustering_unassigned",
+                            current_item=(
+                                f"batch {batch_index} chunk {chunk_index}/"
+                                f"{total_chunks} ({len(chunk_faces)} faces)"
+                            ),
+                        )
+                        logger.info(
+                            "Batch %d chunk %d/%d: running on %d faces",
+                            batch_index,
+                            chunk_index,
+                            total_chunks,
+                            len(chunk_faces),
+                        )
+                        labels, cluster_count, noise_ratio, chunk_elapsed = (
+                            _run_clustering(
+                                embeddings=chunk_embs,
+                                face_ids=chunk_faces,
+                            )
+                        )
+                        logger.info(
+                            "Batch %d chunk %d/%d: done in %.1fs (clusters=%d"
+                            " noise=%.2f)",
+                            batch_index,
+                            chunk_index,
+                            total_chunks,
+                            chunk_elapsed,
+                            cluster_count,
+                            noise_ratio,
+                        )
+                        clusters = _group_faces_by_cluster(
+                            labels, chunk_faces, chunk_embs
+                        )
+                        created_count, created_person_ids = _assign_faces_to_clusters(
+                            clusters,
+                            task_id,
+                            update_progress=False,
+                        )
+                        total_created += created_count
+                        total_clusters += len(clusters)
+                        if created_person_ids:
+                            new_person_candidates.extend(created_person_ids)
+                        set_task_progress(
+                            task_id,
+                            current_step="clustering_unassigned",
+                            current_item=(
+                                f"batch {batch_index} chunk {chunk_index}/"
+                                f"{total_chunks} created {total_created} persons"
+                            ),
+                        )
+                        with Session(db.engine) as progress_session:
+                            task = progress_session.get(ProcessingTask, task_id)
+                            if task and task.status != "cancelled":
+                                task.processed += len(chunk_faces)
+                                progress_session.add(task)
+                                safe_commit(progress_session)
+                    logger.info(
+                        "Cluster batch produced %d new persons out of %d candidate"
+                        " clusters",
+                        total_created,
+                        total_clusters,
+                    )
+                else:
+                    logger.info(
+                        "Batch %d: running on %d unassigned faces",
+                        batch_index,
+                        len(batch_embeddings),
+                    )
+                    labels, cluster_count, noise_ratio, cluster_elapsed = (
+                        _run_clustering(
+                            embeddings=batch_embeddings,
+                            face_ids=batch_face_ids,
+                        )
+                    )
+                    logger.info(
+                        "Batch %d: done in %.1fs (clusters=%d noise=%.2f)",
+                        batch_index,
+                        cluster_elapsed,
+                        cluster_count,
+                        noise_ratio,
+                    )
+                    clusters = _group_faces_by_cluster(
+                        labels, batch_face_ids, batch_embeddings
+                    )
+                    created_count, created_person_ids = _assign_faces_to_clusters(
+                        clusters,
+                        task_id,
+                        update_progress=False,
+                    )
+                    if created_person_ids:
+                        new_person_candidates.extend(created_person_ids)
+                    logger.info(
+                        "Cluster batch produced %d new persons out of %d candidate"
+                        " clusters",
+                        created_count,
+                        len(clusters),
+                    )
+                    set_task_progress(
+                        task_id,
+                        current_step="clustering_unassigned",
+                        current_item=(
+                            f"batch {batch_index} created {created_count} persons"
+                        ),
+                    )
+            else:
                 logger.info(
-                    "Cluster batch produced %d new persons out of %d candidate"
-                    " clusters",
-                    created_count,
-                    len(clusters),
+                    "Batch %d: only %d unassigned faces (< min %d). Skipping"
+                    " clustering.",
+                    batch_index,
+                    len(batch_embeddings),
+                    settings.face_recognition.person_min_face_count,
                 )
+                set_task_progress(
+                    task_id,
+                    current_step="clustering_unassigned",
+                    current_item=(
+                        f"batch {batch_index} skipped (only"
+                        f" {len(batch_embeddings)} faces)"
+                    ),
+                )
+            if batch_face_ids:
+                with Session(db.engine) as session:
+                    task = session.get(ProcessingTask, task_id)
+                    if task and task.status != "cancelled":
+                        task.processed += len(batch_face_ids)
+                        session.add(task)
+                        safe_commit(session)
+            logger.info(
+                "Finished batch %d in %.1fs",
+                batch_index,
+                time.monotonic() - batch_started,
+            )
             if len(batch_face_ids) < settings.face_recognition.cluster_batch_size:
                 break
+            set_task_progress(
+                task_id,
+                current_step="clustering_batches",
+                current_item=f"waiting for next batch after id {last_id}",
+            )
+        logger.info(
+            "Starting merge of similar persons (%d candidates)",
+            len(new_person_candidates),
+        )
         merge_similar_persons(task_id, new_person_candidates)
 
         with Session(db.engine) as session:

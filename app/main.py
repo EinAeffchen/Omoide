@@ -88,7 +88,6 @@ from app.logger import configure_file_logging, logger
 from app.models import ProcessingTask
 from app.processor_registry import load_processors
 from app.services.releases import get_latest_release_info
-from app.tasks import run_cleanup_and_chain
 
 # Configure uvicorn loggers' verbosity
 logging.getLogger("uvicorn.error").setLevel(logging.INFO)
@@ -98,6 +97,8 @@ scheduler = AsyncIOScheduler()
 SCAN_JOB_ID = "scan_job"
 APP_VERSION = get_app_version()
 server: uvicorn.Server | None = None
+_migrations_lock = threading.Lock()
+_migrations_applied = False
 
 
 def _preferred_webview_gui() -> str | None:
@@ -135,6 +136,8 @@ def scheduled_scan_job():
         session.refresh(task)
 
         # Start the chain
+        from app.tasks.pipeline import run_cleanup_and_chain
+
         run_cleanup_and_chain(task.id)
 
 
@@ -225,7 +228,7 @@ async def lifespan(app: FastAPI):
     load_processors()
     # Apply database migrations on startup (idempotent)
     try:
-        db.run_migrations()
+        _apply_migrations_once()
     except Exception as e:
         logger.warning("Database migrations failed at startup: %s", e)
     # Ensure vec0 tables exist even if Alembic couldn't create them (binary mode).
@@ -482,16 +485,23 @@ def run_migrations():
     """
     print("Running database migrations...")
     try:
-        db.run_migrations()
+        _apply_migrations_once()
         print("Migrations applied successfully.")
     except Exception as e:
         print(f"Error applying migrations: {e}")
         raise
 
 
-def start_server():
-    """Starts the Uvicorn server in a daemon thread."""
-    uvicorn.run(app, host="0.0.0.0", port=8123)
+def _apply_migrations_once() -> None:
+    """Run migrations at most once per process."""
+    global _migrations_applied
+    if _migrations_applied:
+        return
+    with _migrations_lock:
+        if _migrations_applied:
+            return
+        db.run_migrations()
+        _migrations_applied = True
 
 
 if __name__ == "__main__":
