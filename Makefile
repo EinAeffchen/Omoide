@@ -58,13 +58,13 @@ build-image-gpu:
 build-release: build-image
 	git tag v${VERSION} -m "Release v${VERSION}"
 
-push: build-release
+push: #build-release
+	git push origin v${VERSION}
 	docker push einaeffchen/omoide:latest
 	docker push einaeffchen/omoide:${VERSION}	
 	docker push einaeffchen/omoide:${VERSION}.arm64	
 	docker push einaeffchen/omoide:gpu
 	docker push einaeffchen/omoide:${VERSION}-gpu
-	git push origin v${VERSION}
 
 alembic-generate:
 	echo ${DATA_DIR}

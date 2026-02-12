@@ -52,8 +52,11 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-          cache: 'pip'
-          cache-dependency-path: requirements-ci.txt
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
 
       - name: Free disk space (Linux)
         if: runner.os == 'Linux'
@@ -114,25 +117,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install --upgrade pip wheel
-          # Preinstall CPU torch/torchvision to avoid GPU wheels
-          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch>=2.8.0 torchvision>=0.23.0
-          # Install remaining project dependencies (excluding torch/vision)
-          python -m pip install -r requirements-ci.txt
+          uv sync --frozen --no-dev --extra build
 
       - name: Install Python dependencies (GPU)
         if: matrix.flavor == 'gpu'
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install --upgrade pip wheel
-          # Install CUDA-enabled torch/torchvision
-          python -m pip install --index-url https://download.pytorch.org/whl/cu121 torch>=2.8.0 torchvision>=0.23.0
-          # Install remaining project dependencies (excluding torch/vision)
-          python -m pip install -r requirements-ci.txt
+          uv sync --frozen --no-dev --extra build
+          # Replace CPU torch/vision with CUDA wheels
+          UV_TORCH_BACKEND=cu121 uv pip install torch torchvision
           # Swap to GPU ONNX runtime
-          python -m pip uninstall -y onnxruntime || true
-          python -m pip install onnxruntime-gpu==1.21.1
+          uv pip uninstall -y onnxruntime || true
+          uv pip install onnxruntime-gpu==1.21.1
 
       - name: Set artifact metadata
         shell: bash
@@ -148,8 +145,8 @@ jobs:
 
       - name: Show dependency versions (debug)
         run: |
-          python -V
-          pip list
+          uv run python -V
+          uv pip list
 
       - name: Mark GPU build
         if: matrix.flavor == 'gpu'
@@ -197,7 +194,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           export PYINSTALLER_STRIP_SYMLINKS=1
-          pyinstaller --clean --noconfirm main.spec
+          uv run pyinstaller --clean --noconfirm main.spec
 
       - name: Build binary with PyInstaller
         if: runner.os != 'macOS'
@@ -205,7 +202,7 @@ jobs:
           APP_VERSION: ${{ env.APP_VERSION }}
           OMOIDE_VERSION: ${{ env.OMOIDE_VERSION }}
         run: |
-          pyinstaller --clean --noconfirm main.spec
+          uv run pyinstaller --clean --noconfirm main.spec
 
       - name: Bundle VC runtime (Windows)
         if: runner.os == 'Windows'
@@ -252,7 +249,7 @@ jobs:
           '@
           $tempPath = Join-Path $env:RUNNER_TEMP 'bundle_vcomp_runtime.py'
           Set-Content -Path $tempPath -Value $bundleScript -Encoding UTF8
-          python $tempPath
+          uv run python $tempPath
 
       - name: Package artifact archive
         shell: pwsh
@@ -319,7 +316,7 @@ jobs:
           '@
           $tempPath = Join-Path $env:RUNNER_TEMP 'package_artifact.py'
           Set-Content -Path $tempPath -Value $packageScript -Encoding UTF8
-          python $tempPath
+          uv run python $tempPath
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

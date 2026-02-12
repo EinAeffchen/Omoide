@@ -1133,8 +1133,8 @@ dependencies = [
     { name = "open-clip-torch" },
     { name = "opencv-python" },
     { name = "piexif" },
+    { name = "pillow" },
     { name = "pydantic" },
-    { name = "pyinstaller" },
     { name = "pyside6" },
     { name = "python-dateutil" },
     { name = "python-multipart" },
@@ -1156,6 +1156,11 @@ dependencies = [
     { name = "watchdog" },
 ]
 
+[package.optional-dependencies]
+build = [
+    { name = "pyinstaller" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = "==1.15.2" },
@@ -1172,8 +1177,9 @@ requires-dist = [
     { name = "open-clip-torch", specifier = "==2.32.0" },
     { name = "opencv-python", specifier = "==4.11.0.86" },
     { name = "piexif", specifier = "==1.1.3" },
+    { name = "pillow", specifier = ">=12.1.0" },
     { name = "pydantic", specifier = "==2.11.3" },
-    { name = "pyinstaller", specifier = ">=6.15.0" },
+    { name = "pyinstaller", marker = "extra == 'build'", specifier = ">=6.15.0" },
     { name = "pyside6", specifier = ">=6.9.1" },
     { name = "python-dateutil", specifier = ">=2.9.0.post0" },
     { name = "python-multipart", specifier = "==0.0.20" },
@@ -1192,6 +1198,7 @@ requires-dist = [
     { name = "uvicorn", specifier = "==0.34.2" },
     { name = "watchdog", specifier = "==6.0.0" },
 ]
+provides-extras = ["build"]
 
 [[package]]
 name = "onnx"
@@ -2544,6 +2551,8 @@ dependencies = [
 wheels = [
     { url = "https://download.pytorch.org/whl/cpu/torch-2.10.0-1-cp312-none-macosx_11_0_arm64.whl", hash = "sha256:7fbbf409143a4fe0812a40c0b46a436030a7e1d14fe8c5234dfbe44df47f617e" },
     { url = "https://download.pytorch.org/whl/cpu/torch-2.10.0-1-cp313-none-macosx_11_0_arm64.whl", hash = "sha256:b39cafff7229699f9d6e172cac74d85fd71b568268e439e08d9c540e54732a3e" },
+    { url = "https://download.pytorch.org/whl/cpu/torch-2.10.0-2-cp312-none-macosx_11_0_arm64.whl", hash = "sha256:358bd7125cbec6e692d60618a5eec7f55a51b29e3652a849fd42af021d818023" },
+    { url = "https://download.pytorch.org/whl/cpu/torch-2.10.0-2-cp313-none-macosx_11_0_arm64.whl", hash = "sha256:470de4176007c2700735e003a830828a88d27129032a3add07291da07e2a94e8" },
     { url = "https://download.pytorch.org/whl/cpu/torch-2.10.0-cp312-none-macosx_11_0_arm64.whl", hash = "sha256:45a1c5057629444aeb1c452c18298fa7f30f2f7aeadd4dc41f9d340980294407" },
     { url = "https://download.pytorch.org/whl/cpu/torch-2.10.0-cp313-cp313t-macosx_14_0_arm64.whl", hash = "sha256:339e05502b6c839db40e88720cb700f5a3b50cda332284873e851772d41b2c1e" },
     { url = "https://download.pytorch.org/whl/cpu/torch-2.10.0-cp313-none-macosx_11_0_arm64.whl", hash = "sha256:840351da59cedb7bcbc51981880050813c19ef6b898a7fecf73a3afc71aff3fe" },
