@@ -58,7 +58,7 @@ build-image-gpu:
 build-release: build-image
 	git tag v${VERSION} -m "Release v${VERSION}"
 
-push: #build-release
+push: build-release
 	git push origin v${VERSION}
 	docker push einaeffchen/omoide:latest
 	docker push einaeffchen/omoide:${VERSION}	

@@ -850,12 +850,13 @@ def _match_unassigned_to_existing(
             """
             SELECT person_id, distance 
             FROM person_embeddings 
-            WHERE k = 1
+            LIMIT 1
         """
         )
     ).first()
 
     if not row:
+        logger.info("No existing persons found, skipping to clustering!")
         return face_ids
 
     threshold = float(
