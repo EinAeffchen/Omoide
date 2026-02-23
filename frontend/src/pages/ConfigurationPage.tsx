@@ -109,7 +109,7 @@ const facePresets: Record<
     person_min_face_count: 2,
     person_min_media_count: 2,
     person_merge_search_k: 50,
-    person_cluster_max_l2_radius: 1.02,
+    person_cluster_max_l2_radius: 1.04,
     person_merge_percent_similarity: 68,
     cluster_batch_size: 15000,
     hdbscan_min_cluster_size: 4,

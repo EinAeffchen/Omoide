@@ -88,7 +88,6 @@ def _fetch_faces_and_embeddings(
                 continue
             face_ids.append(int(face_id))
             vectors.append(vec.astype(np.float32, copy=False))
-            logger.debug("Appended!")
         except Exception:
             logger.exception("Failure while processing face!")
 
@@ -220,7 +219,7 @@ def _cluster_embeddings_hdbscan(
         random_state=42,
     )
     embeddings_reduced = reducer.fit_transform(embeddings)
-
+    embeddings_reduced = embeddings_reduced.astype("float64")
     min_faces_required = max(2, int(settings.face_recognition.person_min_face_count))
     sample_count = embeddings.shape[0]
 
@@ -261,28 +260,24 @@ def _cluster_embeddings_hdbscan(
             min_samples=current_min_samples,
             cluster_selection_method=settings.face_recognition.hdbscan_cluster_selection_method,
             cluster_selection_epsilon=settings.face_recognition.hdbscan_cluster_selection_epsilon,
-            algorithm="generic",
+            algorithm="best",
+            gen_min_span_tree=False,
         )
         labels = clusterer.fit_predict(embeddings_reduced)
 
-        dbcv_score = float(clusterer.relative_validity_)
+        if len(labels) > 0:
+            current_score = float(np.mean(clusterer.probabilities_))
+        else:
+            current_score = -1
 
         non_noise_mask = labels >= 0
         cluster_count = int(np.unique(labels[non_noise_mask]).size)
         noise_ratio = float(np.mean(labels == -1))
 
-        if cluster_count <= 1:
-            current_score = -1.0
-        else:
-            # We weight DBCV heavily, but penalize if noise is extreme
-            # Example: Score = DBCV * (percentage of data that ISN'T noise)
-            current_score = dbcv_score * (1.0 - noise_ratio)
-
         logger.debug(
-            "HDBSCAN attempt clusters=%d noise=%.2f DBCV=%d FinalScore=%d",
+            "HDBSCAN attempt clusters=%d noise=%.2f FinalScore=%d",
             cluster_count,
             noise_ratio,
-            dbcv_score,
             current_score,
         )
 
@@ -758,7 +753,7 @@ def _assign_faces_to_clusters(
 
         with Session(db.engine) as session:
             task = session.get(ProcessingTask, task_id)
-            if task.status == "cancelled":
+            if task and task.status == "cancelled":
                 break
             media_count = session.exec(
                 select(func.count(func.distinct(Face.media_id))).where(
@@ -840,6 +835,99 @@ def _get_face_total(session: Session) -> int:
     return int(row[0]) if row else 0
 
 
+def _match_unassigned_to_existing(
+    session: Session, face_ids: list[int], embeddings: np.ndarray, task_id: str
+) -> list[int]:
+    """
+    Attempts to assign faces to existing persons via vector search.
+    Returns a list of face_ids that were NOT assigned and still need clustering.
+    """
+    if not face_ids:
+        return []
+
+    row = session.exec(
+        text(
+            """
+            SELECT person_id, distance 
+            FROM person_embeddings 
+            WHERE k = 1
+        """
+        )
+    ).first()
+
+    if not row:
+        return face_ids
+
+    threshold = float(
+        getattr(settings.face_recognition, "person_merge_percent_similarity", 75.0)
+    )
+    unassigned_after_match = []
+    assigned_count = 0
+
+    logger.info("Attempting to match %d faces to existing persons...", len(face_ids))
+
+    for i, (face_id, emb) in enumerate(zip(face_ids, embeddings)):
+        # Convert embedding to blob for sqlite-vec
+        if i % 100 == 0:
+            set_task_progress(
+                task_id,
+                current_step="matching_known_persons",
+                current_item=f"Matching face {i}/{len(face_ids)} in current batch",
+            )
+            with Session(db.engine) as progress_session:
+                task = progress_session.get(ProcessingTask, task_id)
+                if task and task.status == "running":  # Keep standard status
+                    task.processed = i
+                    progress_session.add(task)
+                    safe_commit(progress_session)
+        blob = vector_to_blob(emb.astype(np.float32, copy=False))
+
+        # Search for the single closest existing person
+        row = session.exec(
+            text(
+                """
+                SELECT person_id, distance 
+                FROM person_embeddings 
+                WHERE embedding MATCH :vec 
+                AND k = 1
+            """
+            ).bindparams(vec=blob)
+        ).first()
+
+        if row:
+            person_id, distance = row
+            similarity = _distance_to_similarity(distance)
+
+            if similarity >= threshold:
+                # Direct assignment
+                session.exec(
+                    update(Face).where(Face.id == face_id).values(person_id=person_id)
+                )
+                session.exec(
+                    text(
+                        "UPDATE face_embeddings SET person_id = :pid WHERE face_id ="
+                        " :fid"
+                    ).bindparams(pid=person_id, fid=face_id)
+                )
+
+                assigned_count += 1
+                continue
+
+        unassigned_after_match.append(face_id)
+
+    with Session(db.engine) as progress_session:
+        task = progress_session.get(ProcessingTask, task_id)
+        if task and task.status != "cancelled":
+            task.processed = 0
+            progress_session.add(task)
+            safe_commit(progress_session)
+    if assigned_count > 0:
+        safe_commit(session)
+        logger.info("Matched %d faces to existing persons.", assigned_count)
+
+    return unassigned_after_match
+
+
 def run_person_clustering(task_id: str) -> None:
     cluster_chunk_size = settings.face_recognition.cluster_batch_size
     with Session(db.engine) as session:
@@ -890,12 +978,20 @@ def run_person_clustering(task_id: str) -> None:
                     last_id=last_id,
                     limit=settings.face_recognition.cluster_batch_size,
                 )
-                if batch_face_ids:
-                    last_id = batch_face_ids[-1]
+                if not batch_face_ids:
+                    break
 
-            if len(batch_face_ids) == 0:
-                logger.info("No more unassigned faces found. Finishing process.")
-                break
+                remaining_ids = _match_unassigned_to_existing(
+                    session, batch_face_ids, batch_embeddings, task_id
+                )
+
+                if len(remaining_ids) != len(batch_face_ids):
+                    batch_face_ids, batch_embeddings = _filter_embeddings_by_id(
+                        batch_face_ids, batch_embeddings, remaining_ids
+                    )
+
+            if batch_face_ids:
+                last_id = batch_face_ids[-1]
 
             logger.info("Processing batch of %d faces...", len(batch_face_ids))
             batch_index += 1

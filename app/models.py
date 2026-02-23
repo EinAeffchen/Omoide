@@ -1,10 +1,20 @@
 import uuid
 from datetime import date, datetime
+from enum import StrEnum
 from typing import Optional
 
+import sqlalchemy as sa
 from sqlalchemy import Column
 from sqlalchemy.types import JSON
 from sqlmodel import Field, Relationship, SQLModel
+
+
+class Status(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    CANCELLED = "cancelled"
+    COMPLETED = "completed"
+    FAILED = "failed"
 
 
 class TimelineEvent(SQLModel, table=True):
@@ -22,9 +32,7 @@ class TimelineEvent(SQLModel, table=True):
 
 
 class MediaTagLink(SQLModel, table=True):
-    media_id: int = Field(
-        default=None, foreign_key="media.id", primary_key=True
-    )
+    media_id: int = Field(default=None, foreign_key="media.id", primary_key=True)
     tag_id: int = Field(default=None, foreign_key="tag.id", primary_key=True)
     auto_score: float | None = Field(default=None)
 
@@ -35,9 +43,7 @@ class Blacklist(SQLModel, table=True):
 
 
 class PersonTagLink(SQLModel, table=True):
-    person_id: int = Field(
-        default=None, foreign_key="person.id", primary_key=True
-    )
+    person_id: int = Field(default=None, foreign_key="person.id", primary_key=True)
     tag_id: int = Field(default=None, foreign_key="tag.id", primary_key=True)
 
 
@@ -63,9 +69,7 @@ class Tag(SQLModel, table=True):
 class Face(SQLModel, table=True):
     id: int = Field(default=None, primary_key=True)
     media_id: int = Field(foreign_key="media.id", index=True)
-    person_id: int | None = Field(
-        foreign_key="person.id", default=None, index=True
-    )
+    person_id: int | None = Field(foreign_key="person.id", default=None, index=True)
     thumbnail_path: str | None = Field(default=None)
     bbox: list[int] = Field(sa_column=Column(JSON))
 
@@ -104,13 +108,9 @@ class Media(SQLModel, table=True):
     phash: str | None = Field(index=True)
     faces: list["Face"] = Relationship(back_populates="media")
     scenes: list["Scene"] = Relationship(back_populates="media")
-    tags: list[Tag] = Relationship(
-        back_populates="media", link_model=MediaTagLink
-    )
+    tags: list[Tag] = Relationship(back_populates="media", link_model=MediaTagLink)
     exif: "ExifData" = Relationship(back_populates="media")
-    duplicate_entries: list["DuplicateMedia"] = Relationship(
-        back_populates="media"
-    )
+    duplicate_entries: list["DuplicateMedia"] = Relationship(back_populates="media")
 
     class Config:
         from_attributes = True
@@ -151,9 +151,7 @@ class Person(SQLModel, table=True):
         },
     )
     is_favorite: bool = Field(default=False)
-    profile_face_id: int | None = Field(
-        foreign_key="face.id", default=None, index=True
-    )
+    profile_face_id: int | None = Field(foreign_key="face.id", default=None, index=True)
     profile_face: Face | None = Relationship(
         sa_relationship_kwargs={
             "primaryjoin": "Person.profile_face_id==Face.id",
@@ -162,24 +160,25 @@ class Person(SQLModel, table=True):
             "lazy": "selectin",
         }
     )
-    tags: list[Tag] = Relationship(
-        back_populates="persons", link_model=PersonTagLink
-    )
+    tags: list[Tag] = Relationship(back_populates="persons", link_model=PersonTagLink)
     appearance_count: int = Field(default=None, index=True)
-    timeline_events: list["TimelineEvent"] = Relationship(
-        back_populates="person"
-    )
+    timeline_events: list["TimelineEvent"] = Relationship(back_populates="person")
 
     class Config:
         from_attributes = True
 
 
 class ProcessingTask(SQLModel, table=True):
-    id: str = Field(
-        default_factory=lambda: str(uuid.uuid4()), primary_key=True
-    )
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     task_type: str
-    status: str = Field(default="pending", index=True)
+    status: Status = Field(
+        sa_column=sa.Column(
+            sa.Enum(Status, values_callable=lambda obj: [item.value for item in obj]),
+            default=Status.PENDING,
+            nullable=False,
+            index=True,
+        )
+    )
     total: int = Field(default=0)
     processed: int = Field(default=0)
     created_at: datetime = Field(default_factory=datetime.now)
@@ -250,14 +249,8 @@ class DuplicateMedia(SQLModel, table=True):
 class PersonRelationship(SQLModel, table=True):
     __tablename__ = "person_relationship"
 
-    person_a_id: int = Field(
-        foreign_key="person.id", primary_key=True
-    )
-    person_b_id: int = Field(
-        foreign_key="person.id", primary_key=True
-    )
+    person_a_id: int = Field(foreign_key="person.id", primary_key=True)
+    person_b_id: int = Field(foreign_key="person.id", primary_key=True)
     coappearance_count: int = Field(default=0, index=True)
-    last_media_id: int | None = Field(
-        default=None, foreign_key="media.id"
-    )
+    last_media_id: int | None = Field(default=None, foreign_key="media.id")
     updated_at: datetime = Field(default_factory=datetime.utcnow)
