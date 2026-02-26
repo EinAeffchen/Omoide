@@ -8,14 +8,14 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import PlainTextResponse
-from sqlalchemy import and_, func, or_, text, tuple_
+from sqlalchemy import and_, func, or_, text, tuple_, union_all
 from sqlalchemy.orm import aliased, selectinload
 from sqlmodel import Session, select
 
 from app.config import ReadOnlyMediaError, settings
 from app.database import get_session
 from app.logger import logger
-from app.models import ExifData, Face, Media, Person, Scene, Tag
+from app.models import ExifData, Face, Media, Person, PersonMediaLink, Scene, Tag
 from app.schemas.face import FaceRead
 from app.schemas.media import (
     CursorPage,
@@ -346,7 +346,13 @@ def list_media(
                 )
             )
     if person_id:
-        q = q.join(Media.faces).where(Face.person_id == person_id)
+        media_links_union = union_all(
+            select(Face.media_id.label("media_id")).where(Face.person_id == person_id),
+            select(PersonMediaLink.media_id.label("media_id")).where(
+                PersonMediaLink.person_id == person_id
+            ),
+        ).subquery()
+        q = q.where(Media.id.in_(select(media_links_union.c.media_id)))
 
     results = session.exec(q.limit(limit)).all()
     if len(results) == limit:
@@ -671,9 +677,15 @@ def get_neighbors(
     q = select(Media)
 
     if filter_people:
-        q = q.join(Face, Face.media_id == Media.id).where(
-            Face.person_id.in_(filter_people)
-        )
+        media_links_union = union_all(
+            select(Face.media_id.label("media_id")).where(
+                Face.person_id.in_(filter_people)
+            ),
+            select(PersonMediaLink.media_id.label("media_id")).where(
+                PersonMediaLink.person_id.in_(filter_people)
+            ),
+        ).subquery()
+        q = q.where(Media.id.in_(select(media_links_union.c.media_id)))
 
     previous_query = (
         q.where(tuple_(sort_col, Media.id) > (original_sort_value, original.id))
@@ -725,6 +737,27 @@ def get_media(media_id: int, session: Session = Depends(get_session)):
     orphans: list[Face] = []
     for _, person in rows:
         if person and person.id not in seen:
+            seen.add(person.id)
+            persons.append(
+                PersonRead(
+                    **person.model_dump(),
+                    profile_face=(
+                        FaceRead(**person.profile_face.model_dump())
+                        if person.profile_face
+                        else None
+                    ),
+                )
+            )
+    manual_person_ids = session.exec(
+        select(PersonMediaLink.person_id).where(PersonMediaLink.media_id == media_id)
+    ).all()
+    if manual_person_ids:
+        manual_persons = session.exec(
+            select(Person).where(Person.id.in_(manual_person_ids))
+        ).all()
+        for person in manual_persons:
+            if person.id in seen:
+                continue
             seen.add(person.id)
             persons.append(
                 PersonRead(

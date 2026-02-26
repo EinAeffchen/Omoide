@@ -86,6 +86,7 @@ export function MediaContentTabs(props: MediaContentTabsProps) {
             <TabPanel value={tabValue} index={tabIndices.people}>
               {/* The People tab now uses its own smart component */}
               <PeopleTabContent
+                mediaId={media.id}
                 initialPersons={persons}
                 initialOrphans={orphans}
                 onDataChanged={onDetailReload}

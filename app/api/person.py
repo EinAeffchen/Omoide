@@ -3,6 +3,7 @@ from datetime import date, datetime
 
 from fastapi import (
     APIRouter,
+    Body,
     Depends,
     HTTPException,
     Query,
@@ -26,6 +27,7 @@ from app.models import (
     Face,
     Media,
     Person,
+    PersonMediaLink,
     PersonRelationship,
     PersonTagLink,
     TimelineEvent,
@@ -75,9 +77,13 @@ def get_person_timeline(
     cursor: str | None = None,
     limit: int = 1000,
 ):
-    media_ids_subquery = (
-        select(Face.media_id).where(Face.person_id == person_id).distinct()
-    )
+    media_ids_union = union_all(
+        select(Face.media_id.label("media_id")).where(Face.person_id == person_id),
+        select(PersonMediaLink.media_id.label("media_id")).where(
+            PersonMediaLink.person_id == person_id
+        ),
+    ).subquery()
+    media_ids_subquery = select(media_ids_union.c.media_id).distinct()
     media_query = (
         select(
             Media.id.label("item_id"),
@@ -419,16 +425,29 @@ def get_appearances(
     all_required_ids = list(set([person_id] + with_person_ids))
     required_ids_count = len(all_required_ids)
 
+    appearance_pairs = union_all(
+        select(
+            Face.person_id.label("person_id"),
+            Face.media_id.label("media_id"),
+        ).where(Face.person_id.in_(all_required_ids)),
+        select(
+            PersonMediaLink.person_id.label("person_id"),
+            PersonMediaLink.media_id.label("media_id"),
+        ).where(PersonMediaLink.person_id.in_(all_required_ids)),
+    ).subquery()
+
     media_id_q = (
-        select(Face.media_id)
-        .where(Face.person_id.in_(all_required_ids))
-        .group_by(Face.media_id)
-        .having(func.count(func.distinct(Face.person_id)) == required_ids_count)
+        select(appearance_pairs.c.media_id)
+        .group_by(appearance_pairs.c.media_id)
+        .having(
+            func.count(func.distinct(appearance_pairs.c.person_id))
+            == required_ids_count
+        )
     )
     matching_media_ids = session.exec(media_id_q).all()
 
     if not matching_media_ids:
-        return CursorPage(items=[], next_cursor=None)
+        return MediaCursorPage(items=[], next_cursor=None)
 
     q = (
         select(Media)
@@ -462,6 +481,61 @@ def get_appearances(
     return MediaCursorPage(next_cursor=next_cursor, items=items)
 
 
+@router.post(
+    "/{person_id}/media",
+    summary="Manually attach media to a person when no face is detected",
+    status_code=status.HTTP_200_OK,
+)
+def add_media_appearance(
+    person_id: int,
+    media_id: int = Body(..., embed=True),
+    session: Session = Depends(get_session),
+):
+    if settings.general.presentation_mode:
+        raise HTTPException(
+            status_code=403,
+            detail="Not allowed in settings.general.presentation_mode mode.",
+        )
+
+    person = session.get(Person, person_id)
+    if not person:
+        raise HTTPException(status_code=404, detail="Person not found")
+    media = session.get(Media, media_id)
+    if not media:
+        raise HTTPException(status_code=404, detail="Media not found")
+
+    has_detected_face = session.exec(
+        select(Face.id).where(
+            Face.person_id == person_id,
+            Face.media_id == media_id,
+        )
+    ).first()
+    if has_detected_face:
+        session.exec(
+            delete(PersonMediaLink).where(
+                PersonMediaLink.person_id == person_id,
+                PersonMediaLink.media_id == media_id,
+            )
+        )
+        recalculate_person_appearance_counts(session, [person_id])
+        safe_commit(session)
+        return {"person_id": person_id, "media_id": media_id, "added": False}
+
+    existing_link = session.exec(
+        select(PersonMediaLink).where(
+            PersonMediaLink.person_id == person_id,
+            PersonMediaLink.media_id == media_id,
+        )
+    ).first()
+    if existing_link:
+        return {"person_id": person_id, "media_id": media_id, "added": False}
+
+    session.add(PersonMediaLink(person_id=person_id, media_id=media_id))
+    recalculate_person_appearance_counts(session, [person_id])
+    safe_commit(session)
+    return {"person_id": person_id, "media_id": media_id, "added": True}
+
+
 @router.get("/{person_id}", response_model=PersonDetail)
 def get_person(person_id: int, session: Session = Depends(get_session)):
     person = session.get(Person, person_id)
@@ -473,13 +547,15 @@ def get_person(person_id: int, session: Session = Depends(get_session)):
         session.add(person)
         session.commit()
         session.refresh(person)
-    stmt = (
-        select(func.count(distinct(Media.id)))
-        .join_from(Person, Face, Face.person_id == Person.id)
-        .join_from(Face, Media, Face.media_id == Media.id)
-        .where(Person.id == person_id)
+    media_ids_union = union_all(
+        select(Face.media_id.label("media_id")).where(Face.person_id == person_id),
+        select(PersonMediaLink.media_id.label("media_id")).where(
+            PersonMediaLink.person_id == person_id
+        ),
+    ).subquery()
+    media_count = session.scalar(
+        select(func.count(distinct(media_ids_union.c.media_id)))
     )
-    media_count = session.scalar(stmt)
     if person.profile_face:
         profile_face = ProfileFace(
             id=person.profile_face.id,
@@ -493,7 +569,7 @@ def get_person(person_id: int, session: Session = Depends(get_session)):
         profile_face_id=person.profile_face_id,
         profile_face=profile_face,
         tags=person.tags,
-        appearance_count=media_count,
+        appearance_count=int(media_count or 0),
     )
 
 
@@ -615,6 +691,25 @@ def _merge_person_into_target(
 
     if target.profile_face_id is None and source.profile_face_id is not None:
         target.profile_face_id = source.profile_face_id
+
+    source_media_ids = set(
+        session.exec(
+            select(PersonMediaLink.media_id).where(
+                PersonMediaLink.person_id == source_id
+            )
+        ).all()
+    )
+    if source_media_ids:
+        target_media_ids = set(
+            session.exec(
+                select(PersonMediaLink.media_id).where(
+                    PersonMediaLink.person_id == target_id
+                )
+            ).all()
+        )
+        for media_id in source_media_ids - target_media_ids:
+            session.add(PersonMediaLink(person_id=target_id, media_id=media_id))
+    session.exec(delete(PersonMediaLink).where(PersonMediaLink.person_id == source_id))
 
     relationships_to_merge = session.exec(
         select(PersonRelationship).where(

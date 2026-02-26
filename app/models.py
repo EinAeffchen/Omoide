@@ -37,6 +37,15 @@ class MediaTagLink(SQLModel, table=True):
     auto_score: float | None = Field(default=None)
 
 
+class PersonMediaLink(SQLModel, table=True):
+    person_id: int = Field(default=None, foreign_key="person.id", primary_key=True)
+    media_id: int = Field(default=None, foreign_key="media.id", primary_key=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    person: "Person" = Relationship(back_populates="media_links")
+    media: "Media" = Relationship(back_populates="person_links")
+
+
 class Blacklist(SQLModel, table=True):
     id: int = Field(default=None, primary_key=True)
     path: str = Field(unique=True, index=True)
@@ -111,6 +120,7 @@ class Media(SQLModel, table=True):
     tags: list[Tag] = Relationship(back_populates="media", link_model=MediaTagLink)
     exif: "ExifData" = Relationship(back_populates="media")
     duplicate_entries: list["DuplicateMedia"] = Relationship(back_populates="media")
+    person_links: list[PersonMediaLink] = Relationship(back_populates="media")
 
     class Config:
         from_attributes = True
@@ -163,6 +173,7 @@ class Person(SQLModel, table=True):
     tags: list[Tag] = Relationship(back_populates="persons", link_model=PersonTagLink)
     appearance_count: int = Field(default=None, index=True)
     timeline_events: list["TimelineEvent"] = Relationship(back_populates="person")
+    media_links: list[PersonMediaLink] = Relationship(back_populates="person")
 
     class Config:
         from_attributes = True

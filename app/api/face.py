@@ -13,7 +13,7 @@ from sqlmodel import Session, delete, select, text
 from app.config import settings
 from app.database import get_session, safe_commit, safe_execute
 from app.logger import logger
-from app.models import Face, Person, PersonRelationship, PersonTagLink
+from app.models import Face, Person, PersonMediaLink, PersonRelationship, PersonTagLink
 from app.schemas.face import CursorPage, FaceAssign
 from app.schemas.person import PersonMinimal
 from app.utils import (
@@ -286,6 +286,12 @@ def old_person_can_be_deleted(session: Session, person_id: int | None):
         session, select(Face).where(Face.person_id == person_id)
     ).first()
     if remaining:
+        return False
+    remaining_manual_link = safe_execute(
+        session,
+        select(PersonMediaLink).where(PersonMediaLink.person_id == person_id),
+    ).first()
+    if remaining_manual_link:
         return False
 
     # delete any tag links

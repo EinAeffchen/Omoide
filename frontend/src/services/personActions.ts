@@ -11,6 +11,12 @@ export interface DeletePersonsResult {
   skipped_ids: number[];
 }
 
+export interface AddMediaAppearanceResult {
+  person_id: number;
+  media_id: number;
+  added: boolean;
+}
+
 export const updatePerson = async (
   personId: number,
   data: { name?: string; profile_face_id?: number }
@@ -154,6 +160,21 @@ export const autoSelectProfileFace = async (personId: number): Promise<Person> =
   });
   if (!res.ok) {
     throw new Error("Failed to auto-select profile image");
+  }
+  return res.json();
+};
+
+export const addMediaAppearanceToPerson = async (
+  personId: number,
+  mediaId: number
+): Promise<AddMediaAppearanceResult> => {
+  const res = await fetch(`${API}/api/person/${personId}/media`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ media_id: mediaId }),
+  });
+  if (!res.ok) {
+    throw new Error("Failed to add media appearance to person");
   }
   return res.json();
 };

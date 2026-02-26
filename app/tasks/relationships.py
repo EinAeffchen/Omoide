@@ -4,11 +4,12 @@ from collections import Counter, defaultdict
 from datetime import datetime
 from itertools import combinations
 
+from sqlalchemy import union_all
 from sqlmodel import Session, select, delete
 
 import app.database as db
 from app.logger import logger
-from app.models import Face, PersonRelationship
+from app.models import Face, PersonMediaLink, PersonRelationship
 
 
 def rebuild_person_relationships() -> None:
@@ -16,8 +17,16 @@ def rebuild_person_relationships() -> None:
     logger.info("Rebuilding person relationship graph...")
     with Session(db.engine) as session:
         rows = session.exec(
-            select(Face.media_id, Face.person_id)
-            .where(Face.person_id.is_not(None))
+            union_all(
+                select(
+                    Face.media_id.label("media_id"),
+                    Face.person_id.label("person_id"),
+                ).where(Face.person_id.is_not(None)),
+                select(
+                    PersonMediaLink.media_id.label("media_id"),
+                    PersonMediaLink.person_id.label("person_id"),
+                ),
+            )
         ).all()
 
         if not rows:

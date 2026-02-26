@@ -9,6 +9,7 @@ Create Date: 2025-10-06 12:00:00.000000
 from typing import Sequence, Union
 
 import sqlalchemy as sa
+from sqlalchemy.engine.reflection import Inspector
 
 from alembic import op
 
@@ -20,31 +21,39 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "media",
-        sa.Column("missing_since", sa.DateTime(timezone=True), nullable=True),
-    )
-    op.add_column(
-        "media",
-        sa.Column(
-            "missing_confirmed",
-            sa.Boolean(),
-            nullable=False,
-            server_default=sa.text("0"),
-        ),
-    )
-    op.create_index(
-        "ix_media_missing_since",
-        "media",
-        ["missing_since"],
-        unique=False,
-    )
-    op.create_index(
-        "ix_media_missing_confirmed",
-        "media",
-        ["missing_confirmed"],
-        unique=False,
-    )
+    conn = op.get_bind()
+    inspector = Inspector.from_engine(conn)
+    columns = [c["name"] for c in inspector.get_columns("media")]
+    indices = [i["name"] for i in inspector.get_indexes("media")]
+    if "missing_since" not in columns:
+        op.add_column(
+            "media",
+            sa.Column("missing_since", sa.DateTime(timezone=True), nullable=True),
+        )
+    if "missing_confirmed" not in columns:
+        op.add_column(
+            "media",
+            sa.Column(
+                "missing_confirmed",
+                sa.Boolean(),
+                nullable=False,
+                server_default=sa.text("0"),
+            ),
+        )
+    if "ix_media_missing_since" not in indices:
+        op.create_index(
+            "ix_media_missing_since",
+            "media",
+            ["missing_since"],
+            unique=False,
+        )
+    if "ix_media_missing_confirmed" not in indices:
+        op.create_index(
+            "ix_media_missing_confirmed",
+            "media",
+            ["missing_confirmed"],
+            unique=False,
+        )
 
 
 def downgrade() -> None:

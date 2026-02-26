@@ -6,15 +6,18 @@ import {
   deleteFace,
   detachFace,
 } from "../services/faceActions";
+import { addMediaAppearanceToPerson } from "../services/personActions";
 import { Person, Face } from "../types";
 
 interface PeopleTabContentProps {
+  mediaId: number;
   initialPersons: Person[];
   initialOrphans: Face[];
   onDataChanged: () => void;
 }
 
 export function PeopleTabContent({
+  mediaId,
   initialPersons,
   initialOrphans,
   onDataChanged,
@@ -50,11 +53,17 @@ export function PeopleTabContent({
     onDataChanged();
     return newPerson;
   };
+  const handleAttachMediaToPerson = async (personId: number) => {
+    const result = await addMediaAppearanceToPerson(personId, mediaId);
+    onDataChanged();
+    return result;
+  };
 
   return (
     <PeopleSection
       persons={persons}
       orphans={orphans}
+      onAttachMediaToPerson={handleAttachMediaToPerson}
       onAssign={handleAssignFace}
       onDeleteFace={handleDeleteFace}
       onDetachFace={handleDetachFace}

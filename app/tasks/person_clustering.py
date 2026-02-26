@@ -634,6 +634,14 @@ def merge_similar_persons(
                     if task and task.status == "cancelled":
                         return total_merged
 
+                    person_obj = session.get(Person, person_id)
+                    if not person_obj:
+                        logger.debug(
+                            "Skipping merge candidate %s because person no longer exists",
+                            person_id,
+                        )
+                        continue
+
                     person_embedding = session.exec(
                         text(
                             "SELECT person_id, embedding FROM person_embeddings WHERE"
@@ -641,8 +649,24 @@ def merge_similar_persons(
                         ).bindparams(pid=person_id)
                     ).all()
                     if not person_embedding:
-                        logger.debug("No embedding found for person %s", person_id)
-                        continue
+                        logger.debug(
+                            "No embedding found for existing person %s; rebuilding",
+                            person_id,
+                        )
+                        rebuild_person_embedding(session, int(person_id))
+                        safe_commit(session)
+                        person_embedding = session.exec(
+                            text(
+                                "SELECT person_id, embedding FROM person_embeddings"
+                                " WHERE person_id=:pid"
+                            ).bindparams(pid=person_id)
+                        ).all()
+                        if not person_embedding:
+                            logger.debug(
+                                "Skipping person %s after rebuild; still no embedding",
+                                person_id,
+                            )
+                            continue
 
                     rows = session.exec(
                         text(
@@ -710,16 +734,6 @@ def _reduce_candidates_by_threshold(percent_threshold, rows):
             continue
         candidate_pairs.append((int(candidate_id), similarity))
     return candidate_pairs
-
-
-def _filter_embeddings_by_id(
-    all_face_ids: list[int],
-    all_embeddings: np.ndarray,
-    unassigned_ids: list[int],
-) -> tuple[list[int], np.ndarray]:
-    id_to_emb_map = dict(zip(all_face_ids, all_embeddings))
-    unassigned_embs = np.array([id_to_emb_map[id] for id in unassigned_ids])
-    return unassigned_ids, unassigned_embs
 
 
 def _assign_faces_to_clusters(
@@ -815,7 +829,7 @@ def _assign_faces_to_clusters(
                 ).bindparams(p_id=new_person.id, emb=centroid_blob)
                 session.exec(sql_person_emb)
 
-            if update_progress:
+            if update_progress and task is not None:
                 task.processed += len(face_ids)
                 session.add(task)
             safe_commit(session)
@@ -835,6 +849,104 @@ def _get_face_total(session: Session) -> int:
     return int(row[0]) if row else 0
 
 
+def _is_task_cancelled(session: Session, task_id: str) -> bool:
+    row = session.exec(
+        text(
+            """
+            SELECT status
+              FROM processingtask
+             WHERE id = :task_id
+            """
+        ).bindparams(task_id=task_id)
+    ).first()
+    if not row:
+        return False
+    status = row[0] if isinstance(row, tuple) else row
+    return str(status) == "cancelled"
+
+
+def _iter_chunks(values: list[int], chunk_size: int) -> Iterable[list[int]]:
+    size = max(1, int(chunk_size))
+    for i in range(0, len(values), size):
+        yield values[i : i + size]
+
+
+def _build_in_clause_params(
+    values: list[int], *, prefix: str
+) -> tuple[str, dict[str, int]]:
+    placeholders: list[str] = []
+    params: dict[str, int] = {}
+    for idx, value in enumerate(values):
+        key = f"{prefix}{idx}"
+        placeholders.append(f":{key}")
+        params[key] = int(value)
+    return ", ".join(placeholders), params
+
+
+def _load_person_embedding_matrix(
+    session: Session,
+) -> tuple[np.ndarray, np.ndarray]:
+    rows = session.exec(
+        text(
+            """
+            SELECT person_id, embedding
+              FROM person_embeddings
+            """
+        )
+    ).all()
+    if not rows:
+        return np.array([], dtype=np.int64), np.empty((0, 0), dtype=np.float32)
+
+    person_ids: list[int] = []
+    vectors: list[np.ndarray] = []
+    for person_id, raw_embedding in rows:
+        vec = vector_from_stored(raw_embedding)
+        if vec is None or vec.size == 0:
+            continue
+        if not np.all(np.isfinite(vec)) or not np.any(vec):
+            continue
+        norm = float(np.linalg.norm(vec))
+        if not np.isfinite(norm) or norm == 0.0:
+            continue
+        person_ids.append(int(person_id))
+        vectors.append((vec / norm).astype(np.float32, copy=False))
+
+    if not person_ids:
+        return np.array([], dtype=np.int64), np.empty((0, 0), dtype=np.float32)
+
+    return np.array(person_ids, dtype=np.int64), np.vstack(vectors).astype(
+        np.float32, copy=False
+    )
+
+
+def _bulk_assign_faces_to_persons(
+    session: Session,
+    assignments: dict[int, int],
+    *,
+    chunk_size: int = 500,
+) -> None:
+    if not assignments:
+        return
+
+    by_person_id: dict[int, list[int]] = {}
+    for face_id, person_id in assignments.items():
+        by_person_id.setdefault(int(person_id), []).append(int(face_id))
+
+    for person_id, person_face_ids in by_person_id.items():
+        for face_chunk in _iter_chunks(person_face_ids, chunk_size):
+            placeholders, params = _build_in_clause_params(face_chunk, prefix="f")
+            sql_face = text(
+                f"UPDATE face SET person_id = :pid WHERE id IN ({placeholders})"
+            ).bindparams(pid=person_id, **params)
+            session.exec(sql_face)
+
+            sql_face_embedding = text(
+                "UPDATE face_embeddings SET person_id = :pid"
+                f" WHERE face_id IN ({placeholders})"
+            ).bindparams(pid=person_id, **params)
+            session.exec(sql_face_embedding)
+
+
 def _match_unassigned_to_existing(
     session: Session, face_ids: list[int], embeddings: np.ndarray, task_id: str
 ) -> list[int]:
@@ -845,88 +957,177 @@ def _match_unassigned_to_existing(
     if not face_ids:
         return []
 
-    row = session.exec(
-        text(
-            """
-            SELECT person_id, distance 
-            FROM person_embeddings 
-            LIMIT 1
-        """
-        )
-    ).first()
-
-    if not row:
+    person_ids, person_matrix = _load_person_embedding_matrix(session)
+    if person_matrix.size == 0:
         logger.info("No existing persons found, skipping to clustering!")
         return face_ids
+    if (
+        embeddings.ndim != 2
+        or person_matrix.ndim != 2
+        or embeddings.shape[1] != person_matrix.shape[1]
+    ):
+        logger.warning(
+            "Skipping single-face match due to embedding dim mismatch"
+            " (faces=%s persons=%s)",
+            tuple(embeddings.shape),
+            tuple(person_matrix.shape),
+        )
+        return face_ids
 
-    threshold = float(
-        getattr(settings.face_recognition, "person_merge_percent_similarity", 75.0)
+    threshold_cosine = float(
+        getattr(settings.face_recognition, "existing_person_cosine_threshold", 0.0)
     )
+    if threshold_cosine <= 0.0 or threshold_cosine > 1.0:
+        threshold_cosine = float(
+            getattr(settings.face_recognition, "person_merge_percent_similarity", 75.0)
+        ) / 100.0
+    threshold_cosine = float(np.clip(threshold_cosine, 0.0, 1.0))
+    min_margin = float(
+        max(
+            0.0,
+            getattr(settings.face_recognition, "existing_person_min_cosine_margin", 0),
+        )
+    )
+
     unassigned_after_match = []
-    assigned_count = 0
+    assignments: dict[int, int] = {}
+    chunk_size = 512
+    cancel_check_every = max(
+        1,
+        int(getattr(settings.face_recognition, "matching_cancel_check_every", 8)),
+    )
+    cancelled = False
 
     logger.info("Attempting to match %d faces to existing persons...", len(face_ids))
+    total_faces = len(face_ids)
+    for start in range(0, total_faces, chunk_size):
+        end = min(start + chunk_size, total_faces)
+        chunk_number = (start // chunk_size) + 1
+        if (
+            start == 0 or chunk_number % cancel_check_every == 0
+        ) and _is_task_cancelled(session, task_id):
+            logger.info(
+                "Task %s cancelled during matching; stopping at %d/%d faces.",
+                task_id,
+                start,
+                total_faces,
+            )
+            unassigned_after_match.extend(int(fid) for fid in face_ids[start:])
+            cancelled = True
+            break
 
-    for i, (face_id, emb) in enumerate(zip(face_ids, embeddings)):
-        # Convert embedding to blob for sqlite-vec
-        if i % 100 == 0:
+        chunk_face_ids = face_ids[start:end]
+        chunk_embs = embeddings[start:end].astype(np.float32, copy=False)
+        chunk_size_real = len(chunk_face_ids)
+
+        norms = np.linalg.norm(chunk_embs, axis=1)
+        valid_mask = np.isfinite(norms) & (norms > 0.0)
+        assigned_person_for_chunk = np.full(chunk_size_real, -1, dtype=np.int64)
+
+        if np.any(valid_mask):
+            valid_indices = np.flatnonzero(valid_mask)
+            normed_chunk = chunk_embs[valid_mask] / norms[valid_mask][:, None]
+            similarities = normed_chunk @ person_matrix.T
+
+            best_indices = np.argmax(similarities, axis=1)
+            best_scores = similarities[np.arange(similarities.shape[0]), best_indices]
+
+            if similarities.shape[1] > 1:
+                top2 = np.partition(similarities, -2, axis=1)[:, -2:]
+                second_scores = np.minimum(top2[:, 0], top2[:, 1])
+            else:
+                second_scores = np.full(
+                    best_scores.shape,
+                    -1.0,
+                    dtype=np.float32,
+                )
+
+            accept_mask = (best_scores >= threshold_cosine) & (
+                (best_scores - second_scores) >= min_margin
+            )
+            accepted_global_indices = valid_indices[accept_mask]
+            assigned_person_for_chunk[accepted_global_indices] = person_ids[
+                best_indices[accept_mask]
+            ]
+
+        for local_idx, face_id in enumerate(chunk_face_ids):
+            assigned_person_id = int(assigned_person_for_chunk[local_idx])
+            if assigned_person_id > 0:
+                assignments[int(face_id)] = assigned_person_id
+            else:
+                unassigned_after_match.append(int(face_id))
+
+        if start == 0 or (start // chunk_size) % 8 == 0:
             set_task_progress(
                 task_id,
                 current_step="matching_known_persons",
-                current_item=f"Matching face {i}/{len(face_ids)} in current batch",
+                current_item=f"Matching face {end}/{total_faces} in current batch",
             )
-            with Session(db.engine) as progress_session:
-                task = progress_session.get(ProcessingTask, task_id)
-                if task and task.status == "running":  # Keep standard status
-                    task.processed = i
-                    progress_session.add(task)
-                    safe_commit(progress_session)
-        blob = vector_to_blob(emb.astype(np.float32, copy=False))
 
-        # Search for the single closest existing person
-        row = session.exec(
-            text(
-                """
-                SELECT person_id, distance 
-                FROM person_embeddings 
-                WHERE embedding MATCH :vec 
-                AND k = 1
-            """
-            ).bindparams(vec=blob)
-        ).first()
-
-        if row:
-            person_id, distance = row
-            similarity = _distance_to_similarity(distance)
-
-            if similarity >= threshold:
-                # Direct assignment
-                session.exec(
-                    update(Face).where(Face.id == face_id).values(person_id=person_id)
-                )
-                session.exec(
-                    text(
-                        "UPDATE face_embeddings SET person_id = :pid WHERE face_id ="
-                        " :fid"
-                    ).bindparams(pid=person_id, fid=face_id)
-                )
-
-                assigned_count += 1
-                continue
-
-        unassigned_after_match.append(face_id)
-
-    with Session(db.engine) as progress_session:
-        task = progress_session.get(ProcessingTask, task_id)
-        if task and task.status != "cancelled":
-            task.processed = 0
-            progress_session.add(task)
-            safe_commit(progress_session)
+    assigned_count = len(assignments)
     if assigned_count > 0:
+        _bulk_assign_faces_to_persons(session, assignments)
         safe_commit(session)
         logger.info("Matched %d faces to existing persons.", assigned_count)
+    if cancelled:
+        logger.info("Matching was cancelled; leaving remaining faces unassigned.")
 
     return unassigned_after_match
+
+
+def _match_remaining_single_faces(
+    task_id: str, *, batch_size: int
+) -> tuple[int, int, bool]:
+    total_scanned = 0
+    total_matched = 0
+    last_id = 0
+    cancelled = False
+
+    set_task_progress(
+        task_id,
+        current_step="matching_known_persons",
+        current_item="starting leftover single-face pass",
+    )
+    while True:
+        with Session(db.engine) as session:
+            face_ids, embeddings = _fetch_faces_and_embeddings(
+                session, limit=batch_size, last_id=last_id
+            )
+            if not face_ids:
+                break
+            last_id = face_ids[-1]
+
+            still_unassigned_ids = _match_unassigned_to_existing(
+                session,
+                face_ids,
+                embeddings,
+                task_id,
+            )
+            if _is_task_cancelled(session, task_id):
+                cancelled = True
+
+        scanned = len(face_ids)
+        matched = scanned - len(still_unassigned_ids)
+        total_scanned += scanned
+        total_matched += matched
+
+        set_task_progress(
+            task_id,
+            current_step="matching_known_persons",
+            current_item=(
+                f"leftover pass scanned={total_scanned} matched={total_matched}"
+            ),
+        )
+
+        if cancelled:
+            logger.info(
+                "Task %s cancelled during leftover matching; stopping pass.", task_id
+            )
+            break
+        if scanned < batch_size:
+            break
+
+    return total_matched, total_scanned, cancelled
 
 
 def run_person_clustering(task_id: str) -> None:
@@ -951,6 +1152,15 @@ def run_person_clustering(task_id: str) -> None:
         with Session(db.engine) as s:
             t = s.get(ProcessingTask, task_id)
             return bool(t and t.status == "cancelled")
+
+    def finalize_cancelled() -> None:
+        with Session(db.engine) as session:
+            task = session.get(ProcessingTask, task_id)
+            if task and task.status == "cancelled" and task.finished_at is None:
+                task.finished_at = datetime.now(timezone.utc)
+                session.add(task)
+                safe_commit(session)
+        clear_task_progress(task_id)
 
     with heavy_writer(name="cluster_persons", cancelled=is_cancelled) as acquired:
         if not acquired:
@@ -981,15 +1191,6 @@ def run_person_clustering(task_id: str) -> None:
                 )
                 if not batch_face_ids:
                     break
-
-                remaining_ids = _match_unassigned_to_existing(
-                    session, batch_face_ids, batch_embeddings, task_id
-                )
-
-                if len(remaining_ids) != len(batch_face_ids):
-                    batch_face_ids, batch_embeddings = _filter_embeddings_by_id(
-                        batch_face_ids, batch_embeddings, remaining_ids
-                    )
 
             if batch_face_ids:
                 last_id = batch_face_ids[-1]
@@ -1119,9 +1320,7 @@ def run_person_clustering(task_id: str) -> None:
                         labels, batch_face_ids, batch_embeddings
                     )
                     created_count, created_person_ids = _assign_faces_to_clusters(
-                        clusters,
-                        task_id,
-                        update_progress=False,
+                        clusters, task_id, update_progress=False
                     )
                     if created_person_ids:
                         new_person_candidates.extend(created_person_ids)
@@ -1178,6 +1377,30 @@ def run_person_clustering(task_id: str) -> None:
             len(new_person_candidates),
         )
         merge_similar_persons(task_id, new_person_candidates)
+        if is_cancelled():
+            logger.info("Clustering task %s cancelled before leftover matching.", task_id)
+            finalize_cancelled()
+            return
+        logger.info("Starting leftover single-face match pass after clustering")
+        (
+            matched_leftovers,
+            scanned_leftovers,
+            cancelled_during_match,
+        ) = (
+            _match_remaining_single_faces(
+                task_id,
+                batch_size=settings.face_recognition.cluster_batch_size,
+            )
+        )
+        logger.info(
+            "Leftover single-face pass finished: scanned=%d matched=%d",
+            scanned_leftovers,
+            matched_leftovers,
+        )
+        if cancelled_during_match or is_cancelled():
+            logger.info("Clustering task %s cancelled during matching phase.", task_id)
+            finalize_cancelled()
+            return
 
         with Session(db.engine) as session:
             task = session.get(ProcessingTask, task_id)

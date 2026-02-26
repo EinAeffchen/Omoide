@@ -18,7 +18,7 @@ from fastapi import HTTPException
 from PIL import Image, ImageOps, UnidentifiedImageError
 from scenedetect import FrameTimecode, HistogramDetector, detect
 from scenedetect.video_splitter import TimecodePair
-from sqlalchemy import delete, distinct, func, or_, text
+from sqlalchemy import delete, distinct, func, or_, text, union_all
 from sqlmodel import Session, delete, select, text, update
 from tqdm import tqdm
 
@@ -34,6 +34,7 @@ from app.models import (
     Media,
     MediaTagLink,
     Person,
+    PersonMediaLink,
     PersonRelationship,
     PersonTagLink,
     ProcessingTask,
@@ -96,13 +97,24 @@ def recalculate_person_appearance_counts(
     ids = {pid for pid in person_ids if pid is not None}
     if not ids:
         return
+
+    appearance_pairs = union_all(
+        select(
+            Face.person_id.label("person_id"),
+            Face.media_id.label("media_id"),
+        ).where(Face.person_id.in_(ids)),
+        select(
+            PersonMediaLink.person_id.label("person_id"),
+            PersonMediaLink.media_id.label("media_id"),
+        ).where(PersonMediaLink.person_id.in_(ids)),
+    ).subquery()
+
     rows = session.exec(
         select(
-            Face.person_id,
-            func.count(distinct(Face.media_id)),
+            appearance_pairs.c.person_id,
+            func.count(distinct(appearance_pairs.c.media_id)),
         )
-        .where(Face.person_id.in_(ids))
-        .group_by(Face.person_id)
+        .group_by(appearance_pairs.c.person_id)
     ).all()
     counts = {pid: count for pid, count in rows}
     for pid in ids:
@@ -775,6 +787,8 @@ def _split_by_frames(media: Media) -> list[tuple[Scene, cv2.typing.MatLike]]:
                 "1",
                 "-f",
                 "image2pipe",
+                "-strict",
+                "-1",
                 "-vcodec",
                 "mjpeg",
                 "-",
@@ -981,6 +995,12 @@ def delete_record(media_id, session: Session):
         to_unlink.append(thumb)
     faces = session.exec(select(Face).where(Face.media_id == media.id)).all()
     affected_person_ids: set[int] = set()
+    linked_person_ids = session.exec(
+        select(PersonMediaLink.person_id).where(PersonMediaLink.media_id == media.id)
+    ).all()
+    for linked_person_id in linked_person_ids:
+        if linked_person_id is not None:
+            affected_person_ids.add(linked_person_id)
     for face in faces:
         if face.person_id is not None:
             affected_person_ids.add(face.person_id)
@@ -1022,6 +1042,7 @@ def delete_record(media_id, session: Session):
             .values(profile_face_id=None)
         )
     session.exec(delete(Face).where(Face.media_id == media_id))
+    session.exec(delete(PersonMediaLink).where(PersonMediaLink.media_id == media_id))
     session.exec(delete(MediaTagLink).where(MediaTagLink.media_id == media_id))
     session.exec(delete(ExifData).where(ExifData.media_id == media_id))
     session.exec(delete(Scene).where(Scene.media_id == media.id))
@@ -1113,6 +1134,7 @@ def remove_person(person_id, session):
             )
         )
     )
+    session.exec(delete(PersonMediaLink).where(PersonMediaLink.person_id == person_id))
     session.delete(person)
     safe_commit(session)
 
