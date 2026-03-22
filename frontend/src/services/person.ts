@@ -37,13 +37,15 @@ export const getSimilarPeople = async (
 export const getPersonMediaAppearances = async (
   personId: number,
   cursor?: string,
-  withPersonIds: number[] = []
+  withPersonIds: number[] = [],
+  tags: string[] = []
 ): Promise<CursorPage<Media>> => {
   const params = new URLSearchParams();
   if (cursor) params.append("cursor", cursor);
   withPersonIds.forEach((id) =>
     params.append("with_person_ids", id.toString())
   );
+  tags.forEach((tag) => params.append("tags", tag));
   const response = await fetch(
     `${API}/api/person/${personId}/media-appearances?${params.toString()}`
   );

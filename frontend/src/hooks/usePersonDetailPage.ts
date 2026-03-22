@@ -71,14 +71,20 @@ export const usePersonDetailPage = () => {
   });
 
   const [filterPeople, setFilterPeople] = useState<PersonReadSimple[]>([]);
+  const [filterTags, setFilterTags] = useState<Tag[]>([]);
 
   const mediaListKey = useMemo(() => {
     const filterIds = filterPeople
       .map((p) => p.id)
       .sort()
       .join(",");
-    return `person-${id}-media-appearances-${filterIds}`;
-  }, [id, filterPeople]);
+    const tagString = filterTags
+      .map((tag) => tag.name)
+      .sort()
+      .join(",");
+    const tagKey = tagString ? `-tags:${tagString}` : "";
+    return `person-${id}-media-appearances-${filterIds}${tagKey}`;
+  }, [id, filterPeople, filterTags]);
 
   const detectedFacesListKey = useMemo(
     () => (id ? `/api/person/${id}/faces` : ""),
@@ -106,11 +112,12 @@ export const usePersonDetailPage = () => {
   const refreshMediaAppearances = useCallback(async () => {
     if (!id || !mediaListKey) return;
     const filterIds = filterPeople.map((p) => p.id);
+    const tagNames = filterTags.map((tag) => tag.name);
     clearList(mediaListKey);
     await fetchInitial(mediaListKey, () =>
-      getPersonMediaAppearances(Number(id), undefined, filterIds),
+      getPersonMediaAppearances(Number(id), undefined, filterIds, tagNames),
     );
-  }, [id, mediaListKey, filterPeople, clearList, fetchInitial]);
+  }, [id, mediaListKey, filterPeople, filterTags, clearList, fetchInitial]);
 
   const [snackbar, setSnackbar] = useState<{
     open: boolean;
@@ -295,10 +302,9 @@ export const usePersonDetailPage = () => {
       setLoading(true);
 
       if (location.state?.forceRefresh) {
-        const baseMediaListKey = `person-${id}-media-appearances-`;
         const facesListKey = `/api/person/${id}/faces`;
         const timelineListKey = `person-${id}-timeline`;
-        clearList(baseMediaListKey);
+        clearList(mediaListKey);
         clearList(facesListKey);
         clearList(timelineListKey);
       }
@@ -336,12 +342,13 @@ export const usePersonDetailPage = () => {
     fetchSuggestedFaces,
     refreshDetectedFaces,
     refreshMediaAppearances,
+    mediaListKey,
   ]);
 
   useEffect(() => {
     if (!id) return;
     void refreshMediaAppearances();
-  }, [id, filterPeople, refreshMediaAppearances]);
+  }, [id, filterPeople, filterTags, refreshMediaAppearances]);
 
   useEffect(() => {
     const handler = setTimeout(() => {
@@ -631,10 +638,7 @@ export const usePersonDetailPage = () => {
 
     const sourceId = Number(id);
     const targetId = mergeTarget.id;
-
-    const sourceMediaListKey = `person-${sourceId}-media-appearances-`;
-
-    clearList(sourceMediaListKey);
+    clearList(mediaListKey);
 
     setMergeTarget(null);
     setMergeOpen(false);
@@ -673,6 +677,8 @@ export const usePersonDetailPage = () => {
     hasLoadedRelationships,
     filterPeople,
     setFilterPeople,
+    filterTags,
+    setFilterTags,
     mediaListKey,
     detectedFacesList,
     hasMoreFaces,

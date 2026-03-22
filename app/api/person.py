@@ -30,6 +30,7 @@ from app.models import (
     PersonMediaLink,
     PersonRelationship,
     PersonTagLink,
+    Tag,
     TimelineEvent,
 )
 from app.schemas.face import CursorPage as FaceCursorPage
@@ -409,6 +410,9 @@ def get_appearances(
     with_person_ids: list[int] = Query(
         [], description="Filter for media that also includes these person IDs"
     ),
+    tags: list[str] | None = Query(
+        None, description="Filter by tag name(s), comma-separated"
+    ),
     limit: int = 30,
     cursor: str | None = Query(
         None,
@@ -454,6 +458,14 @@ def get_appearances(
         .where(Media.id.in_(matching_media_ids))
         .order_by(Media.created_at.desc())
     )
+    if tags:
+        tag_media_ids = (
+            select(Media.id)
+            .join(Media.tags)
+            .where(Tag.name.in_(tags))
+            .distinct()
+        )
+        q = q.where(Media.id.in_(tag_media_ids))
 
     if cursor:
         try:

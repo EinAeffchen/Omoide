@@ -70,6 +70,8 @@ interface PersonContentTabsProps {
   isLoadingSuggestedFaces: boolean;
   filterPeople: PersonReadSimple[];
   onFilterPeopleChange: (people: PersonReadSimple[]) => void;
+  filterTags: Tag[];
+  onFilterTagsChange: (tags: Tag[]) => void;
   mediaListKey: string;
   relationshipGraph: PersonRelationshipGraphData | null;
   relationshipDepth: number;
@@ -101,6 +103,8 @@ export function PersonContentTabs({
   isLoadingSuggestedFaces,
   filterPeople,
   onFilterPeopleChange,
+  filterTags,
+  onFilterTagsChange,
   mediaListKey,
   relationshipGraph,
   relationshipDepth,
@@ -252,6 +256,8 @@ export function PersonContentTabs({
             person={person}
             filterPeople={filterPeople}
             onFilterPeopleChange={onFilterPeopleChange}
+            filterTags={filterTags}
+            onFilterTagsChange={onFilterTagsChange}
             mediaListKey={mediaListKey}
           />
         </Suspense>

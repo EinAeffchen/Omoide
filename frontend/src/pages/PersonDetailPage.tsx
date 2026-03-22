@@ -48,6 +48,8 @@ export default function PersonDetailPage() {
     hasLoadedRelationships,
     filterPeople,
     setFilterPeople,
+    filterTags,
+    setFilterTags,
     mediaListKey,
     detectedFacesList,
     hasMoreFaces,
@@ -129,6 +131,8 @@ export default function PersonDetailPage() {
         isLoadingSuggestedFaces={isLoadingSuggestedFaces}
         filterPeople={filterPeople}
         onFilterPeopleChange={(people) => setFilterPeople(people)}
+        filterTags={filterTags}
+        onFilterTagsChange={(tags) => setFilterTags(tags)}
         mediaListKey={mediaListKey}
         relationshipGraph={relationshipGraph}
         relationshipDepth={relationshipDepth}
