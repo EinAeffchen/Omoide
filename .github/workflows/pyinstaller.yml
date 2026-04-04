@@ -136,7 +136,7 @@ jobs:
         run: |
           VERSION_SAFE=${APP_VERSION_SAFE:-$APP_VERSION}
           BASENAME="omoide-${VERSION_SAFE}-${{ matrix.flavor }}"
-          OS_SUFFIX="${RUNNER_OS,,}"
+          OS_SUFFIX=$(echo "${RUNNER_OS}" | tr '[:upper:]' '[:lower:]')
           echo "APP_NAME=${BASENAME}" >> $GITHUB_ENV
           echo "APP_ARTIFACT_PATH=dist/${BASENAME}" >> $GITHUB_ENV
           echo "APP_ARTIFACT_BASENAME=dist/${BASENAME}-${OS_SUFFIX}" >> $GITHUB_ENV
