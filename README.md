@@ -11,9 +11,9 @@ Omoide is a self-hosted, offline-capable photo and video library designed for pr
 
 ---
 
-## 📥 Download
+## 📥 Download - Now also available on macOS!
 
-**[Download the latest release for Windows](https://github.com/EinAeffchen/Omoide/releases/latest)**
+**[Download the latest binary release](https://github.com/EinAeffchen/Omoide/releases/latest)**
 
 *Also available as a [Docker container](#-quick-start-docker) for Linux/NAS.*
 
