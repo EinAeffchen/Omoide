@@ -2,7 +2,8 @@
 # .SHELLFLAGS := -ec
 
 ENV_FILE ?= omoide.env
-VERSION :=0.0.0
+VERSION_FILE := app/VERSION
+VERSION := $(shell type $(subst /,\,$(VERSION_FILE)))
 DOCKER_TARGETS := docker-start docker-down push
 
 ifneq (,$(filter $(DOCKER_TARGETS),$(MAKECMDGOALS)))

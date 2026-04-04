@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest] #, macos-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
         python-version: [ '3.12' ]
         node-version: [ '20' ]
         flavor: [cpu] #gpu] 

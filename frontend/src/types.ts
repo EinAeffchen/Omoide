@@ -55,6 +55,13 @@ export interface PersonReadSimple {
   id: number;
   name?: string;
   profile_face: ProfileFace;
+  appearance_count?: number;
+}
+
+export interface CombinedMediaSearchResult {
+  persons: PersonReadSimple[];
+  media: MediaPreview[];
+  next_cursor: string | null;
 }
 
 export interface Tag {

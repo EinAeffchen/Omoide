@@ -412,7 +412,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=sys.platform.startswith("win"),
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -427,7 +427,26 @@ coll = COLLECT(
     a.zipfiles,
     a.datas,
     strip=False,
-    upx=True,
+    upx=sys.platform.startswith("win"),
     upx_exclude=[],
     name=APP_NAME,
 )
+
+if sys.platform == "darwin":
+    BUNDLE_ID = (
+        os.environ.get("OMOIDE_BUNDLE_IDENTIFIER")
+        or os.environ.get("APP_BUNDLE_IDENTIFIER")
+        or "io.github.einaeffchen.omoide"
+    )
+    app = BUNDLE(
+        coll,
+        name=f"{APP_NAME}.app",
+        icon=ICON_PATH,
+        bundle_identifier=BUNDLE_ID,
+        version=APP_VERSION,
+        info_plist={
+            "CFBundleDisplayName":"omoide",
+            "CFBundleName": "omoide",
+            "NSPrincipalClass":"NSApplication"
+        }
+    )

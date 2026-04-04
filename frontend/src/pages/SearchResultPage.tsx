@@ -6,7 +6,7 @@ import {
   ToggleButton,
   ToggleButtonGroup,
 } from "@mui/material";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useInView } from "react-intersection-observer";
 import Masonry from "react-masonry-css";
 import { useLocation, useSearchParams } from "react-router-dom";
@@ -14,13 +14,14 @@ import MediaCard from "../components/MediaCard";
 import PersonCard from "../components/PersonCard";
 import TagCard from "../components/TagCard";
 import { defaultListState, useListStore } from "../stores/useListStore";
-import { MediaPreview, Person, SceneSearchResult, Tag } from "../types";
 import {
-  searchMedia,
-  searchPeople,
-  searchScenes,
-  searchTags,
-} from "../services/search";
+  MediaPreview,
+  Person,
+  PersonReadSimple,
+  SceneSearchResult,
+  Tag,
+} from "../types";
+import { searchCombined, searchScenes, searchTags } from "../services/search";
 import SceneResultCard from "../components/SceneResultCard";
 import { API } from "../config";
 
@@ -39,9 +40,6 @@ type MediaFilter = "all" | "image" | "video";
 function isMedia(item: MediaPreview | Person | Tag): item is MediaPreview {
   return item && "thumbnail_path" in item;
 }
-function isPerson(item: MediaPreview | Person | Tag): item is Person {
-  return item && "profile_face" in item;
-}
 function isTag(item: MediaPreview | Person | Tag): item is Tag {
   return (
     item && !("tags" in item) && "name" in item && !("profile_face" in item)
@@ -51,128 +49,188 @@ function isVideoMedia(item: MediaPreview): boolean {
   return typeof item.duration === "number";
 }
 
+// ---------------------------------------------------------------------------
+// Local state shape for the media/combined category
+// ---------------------------------------------------------------------------
+interface MediaSearchState {
+  persons: PersonReadSimple[];
+  media: MediaPreview[];
+  nextCursor: string | null;
+  isLoading: boolean;
+  hasMore: boolean;
+}
+
+const emptyMediaState: MediaSearchState = {
+  persons: [],
+  media: [],
+  nextCursor: null,
+  isLoading: false,
+  hasMore: false,
+};
+
 export default function SearchResultsPage() {
   const [searchParams] = useSearchParams();
-  const category =
-    (searchParams.get("category") as
-      | "media"
-      | "person"
-      | "tag"
-      | "scene") || "media";
+  const rawCategory = searchParams.get("category");
+  const category: "media" | "tag" | "scene" =
+    rawCategory === "tag" || rawCategory === "scene" ? rawCategory : "media";
   const query = searchParams.get("query") || "";
   const location = useLocation();
 
+  // Declare before any effects so closures always see the initialized value
+  const preloadedState = location.state as {
+    items: (MediaPreview | Person | Tag | SceneSearchResult)[];
+    searchType: "image";
+  } | null;
+  const isImageSearch = preloadedState?.searchType === "image";
+
+  // ---- list-store state (tag + scene categories) -------------------------
   const listKey = useMemo(() => {
-    if (!query || !category) return "";
+    if (category === "media" || !query) return "";
     const params = new URLSearchParams({ query });
     return `${API}/api/search/${category}?${params.toString()}`;
   }, [category, query]);
 
   const listState = useListStore((state) => state.lists[listKey]);
-  const items = listState?.items || [];
-  const hasMore = listState?.hasMore || defaultListState.hasMore;
-  const isLoading = listState?.isLoading || defaultListState.isLoading;
+  const listItems = listState?.items || [];
+  const listHasMore = listState?.hasMore ?? defaultListState.hasMore;
+  const listIsLoading = listState?.isLoading ?? defaultListState.isLoading;
   const { fetchInitial, loadMore, removeItem } = useListStore();
-  const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
-  const [showModelWarmup, setShowModelWarmup] = useState(false);
-  const [mediaFilter, setMediaFilter] = useState<MediaFilter>("all");
 
+  // ---- local state for the media/combined category -----------------------
+  const [mediaState, setMediaState] = useState<MediaSearchState>(emptyMediaState);
+  const activeQueryRef = useRef<string>("");
+
+  // Initial load for the combined (media) category
   useEffect(() => {
-    if (inView && hasMore && !isLoading) {
-      const fetcherMap = {
-        media: (cursor?: string) => searchMedia(query, ITEMS_PER_PAGE, cursor),
-        person: (cursor?: string) =>
-          searchPeople(query, ITEMS_PER_PAGE, cursor),
-        tag: (cursor?: string) => searchTags(query, ITEMS_PER_PAGE, cursor),
-        scene: (cursor?: string) => searchScenes(query, ITEMS_PER_PAGE, cursor),
-      } as const;
-      const fetcher = fetcherMap[category];
-      if (fetcher) {
-        loadMore(listKey, fetcher);
-      }
+    if (category !== "media" || isImageSearch) return;
+    if (!query) {
+      setMediaState(emptyMediaState);
+      return;
     }
-  }, [inView, hasMore, isLoading, listKey, category, query, loadMore]);
+    activeQueryRef.current = query;
+    setMediaState({ ...emptyMediaState, isLoading: true });
+    searchCombined(query, ITEMS_PER_PAGE)
+      .then((result) => {
+        if (activeQueryRef.current !== query) return;
+        setMediaState({
+          persons: result.persons ?? [],
+          media: result.media ?? [],
+          nextCursor: result.next_cursor,
+          isLoading: false,
+          hasMore: result.next_cursor !== null,
+        });
+      })
+      .catch(() => {
+        if (activeQueryRef.current !== query) return;
+        setMediaState({ ...emptyMediaState });
+      });
+  }, [category, query, location.key, isImageSearch]);
 
+  const loadMoreMedia = useCallback(() => {
+    if (!mediaState.hasMore || mediaState.isLoading || !mediaState.nextCursor) return;
+    const cursor = mediaState.nextCursor;
+    setMediaState((prev) => ({ ...prev, isLoading: true }));
+    searchCombined(query, ITEMS_PER_PAGE, cursor).then((result) => {
+      setMediaState((prev) => ({
+        ...prev,
+        media: [...prev.media, ...(result.media ?? [])],
+        nextCursor: result.next_cursor,
+        isLoading: false,
+        hasMore: result.next_cursor !== null,
+      }));
+    });
+  }, [mediaState.hasMore, mediaState.isLoading, mediaState.nextCursor, query]);
+
+  // ---- list-store fetch for tag / scene ----------------------------------
   useEffect(() => {
     if (!listKey) return;
-
     const fetcherMap = {
-      media: () => searchMedia(query, ITEMS_PER_PAGE),
-      person: () => searchPeople(query, ITEMS_PER_PAGE),
       tag: () => searchTags(query, ITEMS_PER_PAGE),
       scene: () => searchScenes(query, ITEMS_PER_PAGE),
     } as const;
-
-    const fetcher = fetcherMap[category];
-    if (fetcher) {
-      // We depend on location.key to ensure that navigating triggers a re-evaluation
-      // of this effect, which in turn calls fetchInitial. The store's internal logic
-      // will then decide whether to actually make a network request.
-      fetchInitial(listKey, fetcher);
-    }
+    const fetcher = fetcherMap[category as "tag" | "scene"];
+    if (fetcher) fetchInitial(listKey, fetcher);
   }, [listKey, category, query, fetchInitial, location.key]);
 
-  const preloadedState = location.state as {
-    items: (MediaPreview | Person | Tag | SceneSearchResult)[];
-    searchType: "image";
-  } | null;
-  const displayItems = (preloadedState?.items || items) as (
+  // ---- infinite scroll ---------------------------------------------------
+  const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
+
+  useEffect(() => {
+    if (!inView) return;
+    if (category === "media") {
+      loadMoreMedia();
+    } else if (listHasMore && !listIsLoading) {
+      const fetcherMap = {
+        tag: (cursor?: string) => searchTags(query, ITEMS_PER_PAGE, cursor),
+        scene: (cursor?: string) => searchScenes(query, ITEMS_PER_PAGE, cursor),
+      } as const;
+      const fetcher = fetcherMap[category as "tag" | "scene"];
+      if (fetcher) loadMore(listKey, fetcher);
+    }
+  }, [inView, category, listHasMore, listIsLoading, listKey, query, loadMore, loadMoreMedia]);
+
+  // ---- derive visible items ----------------------------------------------
+  const isLoading = category === "media" ? mediaState.isLoading : listIsLoading;
+  const hasMore = category === "media" ? mediaState.hasMore : listHasMore;
+
+  const displayItems = (preloadedState?.items || listItems) as (
     | MediaPreview
     | Person
     | Tag
     | SceneSearchResult
   )[];
-  const mediaItems = useMemo(
-    () => (category === "media" ? displayItems.filter(isMedia) : []),
-    [category, displayItems]
-  );
+
+  const rawMediaItems: MediaPreview[] =
+    category === "media"
+      ? isImageSearch
+        ? (preloadedState?.items?.filter(isMedia) ?? [])
+        : mediaState.media
+      : [];
+
+  const [mediaFilter, setMediaFilter] = useState<MediaFilter>("all");
   const filteredMediaItems = useMemo(() => {
-    if (mediaFilter === "all") return mediaItems;
-    if (mediaFilter === "video") {
-      return mediaItems.filter(isVideoMedia);
-    }
-    return mediaItems.filter((item) => !isVideoMedia(item));
-  }, [mediaFilter, mediaItems]);
+    if (mediaFilter === "all") return rawMediaItems;
+    if (mediaFilter === "video") return rawMediaItems.filter(isVideoMedia);
+    return rawMediaItems.filter((i) => !isVideoMedia(i));
+  }, [mediaFilter, rawMediaItems]);
+
   const navigationContext = useMemo(
     () =>
       category === "media"
-        ? { ids: filteredMediaItems.map((item) => item.id) }
+        ? { ids: filteredMediaItems.map((i) => i.id) }
         : undefined,
     [category, filteredMediaItems]
   );
-  const visibleItems =
-    category === "media"
-      ? (filteredMediaItems as (
-          | MediaPreview
-          | Person
-          | Tag
-          | SceneSearchResult
-        )[])
-      : displayItems;
+
+  const visibleItems: (MediaPreview | Person | Tag | SceneSearchResult)[] =
+    category === "media" ? filteredMediaItems : displayItems;
+
   const hasResults = visibleItems.length > 0;
   const shouldShowWarmup =
-    !hasResults &&
-    isLoading &&
-    (category === "media" || category === "scene");
+    !hasResults && isLoading && (category === "media" || category === "scene");
 
+  const [showModelWarmup, setShowModelWarmup] = useState(false);
   useEffect(() => {
     setShowModelWarmup(false);
-    if (!shouldShowWarmup) {
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      setShowModelWarmup(true);
-    }, 700);
+    if (!shouldShowWarmup) return;
+    const timer = window.setTimeout(() => setShowModelWarmup(true), 700);
     return () => window.clearTimeout(timer);
-  }, [shouldShowWarmup, listKey]);
+  }, [shouldShowWarmup, listKey, query]);
+
+  // ---- render ------------------------------------------------------------
+  const title = isImageSearch
+    ? "Similar Image Results"
+    : `Search Results for "${query}"`;
+
+  const handleTagDeleted = (tagId: number) => removeItem(listKey, tagId);
 
   const renderItem = (
     item: MediaPreview | Person | Tag | SceneSearchResult
   ) => {
     const itemKey =
       category === "scene"
-        ? `${category}-${(item as SceneSearchResult).scene_id}`
-        : `${category}-${(item as Media | Person | Tag).id}`;
+        ? `scene-${(item as SceneSearchResult).scene_id}`
+        : `${category}-${(item as MediaPreview | Person | Tag).id}`;
 
     if (isMedia(item)) {
       return (
@@ -185,13 +243,6 @@ export default function SearchResultsPage() {
         </div>
       );
     }
-    if (isPerson(item)) {
-      return (
-        <div key={itemKey}>
-          <PersonCard person={item} />
-        </div>
-      );
-    }
     if (isTag(item)) {
       return (
         <div key={itemKey}>
@@ -200,23 +251,13 @@ export default function SearchResultsPage() {
       );
     }
     if (category === "scene") {
-      const sceneItem = item as SceneSearchResult;
       return (
         <div key={itemKey}>
-          <SceneResultCard scene={sceneItem} listKey={listKey} />
+          <SceneResultCard scene={item as SceneSearchResult} listKey={listKey} />
         </div>
       );
     }
     return null;
-  };
-
-  const title =
-    preloadedState?.searchType === "image"
-      ? "Similar Image Results"
-      : `Search Results for "${query}"`;
-
-  const handleTagDeleted = (tagId: number) => {
-    removeItem(listKey, tagId);
   };
 
   return (
@@ -224,15 +265,14 @@ export default function SearchResultsPage() {
       <Typography variant="h4" gutterBottom>
         {title}
       </Typography>
+
       {category === "media" && (
         <Box sx={{ mb: 3, display: "flex", alignItems: "center", gap: 2 }}>
           <ToggleButtonGroup
             exclusive
             size="small"
             value={mediaFilter}
-            onChange={(_, next) => {
-              if (next) setMediaFilter(next);
-            }}
+            onChange={(_, next) => { if (next) setMediaFilter(next); }}
           >
             <ToggleButton value="all">All</ToggleButton>
             <ToggleButton value="image">Images</ToggleButton>
@@ -240,21 +280,42 @@ export default function SearchResultsPage() {
           </ToggleButtonGroup>
         </Box>
       )}
+
       {showModelWarmup && (
-        <Box
-          sx={{
-            mb: 3,
-            display: "flex",
-            alignItems: "center",
-            gap: 2,
-            color: "text.secondary",
-          }}
-        >
+        <Box sx={{ mb: 3, display: "flex", alignItems: "center", gap: 2, color: "text.secondary" }}>
           <CircularProgress size={20} />
           <Typography>
-            Warming up AI models for search. The first search can take a
-            minute.
+            Warming up AI models for search. The first search can take a minute.
           </Typography>
+        </Box>
+      )}
+
+      {/* Person strip — shown on first page of media searches when names are detected */}
+      {category === "media" && !isImageSearch && mediaState.persons.length > 0 && (
+        <Box sx={{ mb: 3 }}>
+          <Typography
+            variant="overline"
+            color="text.secondary"
+            sx={{ display: "block", mb: 1, fontWeight: 700 }}
+          >
+            People
+          </Typography>
+          <Box
+            sx={{
+              display: "flex",
+              gap: 2,
+              overflowX: "auto",
+              pb: 1,
+              "&::-webkit-scrollbar": { height: 4 },
+              "&::-webkit-scrollbar-thumb": { borderRadius: 2, bgcolor: "divider" },
+            }}
+          >
+            {mediaState.persons.map((person) => (
+              <Box key={person.id} sx={{ width: 130, flexShrink: 0 }}>
+                <PersonCard person={person} />
+              </Box>
+            ))}
+          </Box>
         </Box>
       )}
 
