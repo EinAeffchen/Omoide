@@ -143,6 +143,15 @@ jobs:
           echo "APP_ARTIFACT_ARCHIVE=dist/${BASENAME}-${OS_SUFFIX}.zip" >> $GITHUB_ENV
           echo "APP_ARTIFACT_PATTERN=dist/${BASENAME}-${OS_SUFFIX}*" >> $GITHUB_ENV
 
+      - name: Override artifact paths for macOS .app bundle
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          # PyInstaller BUNDLE produces dist/NAME.app — point all paths at that
+          echo "APP_ARTIFACT_PATH=${APP_ARTIFACT_PATH}.app" >> $GITHUB_ENV
+          echo "APP_ARTIFACT_ARCHIVE=${APP_ARTIFACT_BASENAME}.app.zip" >> $GITHUB_ENV
+          echo "APP_ARTIFACT_PATTERN=${APP_ARTIFACT_BASENAME}.app.zip" >> $GITHUB_ENV
+
       - name: Show dependency versions (debug)
         run: |
           uv run python -V
@@ -251,7 +260,43 @@ jobs:
           Set-Content -Path $tempPath -Value $bundleScript -Encoding UTF8
           uv run python $tempPath
 
+      - name: Set executable permissions (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          # Ensure the main executable and all helpers inside the .app are executable
+          find "${APP_ARTIFACT_PATH}/Contents/MacOS" -type f -exec chmod +x {} \;
+          find "${APP_ARTIFACT_PATH}/Contents/Frameworks" -type f -name "*.so" -exec chmod +x {} \; 2>/dev/null || true
+          find "${APP_ARTIFACT_PATH}/Contents/Frameworks" -type f -name "*.dylib" -exec chmod +x {} \; 2>/dev/null || true
+
+      - name: Code sign .app bundle (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          # Ad-hoc signing: free, no Apple Developer account required.
+          # Gatekeeper will still warn on first launch; for notarized distribution
+          # set MACOS_SIGNING_IDENTITY secret to a Developer ID certificate name.
+          IDENTITY="${{ secrets.MACOS_SIGNING_IDENTITY }}"
+          SIGN_ID="${IDENTITY:--}"  # fall back to ad-hoc '-' if secret is unset
+          echo "Signing with identity: ${SIGN_ID}"
+          # Sign all nested executables/dylibs first, then the bundle itself
+          find "${APP_ARTIFACT_PATH}/Contents" \( -name "*.so" -o -name "*.dylib" \) \
+            -exec codesign --sign "${SIGN_ID}" --force --timestamp=none {} \; 2>/dev/null || true
+          codesign --sign "${SIGN_ID}" --force --deep --timestamp=none "${APP_ARTIFACT_PATH}"
+          codesign --verify --deep --strict "${APP_ARTIFACT_PATH}" && echo "Signature OK"
+
+      - name: Package .app bundle (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          # ditto preserves symlinks and HFS+ extended attributes (required after codesign)
+          # shutil.make_archive / regular zip would strip them and break the app
+          mkdir -p dist
+          ditto -c -k --keepParent "${APP_ARTIFACT_PATH}" "${APP_ARTIFACT_ARCHIVE}"
+          echo "Created: ${APP_ARTIFACT_ARCHIVE} ($(du -sh "${APP_ARTIFACT_ARCHIVE}" | cut -f1))"
+
       - name: Package artifact archive
+        if: runner.os != 'macOS'
         shell: pwsh
         env:
           APP_ARTIFACT_PATH: ${{ env.APP_ARTIFACT_PATH }}

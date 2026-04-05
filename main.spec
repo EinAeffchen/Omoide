@@ -445,8 +445,12 @@ if sys.platform == "darwin":
         bundle_identifier=BUNDLE_ID,
         version=APP_VERSION,
         info_plist={
-            "CFBundleDisplayName":"omoide",
+            "CFBundleDisplayName": "omoide",
             "CFBundleName": "omoide",
-            "NSPrincipalClass":"NSApplication"
+            "CFBundleShortVersionString": APP_VERSION,
+            "CFBundleVersion": APP_VERSION,
+            "NSPrincipalClass": "NSApplication",
+            "NSHighResolutionCapable": True,
+            "LSMinimumSystemVersion": "12.0",
         }
     )
