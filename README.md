@@ -17,6 +17,18 @@ Omoide is a self-hosted, offline-capable photo and video library designed for pr
 
 *Also available as a [Docker container](#-quick-start-docker) for Linux/NAS.*
 
+### 🍎 First launch on macOS
+
+The app is ad-hoc signed but not notarized, so Gatekeeper will block it on the first open.
+
+1. Unzip the downloaded `.app.zip` — you'll get `omoide-....app`
+2. Move it to your **Applications** folder (optional but recommended)
+3. **Double-click** the app → macOS shows *"cannot be opened because the developer cannot be verified"*
+4. Open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**
+5. Confirm in the dialog — the app opens normally from now on
+
+Alternatively, right-click (or Control-click) the `.app` → **Open** → **Open** skips the warning in one step.
+
 ---
 
 ## ✨ Key Features
