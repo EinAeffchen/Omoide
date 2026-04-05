@@ -273,29 +273,41 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          # PySide6 bundles Qt dev-tool apps (Assistant, Designer, Linguist) via collect_all().
-          # They contain symlinks in Contents/MacOS which codesign --deep cannot handle.
-          # They are not needed at runtime — strip them before signing.
+          # Remove PySide6 Qt dev-tool apps — they bundle symlinks in Contents/MacOS
+          # that codesign cannot handle regardless of flags used.
           PYSIDE6="${APP_ARTIFACT_PATH}/Contents/Frameworks/PySide6"
           for tool in Assistant Designer Linguist; do
             rm -rf "${PYSIDE6}/${tool}__dot__app" 2>/dev/null || true
             rm -rf "${PYSIDE6}/${tool}.app"       2>/dev/null || true
           done
 
-          # Ad-hoc signing: free, no Apple Developer account required.
-          # Gatekeeper will still warn on first launch; for notarized distribution
-          # set MACOS_SIGNING_IDENTITY secret to a Developer ID certificate name.
+          # Ad-hoc signing (no Apple Developer account required).
+          # Set MACOS_SIGNING_IDENTITY secret to a Developer ID name for notarized builds.
           IDENTITY="${{ secrets.MACOS_SIGNING_IDENTITY }}"
-          SIGN_ID="${IDENTITY:--}"  # fall back to ad-hoc '-' if secret is unset
+          SIGN_ID="${IDENTITY:--}"
           echo "Signing with identity: ${SIGN_ID}"
 
-          # Sign all dylibs and .so files first (leaf nodes must be signed before the bundle)
-          find "${APP_ARTIFACT_PATH}" -type f \( -name "*.dylib" -o -name "*.so" \) \
-            -exec codesign --sign "${SIGN_ID}" --force --timestamp=none {} \;
+          # Bottom-up signing — avoids --deep entirely.
+          # Qt frameworks use internal symlinks (e.g. QtCore -> Versions/Current/QtCore)
+          # that --deep follows and fails on. Instead we sign all real files first,
+          # then framework bundles, then the top-level app last.
+          # find -type f naturally skips symlinks.
 
-          # Sign the bundle itself; --deep handles any remaining nested executables
-          codesign --sign "${SIGN_ID}" --force --deep --timestamp=none "${APP_ARTIFACT_PATH}"
-          codesign --verify --deep --strict "${APP_ARTIFACT_PATH}" && echo "Signature OK"
+          # Step 1: sign all dylibs and Python extension modules (deepest paths first)
+          while IFS= read -r f; do
+            codesign --sign "${SIGN_ID}" --force --timestamp=none "$f" 2>/dev/null || true
+          done < <(find "${APP_ARTIFACT_PATH}/Contents" -type f \
+              \( -name "*.dylib" -o -name "*.so" \) | sort -r)
+
+          # Step 2: sign Qt framework bundles — codesign understands framework layout
+          # and does not follow symlinks when signing a .framework directory directly
+          while IFS= read -r fw; do
+            codesign --sign "${SIGN_ID}" --force --timestamp=none "$fw" 2>/dev/null || true
+          done < <(find "${APP_ARTIFACT_PATH}/Contents" -type d -name "*.framework" | sort -r)
+
+          # Step 3: sign the top-level bundle WITHOUT --deep (all nested items signed above)
+          codesign --sign "${SIGN_ID}" --force --timestamp=none "${APP_ARTIFACT_PATH}"
+          codesign --verify --strict "${APP_ARTIFACT_PATH}" && echo "Signature OK"
 
       - name: Package .app bundle (macOS)
         if: runner.os == 'macOS'
