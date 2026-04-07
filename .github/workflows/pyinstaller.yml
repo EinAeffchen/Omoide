@@ -283,6 +283,12 @@ jobs:
           done < <(find "${APP_ARTIFACT_PATH}/Contents" -type d \
             \( -name "*.app" -o -name "*__dot__app" \) | sort -r)
 
+          # Remove broken symlinks left behind by the deleted nested bundles.
+          # Qt frameworks have shortcuts pointing INTO nested bundles
+          # (e.g. QtWebEngineProcess -> Helpers/QtWebEngineProcess.app/…).
+          # With -L, find follows symlinks; broken ones (target gone) still show as -type l.
+          find -L "${APP_ARTIFACT_PATH}" -type l -delete 2>/dev/null || true
+
           # Ad-hoc signing (no Apple Developer account required).
           # Set MACOS_SIGNING_IDENTITY secret to a Developer ID name for notarized builds.
           IDENTITY="${{ secrets.MACOS_SIGNING_IDENTITY }}"
