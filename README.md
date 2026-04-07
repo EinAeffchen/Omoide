@@ -15,19 +15,21 @@ Omoide is a self-hosted, offline-capable photo and video library designed for pr
 
 **[Download the latest binary release](https://github.com/EinAeffchen/Omoide/releases/latest)**
 
-*Also available as a [Docker container](#-quick-start-docker) for Linux/NAS.*
+> #### First launch on macOS
+>
+> The app is ad-hoc signed but not notarized, so Gatekeeper will block it on the first open.
+> 
+> 1. Unzip the downloaded `.app.zip` — you'll get `omoide-....app`
+> 2. Move it to your **Applications** folder (optional but recommended)
+> 3. **Double-click** the app → macOS shows *"cannot be opened because the developer cannot be verified"*
+> 4. Open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**
+> 5. Confirm in the dialog — the app opens normally from now on
+> 
+> Alternatively, right-click (or Control-click) the `.app` → **Open** → **Open** skips the warning in one step.
 
-### 🍎 First launch on macOS
 
-The app is ad-hoc signed but not notarized, so Gatekeeper will block it on the first open.
+*Also available as a [Docker container](#-quick-start-docker).*
 
-1. Unzip the downloaded `.app.zip` — you'll get `omoide-....app`
-2. Move it to your **Applications** folder (optional but recommended)
-3. **Double-click** the app → macOS shows *"cannot be opened because the developer cannot be verified"*
-4. Open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**
-5. Confirm in the dialog — the app opens normally from now on
-
-Alternatively, right-click (or Control-click) the `.app` → **Open** → **Open** skips the warning in one step.
 
 ---
 
@@ -36,18 +38,18 @@ Alternatively, right-click (or Control-click) the `.app` → **Open** → **Open
 ### 🔒 Private & Offline
 - **100% Local**: No cloud services, no subscriptions. Your data stays on your drive.
 - **Offline-First**: Works fully offline after the initial model download.
-- **Portable**: Run it as a desktop app on Windows or host it via Docker.
+- **Portable**: Run it as a desktop app on Windows/Linux/MacOS or host it via Docker.
 
 ### 🧠 Intelligent Organization
 - **Face Recognition**: Automatically detects and clusters faces. Name them once, and Omoide finds them everywhere.
-- **Semantic Search**: Search for "dog in the snow" or "birthday party" using natural language. Powered by OpenCLIP.
-- **Auto-Tagging**: Optional AI categorization of your images.
-- **Co-appearance Graph**: Visualize how people in your library are connected.
+- **Semantic Search**: Search for "dog in the snow" or "birthday party" using natural language. Powered by OpenCLIP (Available since 0.6.0 search for known people with free text e.g. "Sam playing Baseball" and Omoide will automatically filter for images of the detected Person named Sam playing Baseball).
+- **Auto-Tagging**: Optional AI categorization of your images, default tags exist, new tags can be added manually via config.
+- **Co-appearance Graph**: Visualize how people in your library are connected and detecte friendship and family circles based on co-appearance counts.
 
 ### ⚡ Powerful Tools
 - **Duplicate Detection**: Find and clean up exact or near-duplicates using perceptual hashing.
 - **Map View**: Explore your photos on a world map. Edit or add GPS data directly.
-- **Video Support**: Scans and plays videos, extracting scenes for easy preview.
+- **Video Support**: Scans and plays videos, automatically detecting and extracting scenes for easy preview and free-text search.
 - **Orphan Face Management**: Review and merge fragmented face clusters.
 
 ### 🛠️ Flexible Management
@@ -95,13 +97,14 @@ Perfect for NAS or always-on servers.
 
 4.  **Open**: `http://localhost:8123`
 
-> **Note for arm64**: Ensure `sqlite-vec` matches your platform (e.g. 0.1.7a2) and build with `docker buildx` or `make build-image-arm64`.
+> **Note for arm64**: Ensure `sqlite-vec` matches your platform (e.g. 0.1.7a2) and build with `docker buildx` or `make build-image-arm64`. Alternatively use the Docker Hub image as set in the docker-compose.yml
 
 ---
 
 ## 🖥️ Quick Start (Desktop Development)
 
 Requirements: Python 3.12+, FFmpeg, Node 18+.
+For Windows: .NET Framework [Download .NET](https://dotnet.microsoft.com/en-us/download/dotnet-framework)
 
 ```bash
 # 1. Build Frontend
@@ -120,13 +123,14 @@ pyinstaller main.spec
 
 ## 🧩 How It Works
 
-- **Backend**: FastAPI + SQLModel (SQLite).
-- **Vector Search**: `sqlite-vec` for high-performance similarity search.
+- **Backend**: [FastAPI](https://fastapi.tiangolo.com/) + [SQLModel](https://sqlmodel.tiangolo.com/) (SQLite).
+- **Vector Search**: [sqlite-vec](https://github.com/asg017/sqlite-vec) for high-performance similarity search.
 - **AI Models**:
-    - **Vision**: OpenCLIP for embeddings and search.
-    - **Faces**: InsightFace (ONNX) for detection and recognition.
-    - **Clustering**: HDBSCAN for grouping faces.
-- **Frontend**: React + MUI.
+    - **Vision**: [OpenCLIP](https://huggingface.co/docs/hub/open_clip) for embeddings and search.
+    - **Faces**: [InsightFace](https://github.com/deepinsight/insightface) (ONNX) for detection and recognition.
+    - **Clustering**: [HDBSCAN](https://scikit-learn.org/stable/modules/generated/sklearn.cluster.HDBSCAN.html)/[Chinese Whispers](https://chinese-whispers.readthedocs.io/latest/tutorial/) for grouping faces.
+    - **Scene detection**: [scenedetect](https://www.scenedetect.com/)
+- **Frontend**: [React](https://react.dev/) + [MUI](https://mui.com/).
 
 ---
 
