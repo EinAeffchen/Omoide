@@ -274,20 +274,31 @@ jobs:
         shell: bash
         run: |
           # Remove ALL nested .app / *__dot__app bundles.
-          # PySide6 ships dev tools (Assistant, Designer, Linguist, etc.) and possibly
-          # QtWebEngineProcess.app; all contain symlinks that break codesign even
-          # without --deep.  Enumerate rather than hard-code tool names.
           while IFS= read -r d; do
             echo "Removing nested bundle: $d"
             rm -rf "$d"
           done < <(find "${APP_ARTIFACT_PATH}/Contents" -type d \
             \( -name "*.app" -o -name "*__dot__app" \) | sort -r)
 
-          # Remove broken symlinks left behind by the deleted nested bundles.
-          # Qt frameworks have shortcuts pointing INTO nested bundles
-          # (e.g. QtWebEngineProcess -> Helpers/QtWebEngineProcess.app/…).
-          # With -L, find follows symlinks; broken ones (target gone) still show as -type l.
-          find -L "${APP_ARTIFACT_PATH}" -type l -delete 2>/dev/null || true
+          # Remove broken symlinks using Python — more reliable than `find -L -type l`
+          # on macOS arm64 runners where BSD find can miss or mishandle broken links.
+          python3 - <<'PYEOF'
+import os, sys
+root = os.environ['APP_ARTIFACT_PATH']
+removed = 0
+for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+    for name in list(dirnames) + filenames:
+        path = os.path.join(dirpath, name)
+        if os.path.islink(path) and not os.path.exists(path):
+            print(f"Removing broken symlink: {path} -> {os.readlink(path)}", flush=True)
+            os.unlink(path)
+            removed += 1
+print(f"Removed {removed} broken symlinks", flush=True)
+PYEOF
+
+          # Diagnostic: confirm the main executable is still present.
+          echo "=== Contents/MacOS/ ==="
+          ls -la "${APP_ARTIFACT_PATH}/Contents/MacOS/"
 
           # Ad-hoc signing (no Apple Developer account required).
           # Set MACOS_SIGNING_IDENTITY secret to a Developer ID name for notarized builds.
@@ -297,20 +308,23 @@ jobs:
 
           # Step 1: sign ALL Mach-O files bottom-up — dylibs, .so extensions, AND
           # plain executables (Qt tools: qmake, moc, rcc, uic, …).
-          # Filtering with `file | grep Mach-O` avoids signing data files by accident.
           while IFS= read -r f; do
             if file "$f" 2>/dev/null | grep -q "Mach-O"; then
               codesign --sign "${SIGN_ID}" --force --timestamp=none "$f" 2>/dev/null || true
             fi
           done < <(find "${APP_ARTIFACT_PATH}/Contents" -type f | sort -r)
 
-          # Step 2: sign Qt framework bundles (after their inner binaries are signed)
+          # Step 2: sign Qt framework bundles.
+          # Show errors (but suppress noisy "replacing existing signature" lines).
           while IFS= read -r fw; do
-            codesign --sign "${SIGN_ID}" --force --timestamp=none "$fw" 2>/dev/null || true
+            codesign --sign "${SIGN_ID}" --force --timestamp=none "$fw" 2>&1 \
+              | grep -v "replacing existing signature" || true
           done < <(find "${APP_ARTIFACT_PATH}/Contents" -type d -name "*.framework" | sort -r)
 
-          # Step 3: sign the top-level bundle (all nested items already signed above)
-          codesign --sign "${SIGN_ID}" --force --timestamp=none "${APP_ARTIFACT_PATH}"
+          # Step 3: sign the top-level bundle — use --verbose so failures name the
+          # specific resource that could not be found.
+          codesign --sign "${SIGN_ID}" --force --timestamp=none \
+            --verbose "${APP_ARTIFACT_PATH}" 2>&1
           codesign --verify --strict "${APP_ARTIFACT_PATH}" && echo "Signature OK"
 
       - name: Package .app bundle (macOS)
