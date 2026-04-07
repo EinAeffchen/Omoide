@@ -66,6 +66,8 @@ export function MediaHeader({
     >
       <Box
         sx={{
+          flex: { xs: "none", sm: 1 },
+          minWidth: 0,
           width: { xs: "100%", sm: "auto" },
           textAlign: "left",
           mb: { xs: 1, sm: 0 },
