@@ -621,14 +621,38 @@ if __name__ == "__main__":
     # Register shutdown and enter UI loop immediately
     window.events.closed += shutdown
     preferred_gui = _preferred_webview_gui()
-    if preferred_gui:
-        webview.start(
-            _boot_and_switch,
-            gui=preferred_gui,
-            icon=window_icon,
-        )
-    else:
-        webview.start(
-            _boot_and_switch,
-            icon=window_icon,
-        )
+    try:
+        if preferred_gui:
+            webview.start(
+                _boot_and_switch,
+                gui=preferred_gui,
+                icon=window_icon,
+            )
+        else:
+            webview.start(
+                _boot_and_switch,
+                icon=window_icon,
+            )
+    except RuntimeError as exc:
+        # pywebview's import_winforms() only catches ImportError, so a
+        # RuntimeError from pythonnet/clr_loader (e.g. "Failed to resolve
+        # Python.Runtime.Loader.Initialize") propagates uncaught.  Show a
+        # human-readable message box instead of a raw traceback.
+        logger.exception("Failed to start webview window: %s", exc)
+        if sys.platform.startswith("win"):
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(
+                0,
+                (
+                    f"Failed to start the application window.\n\n"
+                    f"Error: {exc}\n\n"
+                    "This is usually caused by a missing or corrupted .NET "
+                    "Framework installation.  Please ensure .NET Framework "
+                    "4.7.2 or later is installed and try again.\n\n"
+                    "You can download it from: "
+                    "https://dotnet.microsoft.com/download/dotnet-framework"
+                ),
+                "Omoide \u2013 Startup Error",
+                0x10,  # MB_ICONERROR
+            )
+        sys.exit(1)

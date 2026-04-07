@@ -428,7 +428,16 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=sys.platform.startswith("win"),
-    upx_exclude=[],
+    # Python.Runtime.dll is a .NET managed assembly.  UPX compresses PE
+    # binaries by replacing them with a self-extracting stub, which means the
+    # raw bytes on disk no longer contain valid .NET metadata.  The .NET
+    # Framework assembly loader (used by pythonnet/clr_loader) calls
+    # Assembly.LoadFile() which parses raw PE metadata directly – it cannot
+    # parse a UPX stub.  The result is pyclr_get_function returning NULL and
+    # the "Failed to resolve Python.Runtime.Loader.Initialize" RuntimeError
+    # seen on some Windows systems.  Exclude all .NET managed assemblies from
+    # UPX compression so the CLR can load them correctly.
+    upx_exclude=['Python.Runtime.dll'],
     name=APP_NAME,
 )
 
