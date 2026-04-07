@@ -280,21 +280,20 @@ jobs:
           done < <(find "${APP_ARTIFACT_PATH}/Contents" -type d \
             \( -name "*.app" -o -name "*__dot__app" \) | sort -r)
 
-          # Remove broken symlinks using Python — more reliable than `find -L -type l`
-          # on macOS arm64 runners where BSD find can miss or mishandle broken links.
+          # Remove broken symlinks left behind by the deleted nested bundles.
           python3 - <<'PYEOF'
-import os, sys
-root = os.environ['APP_ARTIFACT_PATH']
-removed = 0
-for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
-    for name in list(dirnames) + filenames:
-        path = os.path.join(dirpath, name)
-        if os.path.islink(path) and not os.path.exists(path):
-            print(f"Removing broken symlink: {path} -> {os.readlink(path)}", flush=True)
-            os.unlink(path)
-            removed += 1
-print(f"Removed {removed} broken symlinks", flush=True)
-PYEOF
+          import os
+          root = os.environ['APP_ARTIFACT_PATH']
+          removed = 0
+          for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+              for name in list(dirnames) + filenames:
+                  path = os.path.join(dirpath, name)
+                  if os.path.islink(path) and not os.path.exists(path):
+                      print(f"Removing broken symlink: {path}", flush=True)
+                      os.unlink(path)
+                      removed += 1
+          print(f"Removed {removed} broken symlinks", flush=True)
+          PYEOF
 
           # Diagnostic: confirm the main executable is still present.
           echo "=== Contents/MacOS/ ==="
