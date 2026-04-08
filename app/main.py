@@ -242,9 +242,19 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("ffmpeg availability check failed: %s", e)
 
-    # Clean up stale tasks from previous runs to avoid blocking actions
-    _cleanup_tasks_on_startup()
-    configure_auto_scan_job()
+    # Clean up stale tasks from previous runs to avoid blocking actions.
+    # Wrapped in try/except: an unhandled exception here would propagate out
+    # of the lifespan, causing uvicorn to set should_exit=True immediately
+    # after binding the port — the server shuts down before serving any
+    # requests and the webview window stays stuck on the loading screen.
+    try:
+        _cleanup_tasks_on_startup()
+    except Exception as e:
+        logger.warning("Task cleanup on startup failed: %s", e)
+    try:
+        configure_auto_scan_job()
+    except Exception as e:
+        logger.warning("Auto-scan job setup failed: %s", e)
     yield
     # On shutdown, clean up tasks so next run starts cleanly
     _cleanup_tasks_on_shutdown()
@@ -644,13 +654,15 @@ if __name__ == "__main__":
             ctypes.windll.user32.MessageBoxW(
                 0,
                 (
-                    f"Failed to start the application window.\n\n"
+                    f"Failed to initialize the application window.\n\n"
                     f"Error: {exc}\n\n"
-                    "This is usually caused by a missing or corrupted .NET "
-                    "Framework installation.  Please ensure .NET Framework "
-                    "4.7.2 or later is installed and try again.\n\n"
-                    "You can download it from: "
-                    "https://dotnet.microsoft.com/download/dotnet-framework"
+                    "A likely cause is that Windows blocked the DLLs when "
+                    "the archive was extracted.  Try the following:\n\n"
+                    "  1. Open PowerShell in the application folder and run:\n"
+                    "       Get-ChildItem -Recurse | Unblock-File\n"
+                    "  2. Then launch the application again.\n\n"
+                    "If the problem persists, please report it at:\n"
+                    "https://github.com/einaeffchen/omoide/issues"
                 ),
                 "Omoide \u2013 Startup Error",
                 0x10,  # MB_ICONERROR

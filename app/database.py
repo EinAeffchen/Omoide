@@ -1,4 +1,5 @@
 import os
+import sqlite3 as _std_sqlite3
 import sys
 import time
 from pathlib import Path
@@ -10,6 +11,36 @@ from sqlmodel import Session, create_engine
 
 from app.config import settings
 from app.logger import logger
+
+
+def _sqlite_module():
+    """Return a sqlite3-compatible module that supports enable_load_extension.
+
+    On macOS, Apple's system libsqlite3 is compiled with
+    SQLITE_OMIT_LOAD_EXTENSION, so the standard ``sqlite3`` module does not
+    expose ``enable_load_extension``.  In that case we fall back to
+    ``pysqlite3`` (provided by the ``pysqlite3-binary`` package) which
+    bundles its own sqlite3 compiled with extension loading enabled.
+    """
+    _c = _std_sqlite3.connect(":memory:")
+    _has = hasattr(_c, "enable_load_extension")
+    _c.close()
+    if _has:
+        return _std_sqlite3
+    try:
+        import pysqlite3 as _ps3  # type: ignore[import-untyped]
+        return _ps3
+    except ImportError:
+        logger.warning(
+            "sqlite3 extension loading is unavailable and pysqlite3-binary is "
+            "not installed.  Vector search features will not work.  Install "
+            "pysqlite3-binary to fix this."
+        )
+        return _std_sqlite3
+
+
+_SQLITE = _sqlite_module()
+_USE_PYSQLITE3 = _SQLITE is not _std_sqlite3
 
 
 def _attach_engine_listeners(eng):
@@ -67,13 +98,26 @@ def _attach_engine_listeners(eng):
 
 
 def _make_engine(url: str):
-    eng = create_engine(
-        url,
-        echo=False,
-        connect_args={"check_same_thread": False, "timeout": 30},
-        pool_size=5,
-        max_overflow=10,
-    )
+    if _USE_PYSQLITE3:
+        # SQLAlchemy's sqlite dialect uses the built-in sqlite3 by default.
+        # When we need pysqlite3 (e.g. macOS), supply the connection via a
+        # creator so the correct module is used.  URL query-string pragmas
+        # (WAL, synchronous, foreign_keys) are handled by the event listener
+        # below, so we only need the bare file path here.
+        _db_path = url.split("sqlite:///", 1)[-1].split("?")[0]
+
+        def _creator():
+            return _SQLITE.connect(_db_path, check_same_thread=False, timeout=30)
+
+        eng = create_engine(url, creator=_creator, echo=False, pool_size=5, max_overflow=10)
+    else:
+        eng = create_engine(
+            url,
+            echo=False,
+            connect_args={"check_same_thread": False, "timeout": 30},
+            pool_size=5,
+            max_overflow=10,
+        )
     _attach_engine_listeners(eng)
     return eng
 

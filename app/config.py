@@ -31,10 +31,18 @@ def get_os_app_config_dir() -> Path:
 
     This is the stable location for bootstrap.yaml that remembers
     which profile (data directory) is active.
+
+    Platform defaults (can be overridden via env vars):
+      Windows : %APPDATA%\\omoide          (e.g. C:\\Users\\<user>\\AppData\\Roaming\\omoide)
+      macOS   : ~/Library/Application Support/omoide
+      Linux   : $XDG_CONFIG_HOME/omoide   (e.g. ~/.config/omoide)
     """
-    base = Path(
-        os.getenv("APPDATA") or os.getenv("XDG_CONFIG_HOME") or Path.home() / ".config"
-    )
+    if sys.platform == "win32":
+        base = Path(os.getenv("APPDATA") or Path.home() / "AppData" / "Roaming")
+    elif sys.platform == "darwin":
+        base = Path(os.getenv("XDG_CONFIG_HOME") or Path.home() / "Library" / "Application Support")
+    else:
+        base = Path(os.getenv("XDG_CONFIG_HOME") or Path.home() / ".config")
     d = base / "omoide"
     d.mkdir(parents=True, exist_ok=True)
     return d
