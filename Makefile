@@ -31,7 +31,15 @@ build:
 dev:
 	cd frontend && npm install && npm run dev
 
-docker-start:
+setup:
+	@echo "--- Creating mount directories from $(ENV_FILE) ---"
+	@test -n "$(HOST_MEDIA_DIR)" || (echo "ERROR: HOST_MEDIA_DIR is not set in $(ENV_FILE)"; exit 1)
+	@test -n "$(HOST_DATA_DIR)" || (echo "ERROR: HOST_DATA_DIR is not set in $(ENV_FILE)"; exit 1)
+	@mkdir -p "$(HOST_MEDIA_DIR)" && echo "OK: $(HOST_MEDIA_DIR)"
+	@mkdir -p "$(HOST_DATA_DIR)" && echo "OK: $(HOST_DATA_DIR)"
+	@chown 1000:1000 "$(HOST_MEDIA_DIR)" "$(HOST_DATA_DIR)" || echo "Warning: could not set ownership to 1000:1000 — run 'sudo chown 1000:1000 $(HOST_MEDIA_DIR) $(HOST_DATA_DIR)' if the container cannot write to these directories"
+
+docker-start: setup
 	docker compose up -d
 
 docker-down:

@@ -1,5 +1,6 @@
+import ctypes
+import ctypes.util
 import os
-import sqlite3 as _std_sqlite3
 import sys
 import time
 from pathlib import Path
@@ -13,75 +14,147 @@ from app.config import settings
 from app.logger import logger
 
 
-def _sqlite_module():
-    """Return a sqlite3-compatible module that supports enable_load_extension.
+def _sqlite3_db_ptr(conn) -> int | None:
+    """Return the raw sqlite3* pointer from a CPython sqlite3.Connection.
 
-    On macOS, Apple's system libsqlite3 is compiled with
-    SQLITE_OMIT_LOAD_EXTENSION, so the standard ``sqlite3`` module does not
-    expose ``enable_load_extension``.  In that case we fall back to
-    ``pysqlite3`` (provided by the ``pysqlite3-binary`` package) which
-    bundles its own sqlite3 compiled with extension loading enabled.
+    CPython's pysqlite_Connection layout on 64-bit (stable across 3.6–3.13):
+      offset  0 : ob_refcnt  (8 bytes)
+      offset  8 : ob_type    (8 bytes)
+      offset 16 : db         (8 bytes) ← sqlite3* we need
     """
-    _c = _std_sqlite3.connect(":memory:")
-    _has = hasattr(_c, "enable_load_extension")
-    _c.close()
-    if _has:
-        return _std_sqlite3
     try:
-        import pysqlite3 as _ps3  # type: ignore[import-untyped]
-        return _ps3
-    except ImportError:
-        logger.warning(
-            "sqlite3 extension loading is unavailable and pysqlite3-binary is "
-            "not installed.  Vector search features will not work.  Install "
-            "pysqlite3-binary to fix this."
-        )
-        return _std_sqlite3
+        return ctypes.c_void_p.from_address(id(conn) + 16).value
+    except Exception:
+        return None
 
 
-_SQLITE = _sqlite_module()
-_USE_PYSQLITE3 = _SQLITE is not _std_sqlite3
+def _open_libsqlite3() -> "ctypes.CDLL | None":
+    """Load libsqlite3 via ctypes, trying known platform paths."""
+    candidates: list[str] = []
+    found = ctypes.util.find_library("sqlite3")
+    if found:
+        candidates.append(found)
+    if sys.platform == "darwin":
+        candidates += ["/usr/lib/libsqlite3.dylib", "/usr/lib/libsqlite3.0.dylib"]
+    elif sys.platform.startswith("linux"):
+        candidates += [
+            "/usr/lib/x86_64-linux-gnu/libsqlite3.so.0",
+            "/usr/lib/libsqlite3.so.0",
+        ]
+    for path in candidates:
+        try:
+            return ctypes.CDLL(path)
+        except OSError:
+            continue
+    return None
+
+
+def _ctypes_load_extension(conn, ext_path: str) -> None:
+    """Load a SQLite extension when enable_load_extension is not exposed.
+
+    On macOS, Apple's system libsqlite3 (and many Python builds) omit
+    SQLITE_ENABLE_LOAD_EXTENSION, so ``sqlite3.Connection`` has no
+    ``enable_load_extension`` method.  However the underlying C library
+    always exports ``sqlite3_enable_load_extension``; we call it directly
+    via ctypes using the raw ``sqlite3*`` extracted from the CPython object.
+    """
+    lib = _open_libsqlite3()
+    if lib is None:
+        raise RuntimeError("Could not load libsqlite3 via ctypes")
+
+    db_ptr = _sqlite3_db_ptr(conn)
+    if db_ptr is None:
+        raise RuntimeError("Could not extract sqlite3* pointer from connection")
+
+    enable_fn = lib.sqlite3_enable_load_extension
+    enable_fn.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    enable_fn.restype = ctypes.c_int
+
+    rc = enable_fn(db_ptr, 1)
+    if rc != 0:
+        raise RuntimeError(f"sqlite3_enable_load_extension returned {rc}")
+
+    try:
+        load_fn = lib.sqlite3_load_extension
+        load_fn.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_char_p,
+            ctypes.c_char_p,
+            ctypes.POINTER(ctypes.c_char_p),
+        ]
+        load_fn.restype = ctypes.c_int
+
+        errmsg = ctypes.c_char_p()
+        rc = load_fn(db_ptr, ext_path.encode(), None, ctypes.byref(errmsg))
+        if rc != 0:
+            msg = errmsg.value.decode() if errmsg.value else f"error code {rc}"
+            try:
+                free_fn = lib.sqlite3_free
+                free_fn.argtypes = [ctypes.c_void_p]
+                free_fn.restype = None
+                free_fn(errmsg)
+            except Exception:
+                pass
+            raise RuntimeError(f"sqlite3_load_extension failed: {msg}")
+    finally:
+        enable_fn(db_ptr, 0)
 
 
 def _attach_engine_listeners(eng):
     """Attach sqlite-vec loader and PRAGMA setup to the given engine."""
 
     def _load_sqlite_extensions(dbapi_conn, connection_record):
-        dbapi_conn.enable_load_extension(True)
-        try:
-            # Provide a reasonable default path in frozen mode if unset
-            if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-                base = Path(sys._MEIPASS)
-                # Only set if not already provided by environment
-                if not os.environ.get("SQLITE_VEC_PATH"):
+        # Resolve path to the bundled vec0 binary (frozen build only).
+        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+            base = Path(sys._MEIPASS)
+            if not os.environ.get("SQLITE_VEC_PATH"):
+                candidates: list[Path] = []
+                try:
+                    for pat in ("vec0*.dll", "vec0*.so", "vec0*.dylib"):
+                        candidates += list(base.glob(pat))
+                except Exception:
                     candidates = []
-                    try:
-                        for pat in ("vec0*.dll", "vec0*.so", "vec0*.dylib"):
-                            candidates += list(base.glob(pat))
-                    except Exception:
-                        candidates = []
-                    if candidates:
-                        os.environ["SQLITE_VEC_PATH"] = str(candidates[0])
-                    else:
-                        vec_name = {
-                            "win32": "vec0.dll",
-                            "cygwin": "vec0.dll",
-                            "darwin": "vec0.dylib",
-                        }.get(sys.platform, "vec0.so")
-                        os.environ["SQLITE_VEC_PATH"] = str(base / vec_name)
+                if candidates:
+                    os.environ["SQLITE_VEC_PATH"] = str(candidates[0])
+                else:
+                    vec_name = {
+                        "win32": "vec0.dll",
+                        "cygwin": "vec0.dll",
+                        "darwin": "vec0.dylib",
+                    }.get(sys.platform, "vec0.so")
+                    os.environ["SQLITE_VEC_PATH"] = str(base / vec_name)
 
-            vec_path = os.environ.get("SQLITE_VEC_PATH")
+        vec_path = os.environ.get("SQLITE_VEC_PATH")
+
+        if hasattr(dbapi_conn, "enable_load_extension"):
+            # Standard path: sqlite3 compiled with SQLITE_ENABLE_LOAD_EXTENSION.
+            dbapi_conn.enable_load_extension(True)
+            try:
+                if vec_path and Path(vec_path).exists():
+                    dbapi_conn.load_extension(vec_path)
+                else:
+                    try:
+                        import sqlite_vec
+                        sqlite_vec.load(dbapi_conn)
+                    except Exception as e:
+                        raise RuntimeError(f"Failed to load sqlite-vec extension: {e}")
+            finally:
+                dbapi_conn.enable_load_extension(False)
+        else:
+            # Fallback for macOS (and other builds) where Apple's libsqlite3 /
+            # the Python _sqlite3 extension was compiled without
+            # SQLITE_ENABLE_LOAD_EXTENSION.  We call the C API directly via
+            # ctypes, bypassing the Python-level guard.
             if vec_path and Path(vec_path).exists():
-                dbapi_conn.load_extension(vec_path)
+                _ctypes_load_extension(dbapi_conn, vec_path)
             else:
                 try:
                     import sqlite_vec
-
-                    sqlite_vec.load(dbapi_conn)
+                    _ctypes_load_extension(dbapi_conn, sqlite_vec.loadable_path())
                 except Exception as e:
-                    raise RuntimeError(f"Failed to load sqlite-vec extension: {e}")
-        finally:
-            dbapi_conn.enable_load_extension(False)
+                    raise RuntimeError(
+                        f"Failed to load sqlite-vec extension via ctypes: {e}"
+                    )
 
     def _set_sqlite_pragmas(dbapi_conn, connection_record):
         try:
@@ -98,26 +171,13 @@ def _attach_engine_listeners(eng):
 
 
 def _make_engine(url: str):
-    if _USE_PYSQLITE3:
-        # SQLAlchemy's sqlite dialect uses the built-in sqlite3 by default.
-        # When we need pysqlite3 (e.g. macOS), supply the connection via a
-        # creator so the correct module is used.  URL query-string pragmas
-        # (WAL, synchronous, foreign_keys) are handled by the event listener
-        # below, so we only need the bare file path here.
-        _db_path = url.split("sqlite:///", 1)[-1].split("?")[0]
-
-        def _creator():
-            return _SQLITE.connect(_db_path, check_same_thread=False, timeout=30)
-
-        eng = create_engine(url, creator=_creator, echo=False, pool_size=5, max_overflow=10)
-    else:
-        eng = create_engine(
-            url,
-            echo=False,
-            connect_args={"check_same_thread": False, "timeout": 30},
-            pool_size=5,
-            max_overflow=10,
-        )
+    eng = create_engine(
+        url,
+        echo=False,
+        connect_args={"check_same_thread": False, "timeout": 30},
+        pool_size=5,
+        max_overflow=10,
+    )
     _attach_engine_listeners(eng)
     return eng
 

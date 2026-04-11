@@ -391,9 +391,6 @@ a = Analysis(
         'dateutil.tz',
         'dateutil.parser',
         'hdbscan',
-        # pysqlite3-binary bundles its own sqlite3 with SQLITE_ENABLE_LOAD_EXTENSION.
-        # Used on macOS where Apple's system libsqlite3 omits that flag.
-        'pysqlite3',
     ] + app_submodules + hiddenimports_list,
     hookspath=[],
     hooksconfig={},
