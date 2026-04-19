@@ -1,25 +1,34 @@
 import io
 import re
 import time
-import numpy as np
 from dataclasses import dataclass
-from fastapi import APIRouter, Depends, HTTPException, Query, File, UploadFile
-from sqlalchemy import desc, text, tuple_
-from sqlmodel import Session, select
-from PIL import Image
+from datetime import datetime
 
-from app.config import settings, get_clip_bundle
+import numpy as np
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from PIL import Image
+from sqlalchemy import and_, desc, or_, text, tuple_
+from sqlmodel import Session, select
+
+from app.config import get_clip_bundle, settings
 from app.database import get_session
 from app.logger import logger
-from app.utils import vector_to_blob
-
 from app.models import Media, Person, Scene, Tag
 from app.schemas.media import MediaPreview
 from app.schemas.person import PersonRead, PersonReadSimple
-from app.schemas.search import CombinedMediaSearchResult, CursorPage, SceneSearchResult
+from app.schemas.search import (
+    CombinedMediaSearchResult,
+    CursorPage,
+    SceneSearchResult,
+)
 from app.schemas.tag import TagRead
+from app.utils import vector_to_blob
 
 router = APIRouter()
+
+# Maximum number of ANN results fetched for the global KNN path.
+# Determines how many pages of results are reachable (e.g. 300 / limit=20 = 15 pages).
+_MAX_KNN_RESULTS = 300
 
 # ---------------------------------------------------------------------------
 # In-memory person name cache
@@ -157,6 +166,31 @@ def encode_text_query(query: str) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
+# Multi-person search helpers
+# ---------------------------------------------------------------------------
+
+def _person_media_filter_sql(person_ids: list[int]) -> str:
+    """SQL fragment yielding media_ids that contain ALL specified persons.
+
+    Single person  → UNION of face + personmedialink rows (broad match).
+    Multiple persons → INTERSECT of face-table rows only, so results are
+    limited to media where every named person's face was actually detected
+    together in the same image.
+    """
+    if len(person_ids) == 1:
+        pid = person_ids[0]
+        return (
+            f"(SELECT media_id FROM face WHERE person_id = {pid}"
+            f" UNION SELECT media_id FROM personmedialink WHERE person_id = {pid})"
+        )
+    parts = [
+        f"SELECT media_id FROM face WHERE person_id = {pid}"
+        for pid in person_ids
+    ]
+    return "\n            INTERSECT\n            ".join(parts)
+
+
+# ---------------------------------------------------------------------------
 # Search endpoints
 # ---------------------------------------------------------------------------
 
@@ -208,14 +242,22 @@ def search_by_image(
 def search_combined(
     query: str = Query("", description="Free-text or embedding query"),
     limit: int = 20,
-    cursor: str | None = Query(None, description="Distance cursor from previous page"),
+    cursor: str | None = Query(None, description="Opaque cursor from previous page"),
+    order_by: str = Query(
+        "relevance",
+        description="Sort order for results: 'relevance' (similarity, default) or 'date' (newest first)",
+    ),
     session: Session = Depends(get_session),
 ):
+    if order_by not in ("relevance", "date"):
+        raise HTTPException(status_code=400, detail="order_by must be 'relevance' or 'date'")
+
     if not query:
         return CombinedMediaSearchResult()
 
     cache = _get_person_cache(session)
     person_ids, search_text = _match_persons(query, cache)
+    logger.warning("PERSON IDS: %s", person_ids)
 
     # Fetch full person objects — only on the first page to avoid redundant data
     persons: list[PersonRead] = []
@@ -231,12 +273,9 @@ def search_combined(
         ]
 
     max_dist = 2.0 - settings.ai.min_search_dist
-    try:
-        min_dist = float(cursor) if cursor else 0.0
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="Invalid cursor format")
 
     # No semantic text left — return the persons' most recent media without vector search
+    logger.warning("SEARCH TEXT: %s", search_text)
     if not search_text and person_ids:
         ids_str = ",".join(str(i) for i in person_ids)
         sql = text(f"""
@@ -267,51 +306,149 @@ def search_combined(
         logger.warning("Failed to encode query vector for combined search")
         return CombinedMediaSearchResult(persons=persons)
 
+    # ------------------------------------------------------------------
+    # Relevance order: paginate by (distance, media_id) composite cursor.
+    # Using a composite key prevents duplicates when multiple items share
+    # the same cosine distance value.
+    # ------------------------------------------------------------------
+    if order_by == "relevance":
+        min_dist = 0.0
+        cursor_media_id = 0
+        if cursor:
+            try:
+                dist_str, id_str = cursor.rsplit("_", 1)
+                min_dist = float(dist_str)
+                cursor_media_id = int(id_str)
+            except (ValueError, TypeError):
+                raise HTTPException(status_code=400, detail="Invalid cursor format")
+
+        if person_ids:
+            # Brute-force exact cosine over the persons' media.
+            # Multi-person → INTERSECT on the face table so only media where
+            # every named person's face was detected together is searched.
+            media_filter = _person_media_filter_sql(person_ids)
+            logger.warning(media_filter)
+            sql = text(f"""
+                SELECT media_id, distance FROM (
+                    SELECT me.media_id,
+                           vec_distance_cosine(me.embedding, :vec_blob) AS distance
+                    FROM media_embeddings me
+                    WHERE me.media_id IN (
+                        {media_filter}
+                    )
+                ) ranked
+                WHERE distance < :max_dist
+                  AND (distance > :min_dist OR (distance = :min_dist AND media_id > :cursor_id))
+                ORDER BY distance, media_id
+                LIMIT :k
+            """).bindparams(
+                vec_blob=vec_blob, max_dist=max_dist,
+                min_dist=min_dist, cursor_id=cursor_media_id, k=limit + 1,
+            )
+            rows = list(session.exec(sql).all())
+        else:
+            # Global KNN index — fast approximate nearest-neighbour path.
+            # k = _MAX_KNN_RESULTS so pagination works up to _MAX_KNN_RESULTS / limit pages.
+            # distance > :min_dist is pushed into the vec0 index; we apply the media_id
+            # tiebreak in Python since compound distance conditions aren't supported by vec0.
+            sql = text("""
+                SELECT media_id, distance
+                FROM media_embeddings
+                WHERE embedding MATCH :vec_blob
+                  AND k = :k
+                  AND distance < :max_dist
+                  AND distance > :min_dist
+                ORDER BY distance
+            """).bindparams(
+                vec_blob=vec_blob, max_dist=max_dist,
+                min_dist=min_dist, k=_MAX_KNN_RESULTS,
+            )
+            rows = list(session.exec(sql).all())
+            # Python tiebreak: exclude items at exactly the cursor distance that we
+            # already returned on the previous page (media_id <= cursor_media_id).
+            if cursor_media_id:
+                rows = [
+                    r for r in rows
+                    if r[1] > min_dist or (abs(r[1] - min_dist) < 1e-9 and r[0] > cursor_media_id)
+                ]
+
+        page_rows = rows[:limit]
+        has_more = len(rows) > limit
+
+        media_ids = [r[0] for r in page_rows]
+        media_objs = session.exec(select(Media).where(Media.id.in_(media_ids))).all()
+        id_map = {m.id: m for m in media_objs}
+        ordered = [id_map[mid] for mid in media_ids if mid in id_map]
+
+        next_cursor = (
+            f"{page_rows[-1][1]}_{page_rows[-1][0]}" if page_rows and has_more else None
+        )
+        return CombinedMediaSearchResult(
+            persons=persons,
+            media=[MediaPreview.model_validate(m) for m in ordered],
+            next_cursor=next_cursor,
+        )
+
+    # ------------------------------------------------------------------
+    # Date order: over-fetch all vector candidates (up to _MAX_KNN_RESULTS),
+    # then sort and paginate by (inserted_at DESC, id DESC).
+    # Cursor format: "<iso_datetime>_<media_id>"
+    # ------------------------------------------------------------------
+    cursor_dt: datetime | None = None
+    cursor_id: int | None = None
+    if cursor:
+        try:
+            iso_str, id_str = cursor.rsplit("_", 1)
+            cursor_dt = datetime.fromisoformat(iso_str)
+            cursor_id = int(id_str)
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="Invalid cursor format")
+
     if person_ids:
-        # Brute-force cosine similarity over only the matched persons' media.
-        # vec_distance_cosine gives exact results with no k-cap — every one of
-        # the person's media items is ranked, then we take the top limit+1.
-        ids_str = ",".join(str(i) for i in person_ids)
-        sql = text(f"""
-            SELECT media_id, distance FROM (
-                SELECT me.media_id,
-                       vec_distance_cosine(me.embedding, :vec_blob) AS distance
-                FROM media_embeddings me
-                WHERE me.media_id IN (
-                    SELECT media_id FROM face WHERE person_id IN ({ids_str})
-                    UNION
-                    SELECT media_id FROM personmedialink WHERE person_id IN ({ids_str})
-                )
-            ) ranked
-            WHERE distance < :max_dist AND distance > :min_dist
-            ORDER BY distance
-            LIMIT :k
-        """).bindparams(vec_blob=vec_blob, max_dist=max_dist, min_dist=min_dist, k=limit + 1)
+        media_filter = _person_media_filter_sql(person_ids)
+        logger.warning(media_filter)
+        vec_sql = text(f"""
+            SELECT me.media_id
+            FROM media_embeddings me
+            WHERE me.media_id IN (
+                {media_filter}
+            )
+            AND vec_distance_cosine(me.embedding, :vec_blob) < :max_dist
+        """).bindparams(vec_blob=vec_blob, max_dist=max_dist)
     else:
-        # Global KNN index — fast approximate nearest-neighbour path
-        sql = text("""
-            SELECT media_id, distance
+        vec_sql = text("""
+            SELECT media_id
             FROM media_embeddings
             WHERE embedding MATCH :vec_blob
               AND k = :k
               AND distance < :max_dist
-              AND distance > :min_dist
             ORDER BY distance
-        """).bindparams(vec_blob=vec_blob, max_dist=max_dist, min_dist=min_dist, k=limit * 3)
+        """).bindparams(vec_blob=vec_blob, max_dist=max_dist, k=_MAX_KNN_RESULTS)
 
-    rows = session.exec(sql).all()
-    page_rows = rows[:limit]
-    has_more = len(rows) > limit
+    candidate_ids = [r[0] for r in session.exec(vec_sql).all()]
+    if not candidate_ids:
+        return CombinedMediaSearchResult(persons=persons)
 
-    media_ids = [r[0] for r in page_rows]
-    media_objs = session.exec(select(Media).where(Media.id.in_(media_ids))).all()
-    id_map = {m.id: m for m in media_objs}
-    ordered = [id_map[mid] for mid in media_ids if mid in id_map]
+    q = select(Media).where(Media.id.in_(candidate_ids))
+    if cursor_dt is not None:
+        q = q.where(
+            or_(
+                Media.inserted_at < cursor_dt,
+                and_(Media.inserted_at == cursor_dt, Media.id < cursor_id),
+            )
+        )
+    q = q.order_by(desc(Media.inserted_at), desc(Media.id)).limit(limit + 1)
+    media_objs = list(session.exec(q).all())
+
+    page_objs = media_objs[:limit]
+    has_more = len(media_objs) > limit
+    last = page_objs[-1] if page_objs else None
+    next_cursor = f"{last.inserted_at.isoformat()}_{last.id}" if last and has_more else None
 
     return CombinedMediaSearchResult(
         persons=persons,
-        media=[MediaPreview.model_validate(m) for m in ordered],
-        next_cursor=str(page_rows[-1][1]) if page_rows and has_more else None,
+        media=[MediaPreview.model_validate(m) for m in page_objs],
+        next_cursor=next_cursor,
     )
 
 
@@ -324,7 +461,7 @@ def search_scenes(
     query: str = Query("", description="Free-text query for scene search"),
     limit: int = 20,
     cursor: str | None = Query(
-        None, description="Distance cursor returned from previous request"
+        None, description="Opaque cursor returned from previous request"
     ),
     session: Session = Depends(get_session),
 ):
@@ -338,10 +475,18 @@ def search_scenes(
         return CursorPage(items=[], next_cursor=None)
 
     max_dist = 2.0 - settings.ai.min_search_dist
-    try:
-        min_dist = float(cursor) if cursor else 0.0
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="Invalid cursor format")
+
+    # Cursor format: "<distance>_<scene_id>" — composite key prevents duplicates
+    # when multiple scenes share the same cosine distance value.
+    min_dist = 0.0
+    cursor_scene_id = 0
+    if cursor:
+        try:
+            dist_str, id_str = cursor.rsplit("_", 1)
+            min_dist = float(dist_str)
+            cursor_scene_id = int(id_str)
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="Invalid cursor format")
 
     vec = encode_text_query(search_text)
     vec_blob = vector_to_blob(vec)
@@ -350,23 +495,28 @@ def search_scenes(
         return CursorPage(items=[], next_cursor=None)
 
     if person_ids:
-        # Brute-force over the matched persons' scenes
-        ids_str = ",".join(str(i) for i in person_ids)
+        # Brute-force exact cosine over the persons' scenes.
+        # Multi-person → INTERSECT on the face table so only scenes from media
+        # where every named person's face was detected together are returned.
+        media_filter = _person_media_filter_sql(person_ids)
         sql = text(f"""
             SELECT scene_id, media_id, distance FROM (
                 SELECT se.scene_id, se.media_id,
                        vec_distance_cosine(se.embedding, :vec_blob) AS distance
                 FROM scene_embeddings se
                 WHERE se.media_id IN (
-                    SELECT media_id FROM face WHERE person_id IN ({ids_str})
-                    UNION
-                    SELECT media_id FROM personmedialink WHERE person_id IN ({ids_str})
+                    {media_filter}
                 )
             ) ranked
-            WHERE distance < :max_dist AND distance > :min_dist
-            ORDER BY distance
+            WHERE distance < :max_dist
+              AND (distance > :min_dist OR (distance = :min_dist AND scene_id > :cursor_id))
+            ORDER BY distance, scene_id
             LIMIT :k
-        """).bindparams(vec_blob=vec_blob, max_dist=max_dist, min_dist=min_dist, k=limit + 1)
+        """).bindparams(
+            vec_blob=vec_blob, max_dist=max_dist,
+            min_dist=min_dist, cursor_id=cursor_scene_id, k=limit + 1,
+        )
+        rows = list(session.exec(sql).all())
     else:
         sql = text("""
             SELECT scene_id, media_id, distance
@@ -376,9 +526,18 @@ def search_scenes(
               AND distance < :max_dist
               AND distance > :min_dist
             ORDER BY distance
-        """).bindparams(vec_blob=vec_blob, max_dist=max_dist, min_dist=min_dist, k=limit * 3)
+        """).bindparams(
+            vec_blob=vec_blob, max_dist=max_dist,
+            min_dist=min_dist, k=_MAX_KNN_RESULTS,
+        )
+        rows = list(session.exec(sql).all())
+        # Python tiebreak for the KNN path (vec0 doesn't support compound distance filters).
+        if cursor_scene_id:
+            rows = [
+                r for r in rows
+                if r[2] > min_dist or (abs(r[2] - min_dist) < 1e-9 and r[0] > cursor_scene_id)
+            ]
 
-    rows = session.exec(sql).all()
     if not rows:
         return CursorPage(items=[], next_cursor=None)
 
@@ -415,10 +574,10 @@ def search_scenes(
             )
         )
 
-    return CursorPage(
-        items=results,
-        next_cursor=str(results[-1].distance) if results and has_more else None,
+    next_cursor = (
+        f"{results[-1].distance}_{results[-1].scene_id}" if results and has_more else None
     )
+    return CursorPage(items=results, next_cursor=next_cursor)
 
 
 @router.get(

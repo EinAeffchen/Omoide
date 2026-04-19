@@ -98,6 +98,7 @@ export default function SearchResultsPage() {
 
   // ---- local state for the media/combined category -----------------------
   const [mediaState, setMediaState] = useState<MediaSearchState>(emptyMediaState);
+  const [orderBy, setOrderBy] = useState<"relevance" | "date">("relevance");
   const activeQueryRef = useRef<string>("");
 
   // Initial load for the combined (media) category
@@ -109,7 +110,7 @@ export default function SearchResultsPage() {
     }
     activeQueryRef.current = query;
     setMediaState({ ...emptyMediaState, isLoading: true });
-    searchCombined(query, ITEMS_PER_PAGE)
+    searchCombined(query, ITEMS_PER_PAGE, undefined, orderBy)
       .then((result) => {
         if (activeQueryRef.current !== query) return;
         setMediaState({
@@ -124,13 +125,13 @@ export default function SearchResultsPage() {
         if (activeQueryRef.current !== query) return;
         setMediaState({ ...emptyMediaState });
       });
-  }, [category, query, location.key, isImageSearch]);
+  }, [category, query, location.key, isImageSearch, orderBy]);
 
   const loadMoreMedia = useCallback(() => {
     if (!mediaState.hasMore || mediaState.isLoading || !mediaState.nextCursor) return;
     const cursor = mediaState.nextCursor;
     setMediaState((prev) => ({ ...prev, isLoading: true }));
-    searchCombined(query, ITEMS_PER_PAGE, cursor).then((result) => {
+    searchCombined(query, ITEMS_PER_PAGE, cursor, orderBy).then((result) => {
       setMediaState((prev) => ({
         ...prev,
         media: [...prev.media, ...(result.media ?? [])],
@@ -139,7 +140,7 @@ export default function SearchResultsPage() {
         hasMore: result.next_cursor !== null,
       }));
     });
-  }, [mediaState.hasMore, mediaState.isLoading, mediaState.nextCursor, query]);
+  }, [mediaState.hasMore, mediaState.isLoading, mediaState.nextCursor, query, orderBy]);
 
   // ---- list-store fetch for tag / scene ----------------------------------
   useEffect(() => {
@@ -267,7 +268,7 @@ export default function SearchResultsPage() {
       </Typography>
 
       {category === "media" && (
-        <Box sx={{ mb: 3, display: "flex", alignItems: "center", gap: 2 }}>
+        <Box sx={{ mb: 3, display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" }}>
           <ToggleButtonGroup
             exclusive
             size="small"
@@ -278,6 +279,18 @@ export default function SearchResultsPage() {
             <ToggleButton value="image">Images</ToggleButton>
             <ToggleButton value="video">Videos</ToggleButton>
           </ToggleButtonGroup>
+
+          {!isImageSearch && (
+            <ToggleButtonGroup
+              exclusive
+              size="small"
+              value={orderBy}
+              onChange={(_, next) => { if (next) setOrderBy(next); }}
+            >
+              <ToggleButton value="relevance">Relevance</ToggleButton>
+              <ToggleButton value="date">Newest first</ToggleButton>
+            </ToggleButtonGroup>
+          )}
         </Box>
       )}
 

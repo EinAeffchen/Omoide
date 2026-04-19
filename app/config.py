@@ -502,8 +502,11 @@ class AISettings(BaseModel):
     def clip_model_pretrained(self) -> str:
         return self.clip_model.pretrained
 
-    # Strictness of the search results. Higher -> more accurate but less hits
-    min_search_dist: float = 0.68
+    # Strictness of the search results. Higher -> more accurate but less hits.
+    # Internally: max_dist = 2.0 - min_search_dist. For L2 distance on unit
+    # vectors this translates to a minimum cosine similarity of
+    # 1 - (max_dist² / 2).  At 0.68 that is ~13 %; at 0.80 it is ~28 %.
+    min_search_dist: float = 0.80
     # Defines the maximum distance for similarity between two images.
     # Used to reduce/increase number of similar images. Higher -> stronger similarity
     min_similarity_dist: float = 1.2

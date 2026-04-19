@@ -9,10 +9,12 @@ import {
 export const searchCombined = async (
   query: string,
   limit: number,
-  cursor?: string
+  cursor?: string,
+  orderBy?: "relevance" | "date"
 ): Promise<CombinedMediaSearchResult> => {
   const params = new URLSearchParams({ query, limit: String(limit) });
   if (cursor) params.set("cursor", cursor);
+  if (orderBy && orderBy !== "relevance") params.set("order_by", orderBy);
   const response = await fetch(`${API}/api/search/combined?${params}`);
   return response.json();
 };
