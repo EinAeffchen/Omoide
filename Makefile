@@ -65,9 +65,6 @@ build-release: build-image
 push: build-release
 	git push origin v${VERSION}
 
-push: build-release
-	git push origin v${VERSION}
-
 alembic-generate:
 	echo ${DATA_DIR}
 	alembic revision --autogenerate -m "RENAME_ME"
