@@ -694,6 +694,11 @@ class ContentProcessorSettings(BaseModel):
     blur_processor_active: bool = True
     # number of media rows processed per batch when running the heavy pipeline
     media_batch_size: int = 125
+    # use GPU acceleration when available (CUDA/MPS for CLIP, CUDA/DML for InsightFace)
+    # falls back to CPU automatically when no GPU is detected
+    prefer_gpu: bool = True
+    # number of video frames batched together for a single CLIP forward pass
+    embedding_batch_size: int = 16
 
 
 class AppSettings(BaseModel):
@@ -850,7 +855,7 @@ def get_model(settings: AppSettings):
 
     from app.accelerators import resolve_torch_device
 
-    device = resolve_torch_device(False)
+    device = resolve_torch_device(settings.processors.prefer_gpu)
     model, preprocess, _ = open_clip.create_model_and_transforms(
         settings.ai.clip_model.model_name,
         pretrained=settings.ai.clip_model_pretrained,

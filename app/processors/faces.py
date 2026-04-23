@@ -181,7 +181,7 @@ class FaceProcessor(MediaProcessor):
         # Import InsightFace lazily to speed up application startup
         from insightface.app import FaceAnalysis
 
-        prefer_gpu = False
+        prefer_gpu = getattr(settings.processors, "prefer_gpu", True)
         providers, uses_gpu = resolve_onnx_providers(prefer_gpu)
         self.model = FaceAnalysis(
             "buffalo_l",

@@ -379,7 +379,7 @@ if platform_is_windows:
     ]
 
 a = Analysis(
-    ['app/main.py'],
+    ['app/binary_launcher.py'],
     # Ensure project root is searched during analysis for in-tree packages
     pathex=[str(Path('.').resolve())],
     binaries=binaries,

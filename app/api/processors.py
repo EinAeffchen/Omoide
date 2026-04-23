@@ -124,8 +124,7 @@ def _run_conversion(task_id: str, media_path: str, media_id: int):
             except Exception:
                 dur_s = 0.0
             dur_us = dur_s * 1000000
-            prefer_gpu = False
-            accel = get_ffmpeg_accel_config(prefer_gpu)
+            accel = get_ffmpeg_accel_config(settings.processors.prefer_gpu)
             video_encoder = accel.video_encoder or "libx264"
             # run ffmpeg with stderr piped so we can parse “progress=…”
             # Here’s one way using the “-progress” flag:

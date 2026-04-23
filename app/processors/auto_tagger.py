@@ -127,16 +127,23 @@ class AutoTagger(MediaProcessor):
         tags = sanitize_custom_tag_list(tags)
         if not tags:
             self.tag_map = {}
+            self._tag_names: list[str] = []
+            self._tag_matrix: np.ndarray | None = None
             return
 
         # Use shared CLIP and keep it warm to avoid re-init leaks
         self._clip_model, _, self._tokenizer = get_clip_bundle()
         self.tag_map = build_tag_vector_map(tags)
+        # Pre-stack vectors into a matrix for vectorized similarity scoring
+        self._tag_names = list(self.tag_map.keys())
+        self._tag_matrix = np.stack(list(self.tag_map.values())) if self._tag_names else None
 
     def unload(self):
         """Used to load models into memory before use"""
         self.tags = []
         self.tag_map = {}
+        self._tag_names = []
+        self._tag_matrix = None
 
     def _tag_to_vector(self, tag) -> np.ndarray:
         tokenized_text = self._tokenizer([tag])
@@ -204,13 +211,24 @@ class AutoTagger(MediaProcessor):
             session.add(media)
             safe_commit(session)
             return True
-        for tag, tag_vector in self.tag_map.items():
-            similarity_score = np.dot(media_embedding, tag_vector)
-            if similarity_score > 0.2:
-                tag_obj = get_or_create_tag(tag, session)
-                attach_tag_to_media(
-                    media.id, tag_obj.id, session, score=similarity_score
-                )
+        tag_matrix = getattr(self, "_tag_matrix", None)
+        tag_names = getattr(self, "_tag_names", None)
+        if tag_matrix is not None and tag_names:
+            scores = tag_matrix @ media_embedding  # single matmul: (N,)
+            for tag, score in zip(tag_names, scores):
+                if score > 0.2:
+                    tag_obj = get_or_create_tag(tag, session)
+                    attach_tag_to_media(
+                        media.id, tag_obj.id, session, score=float(score)
+                    )
+        else:
+            for tag, tag_vector in self.tag_map.items():
+                similarity_score = float(np.dot(media_embedding, tag_vector))
+                if similarity_score > 0.2:
+                    tag_obj = get_or_create_tag(tag, session)
+                    attach_tag_to_media(
+                        media.id, tag_obj.id, session, score=similarity_score
+                    )
         media.ran_auto_tagging = True
         safe_commit(session)
         return True

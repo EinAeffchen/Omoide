@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Literal
@@ -546,8 +547,7 @@ def generate_thumbnail(media: Media) -> tuple[str | None, str | None]:
     filepath = Path(media.path)
     if filepath.suffix.lower() in settings.scan.VIDEO_SUFFIXES:
         # Use direct subprocess to enforce a timeout; skip on failure
-        prefer_gpu = False # Removed
-        accel = get_ffmpeg_accel_config(prefer_gpu)
+        accel = get_ffmpeg_accel_config(getattr(settings.processors, "prefer_gpu", True))
         cmd = [
             "ffmpeg",
             *accel.hwaccel_args,
@@ -734,9 +734,91 @@ def _split_by_scenes(
     return scene_objs
 
 
+def _extract_frame_worker(
+    ffmpeg_binary: Path,
+    accel,
+    video_path: Path,
+    ts: float,
+    idx: int,
+    timestamps: list[float],
+    duration: float,
+    thumb_dir: Path,
+    media_id: int,
+    media_path: str,
+) -> tuple[int, tuple | None]:
+    """Extract one video frame at timestamp *ts* and write its thumbnail.
+
+    Returns (idx, (ts, next_ts, frame_rgb, thumb_file)) on success or
+    (idx, None) on any failure.  Designed to run inside a ThreadPoolExecutor —
+    each call spawns its own ffmpeg process so there is no shared mutable state.
+    """
+    cmd = [
+        str(ffmpeg_binary),
+        *accel.hwaccel_args,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-ss",
+        f"{ts}",
+        "-i",
+        os.fspath(video_path),
+        "-frames:v",
+        "1",
+        "-f",
+        "image2pipe",
+        "-strict",
+        "-1",
+        "-vcodec",
+        "mjpeg",
+        "-",
+    ]
+    try:
+        result = run_silent(
+            cmd,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except Exception as exc:
+        logger.warning("ffmpeg frame extraction failed at %.2fs: %s", ts, exc)
+        return idx, None
+
+    if result.returncode != 0 or not result.stdout:
+        logger.debug(
+            "ffmpeg returned no data for %.2fs (code=%s, stderr=%s)",
+            ts,
+            result.returncode,
+            result.stderr.decode(errors="ignore"),
+        )
+        return idx, None
+
+    frame_buf = np.frombuffer(result.stdout, np.uint8)
+    frame_bgr = cv2.imdecode(frame_buf, cv2.IMREAD_COLOR)
+    if frame_bgr is None:
+        return idx, None
+
+    height, width = frame_bgr.shape[:2]
+    if width <= 0 or height <= 0:
+        return idx, None
+
+    target_width = 360
+    if width > target_width:
+        scale = target_width / float(width)
+        new_size = (target_width, max(1, int(height * scale)))
+        thumb_bgr = cv2.resize(frame_bgr, new_size, interpolation=cv2.INTER_AREA)
+    else:
+        thumb_bgr = frame_bgr
+
+    thumb_file = thumb_dir / f"{media_id}_frame_{idx}.jpg"
+    cv2.imwrite(str(thumb_file), thumb_bgr)
+
+    frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+    next_ts = timestamps[idx + 1] if idx + 1 < len(timestamps) else max(ts, duration)
+    return idx, (ts, next_ts, frame_rgb, thumb_file)
+
+
 def _split_by_frames(media: Media) -> list[tuple[Scene, cv2.typing.MatLike]]:
     logger.info("Splitting based on frames via ffmpeg")
-    scene_entries: list[tuple[Scene, cv2.typing.MatLike]] = []
     video_path = Path(media.path)
     if not video_path.exists():
         logger.warning("Video file missing: %s", video_path)
@@ -748,8 +830,7 @@ def _split_by_frames(media: Media) -> list[tuple[Scene, cv2.typing.MatLike]]:
             "ffmpeg is required to extract scenes but could not be provisioned."
         )
         return []
-    prefer_gpu = False # REMOVED
-    accel = get_ffmpeg_accel_config(prefer_gpu)
+    accel = get_ffmpeg_accel_config(False)
 
     duration = media.duration or 0.0
     if not duration:
@@ -774,73 +855,42 @@ def _split_by_frames(media: Media) -> list[tuple[Scene, cv2.typing.MatLike]]:
 
     thumb_dir = get_thumb_folder(settings.general.thumb_dir / "scenes")
 
-    for idx, ts in enumerate(tqdm(timestamps)):
-        try:
-            cmd = [
-                str(ffmpeg_binary),
-                *accel.hwaccel_args,
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-ss",
-                f"{ts}",
-                "-i",
-                os.fspath(video_path),
-                "-frames:v",
-                "1",
-                "-f",
-                "image2pipe",
-                "-strict",
-                "-1",
-                "-vcodec",
-                "mjpeg",
-                "-",
-            ]
-            result = run_silent(
-                cmd,
-                check=False,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-        except Exception as exc:
-            logger.warning("ffmpeg frame extraction failed at %.2fs: %s", ts, exc)
-            continue
+    # Run ffmpeg subprocesses in parallel — each seeks independently so wall
+    # time drops from O(N) to O(1) relative to the number of workers.
+    # Cap at 4 workers to avoid thrashing spinning disks or overloading CPU.
+    max_workers = min(4, len(timestamps))
+    frame_results: dict[int, tuple] = {}
 
-        if result.returncode != 0 or not result.stdout:
-            logger.debug(
-                "ffmpeg returned no data for %.2fs (code=%s, stderr=%s)",
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(
+                _extract_frame_worker,
+                ffmpeg_binary,
+                accel,
+                video_path,
                 ts,
-                result.returncode,
-                result.stderr.decode(errors="ignore"),
-            )
-            continue
+                idx,
+                timestamps,
+                duration,
+                thumb_dir,
+                media.id,
+                media.path,
+            ): idx
+            for idx, ts in enumerate(timestamps)
+        }
+        for future in as_completed(futures):
+            try:
+                idx, data = future.result()
+            except Exception as exc:
+                logger.warning("Frame extraction worker raised: %s", exc)
+                continue
+            if data is not None:
+                frame_results[idx] = data
 
-        frame_buf = np.frombuffer(result.stdout, np.uint8)
-        frame_bgr = cv2.imdecode(frame_buf, cv2.IMREAD_COLOR)
-        if frame_bgr is None:
-            continue
-
-        height, width = frame_bgr.shape[:2]
-        if width <= 0 or height <= 0:
-            continue
-
-        target_width = 360
-        if width > target_width:
-            scale = target_width / float(width)
-            new_size = (target_width, max(1, int(height * scale)))
-            thumb_bgr = cv2.resize(frame_bgr, new_size, interpolation=cv2.INTER_AREA)
-        else:
-            thumb_bgr = frame_bgr
-
-        thumb_file = thumb_dir / f"{media.id}_frame_{idx}.jpg"
-        cv2.imwrite(str(thumb_file), thumb_bgr)
-
-        frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-
-        next_ts = (
-            timestamps[idx + 1] if idx + 1 < len(timestamps) else max(ts, duration)
-        )
-
+    # Reassemble in original timestamp order
+    scene_entries: list[tuple[Scene, cv2.typing.MatLike]] = []
+    for idx in sorted(frame_results):
+        ts, next_ts, frame_rgb, thumb_file = frame_results[idx]
         scene = Scene(
             media_id=media.id,
             start_time=float(ts),
