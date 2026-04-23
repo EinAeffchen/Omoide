@@ -19,10 +19,15 @@ import PeopleIcon from "@mui/icons-material/People";
 import FaceIcon from "@mui/icons-material/Face";
 import MapIcon from "@mui/icons-material/Map";
 import AddLocationIcon from "@mui/icons-material/AddLocation";
+import BlurOnIcon from "@mui/icons-material/BlurOn";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
-import ImageSearchIcon from "@mui/icons-material/ImageSearch";
 import BrokenImageIcon from "@mui/icons-material/BrokenImage";
 import SettingsIcon from "@mui/icons-material/Settings";
+import PersonOffIcon from "@mui/icons-material/PersonOff";
+import LabelOffIcon from "@mui/icons-material/LabelOff";
+import VideocamOffIcon from "@mui/icons-material/VideocamOff";
+import PhotoSizeSelectSmallIcon from "@mui/icons-material/PhotoSizeSelectSmall";
+import EventBusyIcon from "@mui/icons-material/EventBusy";
 import config from "../config";
 
 const DRAWER_WIDTH = 280;
@@ -64,6 +69,7 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
       items: [
         { label: "People", to: "/people", icon: <PeopleIcon /> },
         { label: "Unassigned Faces", to: "/orphanfaces", icon: <FaceIcon /> },
+        { label: "No Persons Detected", to: "/nopersons", icon: <PersonOffIcon /> },
       ],
     },
     {
@@ -78,6 +84,11 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
       items: [
         { label: "Duplicates", to: "/duplicates", icon: <ContentCopyIcon /> },
         { label: "Missing Files", to: "/missing", icon: <BrokenImageIcon /> },
+        { label: "Blurry Images", to: "/blur", icon: <BlurOnIcon /> },
+        { label: "Untagged Media", to: "/untagged", icon: <LabelOffIcon /> },
+        { label: "Short Videos", to: "/shortvideos", icon: <VideocamOffIcon /> },
+        { label: "Low Resolution", to: "/lowresolution", icon: <PhotoSizeSelectSmallIcon /> },
+        { label: "No EXIF Date", to: "/noexifdate", icon: <EventBusyIcon /> },
       ],
     },
     {
@@ -94,8 +105,14 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
     "/duplicates",
     "/configuration",
     "/missing",
+    "/blur",
+    "/nopersons",
+    "/untagged",
+    "/shortvideos",
+    "/lowresolution",
+    "/noexifdate",
   ];
-  const pathsToExcludeInPeopleDisabled: string[] = ["/people", "/orphanfaces"];
+  const pathsToExcludeInPeopleDisabled: string[] = ["/people", "/orphanfaces", "/nopersons"];
   const shouldHidePath = (path: string) =>
     (config.PRESENTATION_MODE && pathsToExcludeInReadOnly.includes(path)) ||
     (!config.ENABLE_PEOPLE && pathsToExcludeInPeopleDisabled.includes(path));

@@ -3,6 +3,7 @@ import {
   Box,
   Button,
   CircularProgress,
+  Slider,
   Tab,
   Tabs,
   Typography,
@@ -68,6 +69,8 @@ interface PersonContentTabsProps {
   onRefreshSuggestions: () => void | Promise<void>;
   onLoadSimilar: () => Promise<void> | void;
   isLoadingSuggestedFaces: boolean;
+  suggestedFacesLimit: number;
+  onSuggestedFacesLimitChange: (limit: number) => void;
   filterPeople: PersonReadSimple[];
   onFilterPeopleChange: (people: PersonReadSimple[]) => void;
   filterTags: Tag[];
@@ -101,6 +104,8 @@ export function PersonContentTabs({
   onRefreshSuggestions,
   onLoadSimilar,
   isLoadingSuggestedFaces,
+  suggestedFacesLimit,
+  onSuggestedFacesLimitChange,
   filterPeople,
   onFilterPeopleChange,
   filterTags,
@@ -307,21 +312,39 @@ export function PersonContentTabs({
             }}
           >
             <Typography variant="h6">Suggestions</Typography>
-            <Button
-              variant="outlined"
-              size="small"
-              onClick={() => {
-                void onRefreshSuggestions();
-              }}
-              disabled={isLoadingSuggestedFaces}
-              startIcon={
-                isLoadingSuggestedFaces ? (
-                  <CircularProgress size={16} color="inherit" />
-                ) : undefined
-              }
-            >
-              {isLoadingSuggestedFaces ? "Refreshing..." : "Refresh Suggestions"}
-            </Button>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+              <Box sx={{ width: 180 }}>
+                <Typography variant="caption" color="text.secondary">
+                  Limit: {suggestedFacesLimit}
+                </Typography>
+                <Slider
+                  value={suggestedFacesLimit}
+                  min={10}
+                  max={300}
+                  step={10}
+                  size="small"
+                  disabled={isLoadingSuggestedFaces}
+                  onChange={(_, value) =>
+                    onSuggestedFacesLimitChange(value as number)
+                  }
+                />
+              </Box>
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={() => {
+                  void onRefreshSuggestions();
+                }}
+                disabled={isLoadingSuggestedFaces}
+                startIcon={
+                  isLoadingSuggestedFaces ? (
+                    <CircularProgress size={16} color="inherit" />
+                  ) : undefined
+                }
+              >
+                {isLoadingSuggestedFaces ? "Refreshing..." : "Refresh Suggestions"}
+              </Button>
+            </Box>
           </Box>
           <Suspense fallback={<CircularProgress />}>
             <DetectedFaces

@@ -78,6 +78,8 @@ export default function PersonDetailPage() {
     handleConfirmMerge,
     isAutoSelectingProfile,
     isLoadingSuggestedFaces,
+    suggestedFacesLimit,
+    setSuggestedFacesLimit,
   } = usePersonDetailPage();
 
   if (loading || !person) {
@@ -129,6 +131,8 @@ export default function PersonDetailPage() {
         onAutoMergeSimilar={autoMergeSimilar}
         isMergingSimilar={isMergingSimilar}
         isLoadingSuggestedFaces={isLoadingSuggestedFaces}
+        suggestedFacesLimit={suggestedFacesLimit}
+        onSuggestedFacesLimitChange={setSuggestedFacesLimit}
         filterPeople={filterPeople}
         onFilterPeopleChange={(people) => setFilterPeople(people)}
         filterTags={filterTags}

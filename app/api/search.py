@@ -7,7 +7,7 @@ from datetime import datetime
 import numpy as np
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from PIL import Image
-from sqlalchemy import and_, desc, or_, text, tuple_
+from sqlalchemy import and_, desc, func, or_, text, tuple_
 from sqlmodel import Session, select
 
 from app.config import get_clip_bundle, settings
@@ -191,6 +191,33 @@ def _person_media_filter_sql(person_ids: list[int]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Filename exact-match helper
+# ---------------------------------------------------------------------------
+
+def _find_by_filename(query: str, session: Session) -> list[Media]:
+    """Return media whose filename or stem (filename without last extension) exactly matches query.
+
+    Matching is case-insensitive. Searching "DSC_0001" will return
+    "DSC_0001.jpg", "DSC_0001.heic", etc. Searching "photo.jpg" returns
+    only that exact filename.
+    """
+    if not query:
+        return []
+    q_lower = query.lower()
+    escaped = q_lower.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return list(
+        session.exec(
+            select(Media).where(
+                or_(
+                    func.lower(Media.filename) == q_lower,
+                    func.lower(Media.filename).like(escaped + ".%", escape="\\"),
+                )
+            )
+        ).all()
+    )
+
+
+# ---------------------------------------------------------------------------
 # Search endpoints
 # ---------------------------------------------------------------------------
 
@@ -254,6 +281,13 @@ def search_combined(
 
     if not query:
         return CombinedMediaSearchResult()
+
+    # Exact filename match takes priority over vector search
+    filename_hits = _find_by_filename(query.strip(), session)
+    if filename_hits:
+        return CombinedMediaSearchResult(
+            media=[MediaPreview.model_validate(m) for m in filename_hits],
+        )
 
     cache = _get_person_cache(session)
     person_ids, search_text = _match_persons(query, cache)

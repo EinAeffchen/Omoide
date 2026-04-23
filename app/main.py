@@ -1,3 +1,4 @@
+import io
 import json
 import logging
 import mimetypes
@@ -57,9 +58,11 @@ if sys.platform.startswith("win"):
             os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = f"{flags} {extra_flags}".strip()
 import socket
 
+import pillow_heif
 import uvicorn
 import webview
 from anyio import to_thread
+from PIL import Image, ImageOps
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -70,15 +73,21 @@ from sqlmodel import Session, select
 
 import app.database as db
 from app.api import (
+    blur,
     config,
     duplicates,
     face,
+    lowresolution,
     media,
     missing,
+    noexifdate,
+    nopersons,
     person,
     search,
+    shortvideos,
     tags,
     tasks,
+    untagged,
 )
 from app.api.processors import router as proc_router
 from app.config import settings
@@ -300,9 +309,15 @@ app.include_router(tasks, prefix="/api/tasks", tags=["tasks"])
 app.include_router(face, prefix="/api/faces", tags=["faces"])
 app.include_router(tags, prefix="/api/tags", tags=["tags"])
 app.include_router(search, prefix="/api/search", tags=["search"])
+app.include_router(blur.router, prefix="/api/blur", tags=["blur"])
 app.include_router(duplicates, prefix="/api/duplicates", tags=["duplicates"])
 app.include_router(config, prefix="/api/config", tags=["config"])
 app.include_router(missing, prefix="/api/missing", tags=["missing"])
+app.include_router(nopersons, prefix="/api/nopersons", tags=["nopersons"])
+app.include_router(untagged, prefix="/api/untagged", tags=["untagged"])
+app.include_router(shortvideos, prefix="/api/shortvideos", tags=["shortvideos"])
+app.include_router(lowresolution, prefix="/api/lowresolution", tags=["lowresolution"])
+app.include_router(noexifdate, prefix="/api/noexifdate", tags=["noexifdate"])
 
 
 @app.get("/thumbnails/{file_path:path}", include_in_schema=False)
@@ -376,6 +391,17 @@ async def serve_original_media(file_path: str):
 
     if resolved_target is None:
         raise HTTPException(status_code=404, detail="File not found")
+
+    if resolved_target.suffix.lower() in (".heic", ".heif"):
+        def _to_jpeg() -> bytes:
+            pillow_heif.register_heif_opener()
+            img = ImageOps.exif_transpose(Image.open(resolved_target))
+            buf = io.BytesIO()
+            img.convert("RGB").save(buf, format="JPEG", quality=92)
+            return buf.getvalue()
+
+        jpeg_bytes = await to_thread.run_sync(_to_jpeg)
+        return Response(content=jpeg_bytes, media_type="image/jpeg")
 
     mime_type, _ = mimetypes.guess_type(resolved_target)
     if mime_type is None:

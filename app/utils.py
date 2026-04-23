@@ -14,6 +14,7 @@ import ffmpeg
 import imagehash
 import numpy as np
 import piexif
+import pillow_heif
 from fastapi import HTTPException
 from PIL import Image, ImageOps, UnidentifiedImageError
 from scenedetect import FrameTimecode, HistogramDetector, detect
@@ -42,6 +43,8 @@ from app.models import (
     TimelineEvent,
 )
 from app.subprocess_helpers import run_silent
+
+pillow_heif.register_heif_opener()
 
 
 def _coerce_vector_array(value: Any) -> np.ndarray | None:

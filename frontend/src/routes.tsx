@@ -13,9 +13,15 @@ import MapPage from "./pages/MapPage";
 import SearchPage from "./pages/SearchResultPage";
 import OrphanFacesPage from "./pages/OrphanFaces";
 import MapEditorPage from "./pages/MapEditorPage";
+import BlurryPage from "./pages/BlurryPage";
 import DuplicatesPage from "./pages/DuplicatesPage";
 import ConfigurationPage from "./pages/ConfigurationPage";
 import MissingFilesPage from "./pages/MissingFilesPage";
+import NopersonsPage from "./pages/NopersonsPage";
+import UntaggedPage from "./pages/UntaggedPage";
+import ShortVideosPage from "./pages/ShortVideosPage";
+import LowResolutionPage from "./pages/LowResolutionPage";
+import NoExifDatePage from "./pages/NoExifDatePage";
 import { WriteModeBoundary } from "./components/ReadOnlyBoundary";
 
 export const AppRoutes = () => {
@@ -53,6 +59,14 @@ export const AppRoutes = () => {
           <Route path="/person/:id" element={<PersonDetailPage />} />
           <Route path="/tag/:id" element={<TagDetailPage />} />
           <Route
+            path="/blur"
+            element={
+              <WriteModeBoundary description="Blurry image review is disabled while the system is in read-only mode.">
+                <BlurryPage />
+              </WriteModeBoundary>
+            }
+          />
+          <Route
             path="/duplicates"
             element={
               <WriteModeBoundary description="Duplicate review actions are disabled while the system is in read-only mode.">
@@ -73,6 +87,46 @@ export const AppRoutes = () => {
             element={
               <WriteModeBoundary description="Missing file review is disabled while the system is in read-only mode.">
                 <MissingFilesPage />
+              </WriteModeBoundary>
+            }
+          />
+          <Route
+            path="/nopersons"
+            element={
+              <WriteModeBoundary description="No-persons review is disabled while the system is in read-only mode.">
+                <NopersonsPage />
+              </WriteModeBoundary>
+            }
+          />
+          <Route
+            path="/untagged"
+            element={
+              <WriteModeBoundary description="Untagged media review is disabled while the system is in read-only mode.">
+                <UntaggedPage />
+              </WriteModeBoundary>
+            }
+          />
+          <Route
+            path="/shortvideos"
+            element={
+              <WriteModeBoundary description="Short video review is disabled while the system is in read-only mode.">
+                <ShortVideosPage />
+              </WriteModeBoundary>
+            }
+          />
+          <Route
+            path="/lowresolution"
+            element={
+              <WriteModeBoundary description="Low-resolution media review is disabled while the system is in read-only mode.">
+                <LowResolutionPage />
+              </WriteModeBoundary>
+            }
+          />
+          <Route
+            path="/noexifdate"
+            element={
+              <WriteModeBoundary description="No-EXIF-date review is disabled while the system is in read-only mode.">
+                <NoExifDatePage />
               </WriteModeBoundary>
             }
           />

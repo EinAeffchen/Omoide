@@ -10,6 +10,7 @@ import {
   removeProfile as apiRemoveProfile,
   getProfileHealth,
 } from "../services/config";
+import { runProcessor } from "../services/taskActions";
 import {
   AppConfig,
   MediaDirectory,
@@ -182,6 +183,33 @@ export default function ConfigurationPage() {
   const [faceSettingsMode, setFaceSettingsMode] = useState<
     "presets" | "manual"
   >("presets");
+  const [runningProcessor, setRunningProcessor] = useState<string | null>(null);
+
+  // Local state for comma-separated text fields — avoids cursor-jump caused by
+  // the parse→join round-trip through config state on every keystroke.
+  const [customTagsText, setCustomTagsText] = useState<string | null>(null);
+  const [imageSuffixesText, setImageSuffixesText] = useState<string | null>(null);
+  const [videoSuffixesText, setVideoSuffixesText] = useState<string | null>(null);
+
+  const handleRunProcessor = async (name: string, force: boolean) => {
+    setRunningProcessor(name);
+    try {
+      await runProcessor(name, force);
+      setSnackbar({
+        open: true,
+        message: `Started processor "${name}"${force ? " (reprocessing all)" : ""}.`,
+        severity: "success",
+      });
+    } catch {
+      setSnackbar({
+        open: true,
+        message: `Failed to start processor "${name}".`,
+        severity: "error",
+      });
+    } finally {
+      setRunningProcessor(null);
+    }
+  };
 
   useEffect(() => {
     const fetchConfig = async () => {
@@ -1204,6 +1232,50 @@ export default function ConfigurationPage() {
               </Typography>
             </FormGroup>
           </Grid>
+          <Grid size={{ xs: 12, sm: 6 }}>
+            <TextField
+              label="Image Formats"
+              value={imageSuffixesText ?? config.scan.IMAGE_SUFFIXES.join(", ")}
+              onChange={(e) => setImageSuffixesText(e.target.value)}
+              onBlur={(e) => {
+                handleValueChange(
+                  "scan",
+                  "IMAGE_SUFFIXES",
+                  e.target.value
+                    .split(",")
+                    .map((s) => s.trim().toLowerCase())
+                    .filter((s) => s.length > 0)
+                    .map((s) => (s.startsWith(".") ? s : "." + s))
+                );
+                setImageSuffixesText(null);
+              }}
+              fullWidth
+              margin="normal"
+              helperText="Comma-separated image extensions (e.g. .jpg, .heic, .png)"
+            />
+          </Grid>
+          <Grid size={{ xs: 12, sm: 6 }}>
+            <TextField
+              label="Video Formats"
+              value={videoSuffixesText ?? config.scan.VIDEO_SUFFIXES.join(", ")}
+              onChange={(e) => setVideoSuffixesText(e.target.value)}
+              onBlur={(e) => {
+                handleValueChange(
+                  "scan",
+                  "VIDEO_SUFFIXES",
+                  e.target.value
+                    .split(",")
+                    .map((s) => s.trim().toLowerCase())
+                    .filter((s) => s.length > 0)
+                    .map((s) => (s.startsWith(".") ? s : "." + s))
+                );
+                setVideoSuffixesText(null);
+              }}
+              fullWidth
+              margin="normal"
+              helperText="Comma-separated video extensions (e.g. .mp4, .mov, .mkv)"
+            />
+          </Grid>
         </Grid>
       ),
     },
@@ -1271,14 +1343,12 @@ export default function ConfigurationPage() {
           <Grid size={{ xs: 12 }}>
             <TextField
               label="Custom Tags"
-              value={config.tagging.custom_tags.join(",")}
-              onChange={(e) =>
-                handleValueChange(
-                  "tagging",
-                  "custom_tags",
-                  e.target.value.split(",")
-                )
-              }
+              value={customTagsText ?? config.tagging.custom_tags.join(",")}
+              onChange={(e) => setCustomTagsText(e.target.value)}
+              onBlur={(e) => {
+                handleValueChange("tagging", "custom_tags", e.target.value.split(","));
+                setCustomTagsText(null);
+              }}
               fullWidth
               margin="normal"
               helperText="Comma-separated list of tags"
@@ -1829,82 +1899,123 @@ export default function ConfigurationPage() {
     {
       label: "Processors",
       content: (
-        <FormGroup>
-          <FormControlLabel
-            control={
-              <Switch
-                checked={config.processors.exif_processor_active}
-                onChange={(e) =>
-                  handleProcessorToggle(
-                    "exif_processor_active",
-                    e.target.checked
-                  )
-                }
-              />
-            }
-            label="EXIF Processor"
-          />
-          <Typography
-            variant="caption"
-            sx={{ ml: 6, mt: -1, display: "block" }}
-          >
-            Extracts date, camera, GPS and other metadata for search & maps.
-          </Typography>
-          <FormControlLabel
-            control={
-              <Switch
-                checked={config.processors.face_processor_active}
-                onChange={(e) => handleFaceProcessorToggle(e.target.checked)}
-                disabled={!config.general.enable_people}
-              />
-            }
-            label="Face Processor"
-          />
-          <Typography
-            variant="caption"
-            sx={{ ml: 6, mt: -1, display: "block" }}
-          >
-            Detects faces in images and prepares them for recognition.
-            {!config.general.enable_people && " Enable People to turn this on."}
-          </Typography>
-          <FormControlLabel
-            control={
-              <Switch
-                checked={config.processors.image_embedding_processor_active}
-                onChange={(e) =>
-                  handleProcessorToggle(
-                    "image_embedding_processor_active",
-                    e.target.checked
-                  )
-                }
-              />
-            }
-            label="Image Embedding Processor"
-          />
-          <Typography
-            variant="caption"
-            sx={{ ml: 6, mt: -1, display: "block" }}
-          >
-            Generates CLIP embeddings for search, similarity, and related
-            content.
-          </Typography>
-          <FormControlLabel
-            control={
-              <Switch
-                checked={config.tagging.auto_tagging}
-                onChange={(e) => handleAutoTaggingToggle(e.target.checked)}
-                disabled={!config.processors.image_embedding_processor_active}
-              />
-            }
-            label="Auto Tagger"
-          />
-          <Typography
-            variant="caption"
-            sx={{ ml: 6, mt: -1, display: "block" }}
-          >
-            Suggests tags based on CLIP embeddings. Requires image embeddings.
-          </Typography>
-        </FormGroup>
+        <Stack spacing={2}>
+          {(
+            [
+              {
+                key: "exif_processor_active" as const,
+                processorName: "exif",
+                label: "EXIF Processor",
+                description:
+                  "Extracts date, camera, GPS and other metadata for search & maps.",
+                enabled: config.processors.exif_processor_active,
+                onToggle: (v: boolean) =>
+                  handleProcessorToggle("exif_processor_active", v),
+              },
+              {
+                key: "face_processor_active" as const,
+                processorName: "faces",
+                label: "Face Processor",
+                description: `Detects faces in images and prepares them for recognition.${!config.general.enable_people ? " Enable People to turn this on." : ""}`,
+                enabled: config.processors.face_processor_active,
+                disabled: !config.general.enable_people,
+                onToggle: handleFaceProcessorToggle,
+              },
+              {
+                key: "image_embedding_processor_active" as const,
+                processorName: "embedding_extractor",
+                label: "Image Embedding Processor",
+                description:
+                  "Generates CLIP embeddings for search, similarity, and related content.",
+                enabled: config.processors.image_embedding_processor_active,
+                onToggle: (v: boolean) =>
+                  handleProcessorToggle("image_embedding_processor_active", v),
+              },
+              {
+                processorName: "auto_tagger",
+                label: "Auto Tagger",
+                description:
+                  "Suggests tags based on CLIP embeddings. Requires image embeddings.",
+                enabled: config.tagging.auto_tagging,
+                disabled: !config.processors.image_embedding_processor_active,
+                onToggle: handleAutoTaggingToggle,
+              },
+              {
+                key: "blur_processor_active" as const,
+                processorName: "blur",
+                label: "Blur Detector",
+                description:
+                  "Scores each image for sharpness (Laplacian variance) to identify blurry photos.",
+                enabled: config.processors.blur_processor_active,
+                onToggle: (v: boolean) =>
+                  handleProcessorToggle("blur_processor_active", v),
+              },
+            ] as {
+              key?: keyof AppConfig["processors"];
+              processorName: string;
+              label: string;
+              description: string;
+              enabled: boolean;
+              disabled?: boolean;
+              onToggle: (v: boolean) => void;
+            }[]
+          ).map((proc) => (
+            <Paper key={proc.processorName} variant="outlined" sx={{ p: 2 }}>
+              <Box
+                sx={{
+                  display: "flex",
+                  alignItems: "flex-start",
+                  justifyContent: "space-between",
+                  gap: 2,
+                }}
+              >
+                <Box sx={{ flex: 1 }}>
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={proc.enabled}
+                        onChange={(e) => proc.onToggle(e.target.checked)}
+                        disabled={proc.disabled}
+                      />
+                    }
+                    label={proc.label}
+                  />
+                  <Typography
+                    variant="caption"
+                    sx={{ ml: 6, mt: -0.5, display: "block", color: "text.secondary" }}
+                  >
+                    {proc.description}
+                  </Typography>
+                </Box>
+                <Box sx={{ display: "flex", gap: 1, flexShrink: 0, mt: 0.5 }}>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    disabled={runningProcessor === proc.processorName}
+                    onClick={() =>
+                      handleRunProcessor(proc.processorName, false)
+                    }
+                  >
+                    {runningProcessor === proc.processorName ? (
+                      <CircularProgress size={16} />
+                    ) : (
+                      "Run"
+                    )}
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="warning"
+                    disabled={runningProcessor === proc.processorName}
+                    onClick={() => handleRunProcessor(proc.processorName, true)}
+                  >
+                    Rerun All
+                  </Button>
+                </Box>
+              </Box>
+            </Paper>
+          ))}
+        </Stack>
       ),
     },
   ];

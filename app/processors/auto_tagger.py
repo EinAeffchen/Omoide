@@ -224,3 +224,10 @@ class AutoTagger(MediaProcessor):
         return session.exec(
             select(Media.tags).where(Media.id == media_id)
         ).all()
+
+    def get_pending_condition(self):
+        return Media.ran_auto_tagging == False  # noqa: E712
+
+    def reset_for_media(self, media: Media, session: Session) -> None:
+        media.ran_auto_tagging = False
+        session.add(media)

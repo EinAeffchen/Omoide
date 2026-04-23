@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from typing import Any
 from sqlmodel import Session
 from app.models import Media, Scene
 from cv2.typing import MatLike
@@ -40,3 +41,11 @@ class MediaProcessor(ABC):
         Override in subclasses to return meaningful data.
         """
         return {}
+
+    def get_pending_condition(self) -> Any | None:
+        """Return an SQLAlchemy filter condition for media not yet processed by this processor.
+        Return None if the processor has no completion flag (runs on all media)."""
+        return None
+
+    def reset_for_media(self, media: "Media", session: Session) -> None:
+        """Clear this processor's result for one media item so it will be re-processed."""

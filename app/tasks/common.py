@@ -23,6 +23,8 @@ def create_and_run_task(
         "cluster_persons",
         "find_duplicates",
         "clean_missing_files",
+        "compute_blur_scores",
+        "run_processor",
     ],
     callable_task: Callable[[str], None],
 ) -> ProcessingTask:

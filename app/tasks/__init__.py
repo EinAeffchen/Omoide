@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from . import state
 from .auto_tagging import run_custom_auto_tagging, schedule_custom_auto_tagging
+from .blur import compute_blur_scores
 from .common import create_and_run_task
 from .duplicates import run_duplicate_detection
 from .hashes import generate_hashes
@@ -21,6 +22,7 @@ from .maintenance import (
 from .media_processing import (
     run_media_processing,
     run_media_processing_and_chain,
+    run_single_processor,
 )
 from .person_clustering import (
     merge_similar_persons,
@@ -33,6 +35,7 @@ from .scan import run_scan
 
 __all__ = [
     "clean_missing_files",
+    "compute_blur_scores",
     "create_and_run_task",
     "generate_hashes",
     "merge_similar_persons",
@@ -45,6 +48,7 @@ __all__ = [
     "run_duplicate_detection",
     "run_media_processing",
     "run_media_processing_and_chain",
+    "run_single_processor",
     "run_person_clustering",
     "rebuild_person_relationships",
     "run_scan",

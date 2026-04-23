@@ -14,11 +14,13 @@ from app.logger import logger
 from app.models import Media, ProcessingTask, ProcessingTaskRead
 from app.tasks import (
     clean_missing_files,
+    compute_blur_scores,
     create_and_run_task,
     run_duplicate_detection,
     run_media_processing,
     run_person_clustering,
     run_scan,
+    run_single_processor,
 )
 from app.tasks import (
     reset_clustering as reset_clustering_task,
@@ -154,6 +156,49 @@ async def start_missing_files_cleanup(
         background_tasks=background_tasks,
         task_type="clean_missing_files",
         callable_task=clean_missing_files,
+    )
+
+
+@router.post(
+    "/compute_blur_scores",
+    summary="Compute Laplacian blur scores for all unscored media",
+    response_model=ProcessingTask,
+)
+async def start_blur_scoring(
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+):
+    return create_and_run_task(
+        session=session,
+        background_tasks=background_tasks,
+        task_type="compute_blur_scores",
+        callable_task=compute_blur_scores,
+    )
+
+
+@router.post(
+    "/run_processor/{processor_name}",
+    response_model=ProcessingTask,
+    summary="Run a single processor over all media",
+)
+async def start_single_processor(
+    processor_name: str,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+    force: bool = False,
+):
+    """Run one processor by name.
+
+    force=false (default) – only processes media not yet handled by this processor.
+    force=true – resets existing results and reprocesses all media.
+    """
+    return create_and_run_task(
+        session=session,
+        background_tasks=background_tasks,
+        task_type="run_processor",
+        callable_task=lambda task_id: run_single_processor(
+            task_id, processor_name, force=force
+        ),
     )
 
 

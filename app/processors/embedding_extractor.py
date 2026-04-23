@@ -153,3 +153,10 @@ class EmbeddingExtractor(MediaProcessor):
         return session.exec(
             select(Tag).join(Tag.media).where(Media.id == media_id)
         ).first()
+
+    def get_pending_condition(self):
+        return Media.embeddings_created == False  # noqa: E712
+
+    def reset_for_media(self, media: Media, session) -> None:
+        media.embeddings_created = False
+        session.add(media)

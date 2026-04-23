@@ -3,6 +3,7 @@ import os
 import time
 from pathlib import Path
 
+import cv2
 import numpy as np
 from cv2.typing import MatLike
 from PIL import Image, ImageOps
@@ -57,6 +58,11 @@ class FaceProcessor(MediaProcessor):
             h, w = crop.shape[:2]
             if h * w < settings.face_recognition.face_recognition_min_face_pixels:
                 continue
+
+            if settings.face_recognition.face_sharpness_filter_enabled:
+                gray = cv2.cvtColor(crop, cv2.COLOR_RGB2GRAY)
+                if cv2.Laplacian(gray, cv2.CV_64F).var() < settings.face_recognition.face_sharpness_min_variance:
+                    continue
 
             ts = int(time.time() * 1000)
             name = f"{Path(media.path).stem}_ins_{i}_{ts}.jpg"
@@ -186,7 +192,7 @@ class FaceProcessor(MediaProcessor):
         )
         # Use CPU explicitly when GPU providers are unavailable.
         ctx_id = 0 if uses_gpu else -1
-        self.model.prepare(ctx_id=ctx_id, det_size=(640, 640))
+        self.model.prepare(ctx_id=ctx_id, det_size=(320, 320))
 
     def unload(self):
         try:
@@ -200,3 +206,10 @@ class FaceProcessor(MediaProcessor):
         return session.exec(
             select(ExifData).where(ExifData.media_id == media_id)
         ).first()
+
+    def get_pending_condition(self):
+        return Media.faces_extracted == False  # noqa: E712
+
+    def reset_for_media(self, media: Media, session) -> None:
+        media.faces_extracted = False
+        session.add(media)

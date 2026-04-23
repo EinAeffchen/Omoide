@@ -140,7 +140,9 @@ export type TaskType =
   | "clean_missing_files"
   | "cluster_persons"
   | "scan"
-  | "find_duplicates";
+  | "find_duplicates"
+  | "compute_blur_scores"
+  | "run_processor";
 export type TaskStatus = "pending" | "running" | "completed" | "cancelled";
 
 export interface Task {
@@ -303,6 +305,117 @@ export interface DuplicatePage {
   next_cursor: string | null;
 }
 
+export interface BlurMediaItem {
+  id: number;
+  filename: string;
+  path: string;
+  size: number;
+  thumbnail_path: string | null;
+  laplacian_score: number;
+  width: number | null;
+  height: number | null;
+  duration: number | null;
+  inserted_at: string;
+}
+
+export interface BlurPage {
+  items: BlurMediaItem[];
+  next_cursor: string | null;
+  total: number;
+}
+
+export interface NoPersonsMediaItem {
+  id: number;
+  filename: string;
+  path: string;
+  size: number;
+  thumbnail_path: string | null;
+  width: number | null;
+  height: number | null;
+  duration: number | null;
+  inserted_at: string;
+  faces_extracted: boolean;
+}
+
+export interface NoPersonsPage {
+  items: NoPersonsMediaItem[];
+  next_cursor: string | null;
+  total: number;
+}
+
+export interface UntaggedMediaItem {
+  id: number;
+  filename: string;
+  path: string;
+  size: number;
+  thumbnail_path: string | null;
+  width: number | null;
+  height: number | null;
+  duration: number | null;
+  inserted_at: string;
+}
+
+export interface UntaggedPage {
+  items: UntaggedMediaItem[];
+  next_cursor: string | null;
+  total: number;
+}
+
+export interface ShortVideoItem {
+  id: number;
+  filename: string;
+  path: string;
+  size: number;
+  thumbnail_path: string | null;
+  width: number | null;
+  height: number | null;
+  duration: number;
+  inserted_at: string;
+}
+
+export interface ShortVideoPage {
+  items: ShortVideoItem[];
+  next_cursor: string | null;
+  total: number;
+}
+
+export interface LowResMediaItem {
+  id: number;
+  filename: string;
+  path: string;
+  size: number;
+  thumbnail_path: string | null;
+  width: number;
+  height: number;
+  pixel_count: number;
+  duration: number | null;
+  inserted_at: string;
+}
+
+export interface LowResPage {
+  items: LowResMediaItem[];
+  next_cursor: string | null;
+  total: number;
+}
+
+export interface NoExifDateItem {
+  id: number;
+  filename: string;
+  path: string;
+  size: number;
+  thumbnail_path: string | null;
+  width: number | null;
+  height: number | null;
+  duration: number | null;
+  inserted_at: string;
+}
+
+export interface NoExifDatePage {
+  items: NoExifDateItem[];
+  next_cursor: string | null;
+  total: number;
+}
+
 // Timeline
 export interface TimelineEvent {
   id: number;
@@ -440,6 +553,7 @@ export interface AppConfig {
     exif_processor_active: boolean;
     face_processor_active: boolean;
     image_embedding_processor_active: boolean;
+    blur_processor_active: boolean;
     media_batch_size: number;
   };
 }

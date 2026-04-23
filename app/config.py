@@ -474,6 +474,8 @@ class ScanSettings(BaseModel):
         ".png",
         ".tiff",
         ".bmp",
+        ".heic",
+        ".heif",
     ]
 
 
@@ -594,6 +596,9 @@ class FaceRecognitionSettings(BaseModel):
     # minimum size of a face in pixels to be detected. Base size for detection
     # is the original image, not a thumbnail!
     face_recognition_min_face_pixels: int = 1600
+    # skip blurry/occluded face crops before embedding (Laplacian variance check)
+    face_sharpness_filter_enabled: bool = True
+    face_sharpness_min_variance: float = 80.0
     # number of faces needed to automatically create a person
     person_min_face_count: int = 2
     # require a person to span at least this many distinct media assets
@@ -685,6 +690,8 @@ class ContentProcessorSettings(BaseModel):
     # image embedding creator active. Needed for all AI related features
     # if you want to deactivate all smart features, set this to False
     image_embedding_processor_active: bool = True
+    # compute Laplacian variance for blur detection during media processing
+    blur_processor_active: bool = True
     # number of media rows processed per batch when running the heavy pipeline
     media_batch_size: int = 125
 

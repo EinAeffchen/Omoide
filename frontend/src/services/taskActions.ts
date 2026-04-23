@@ -12,6 +12,16 @@ export const startTask = async (type: TaskType): Promise<void> => {
   if (!res.ok) throw new Error(`Failed to start task ${type}`);
 };
 
+export const runProcessor = async (
+  processorName: string,
+  force = false
+): Promise<Task> => {
+  const url = `${API}/api/tasks/run_processor/${processorName}?force=${force}`;
+  const res = await fetch(url, { method: "POST" });
+  if (!res.ok) throw new Error(`Failed to start processor ${processorName}`);
+  return res.json();
+};
+
 export const cancelTask = async (id: string): Promise<void> => {
   const res = await fetch(`${API}/api/tasks/${id}/cancel`, { method: "POST" });
   if (!res.ok) throw new Error(`Failed to cancel task ${id}`);

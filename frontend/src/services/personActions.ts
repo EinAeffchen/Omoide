@@ -92,11 +92,13 @@ export const searchPersonsByName = async (name: string): Promise<Person[]> => {
 
 export const getSuggestedFaces = async (
   personId: number,
+  limit: number = 100,
   signal?: AbortSignal
 ): Promise<any[]> => {
-  const res = await fetch(`${API}/api/person/${personId}/suggest-faces`, {
-    signal,
-  });
+  const res = await fetch(
+    `${API}/api/person/${personId}/suggest-faces?limit=${limit}`,
+    { signal }
+  );
   if (!res.ok) throw new Error("Failed to fetch suggested faces");
   return res.json();
 };

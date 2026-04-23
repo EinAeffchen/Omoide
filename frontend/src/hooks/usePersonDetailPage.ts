@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { getPerson, getPersonMediaAppearances } from "../services/person";
 import {
@@ -60,6 +60,9 @@ export const usePersonDetailPage = () => {
   const [suggestedFaces, setSuggestedFaces] = useState<FaceRead[]>([]);
   const [isLoadingSuggestedFaces, setIsLoadingSuggestedFaces] =
     useState(false);
+  const [suggestedFacesLimit, setSuggestedFacesLimit] = useState(100);
+  const suggestedFacesLimitRef = useRef(suggestedFacesLimit);
+  suggestedFacesLimitRef.current = suggestedFacesLimit;
   const [relationshipGraph, setRelationshipGraph] =
     useState<PersonRelationshipGraph | null>(null);
   const [relationshipDepth, setRelationshipDepth] = useState(3);
@@ -163,7 +166,7 @@ export const usePersonDetailPage = () => {
       if (!id) return;
       setIsLoadingSuggestedFaces(true);
       try {
-        const data = await getSuggestedFaces(Number(id), signal);
+        const data = await getSuggestedFaces(Number(id), suggestedFacesLimitRef.current, signal);
         if (signal?.aborted) {
           return;
         }
@@ -707,5 +710,7 @@ export const usePersonDetailPage = () => {
     handleConfirmMerge,
     isAutoSelectingProfile,
     isLoadingSuggestedFaces,
+    suggestedFacesLimit,
+    setSuggestedFacesLimit,
   };
 };

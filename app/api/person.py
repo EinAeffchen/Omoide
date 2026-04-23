@@ -323,7 +323,9 @@ def list_persons(
 
 @router.get("/{person_id}/suggest-faces", response_model=list[FaceRead])
 def suggest_faces(
-    person_id: int, limit: int = 20, session: Session = Depends(get_session)
+    person_id: int,
+    limit: int = Query(default=100, ge=10, le=300),
+    session: Session = Depends(get_session),
 ):
     # 1) must exist
     if not session.get(Person, person_id):

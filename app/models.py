@@ -115,6 +115,7 @@ class Media(SQLModel, table=True):
 
     is_favorite: bool = Field(default=False)
     phash: str | None = Field(index=True)
+    laplacian_score: float | None = Field(default=None, nullable=True, index=True)
     faces: list["Face"] = Relationship(back_populates="media")
     scenes: list["Scene"] = Relationship(back_populates="media")
     tags: list[Tag] = Relationship(back_populates="media", link_model=MediaTagLink)
