@@ -54,6 +54,11 @@ name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
+[project.optional-dependencies]
+build = [
+    "pyinstaller>=6.19.0",
+]
+
 [dependency-groups]
 dev = [
     "pyinstaller>=6.19.0",
