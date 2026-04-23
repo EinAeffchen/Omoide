@@ -50,30 +50,23 @@ docker-down:
 backup:
 	sqlite3 ".backup ${HOST_DATA_DIR}/omoide.db '${HOST_MEDIA_DIR}/db.backup'"
 
-build-image: build-image-arm64 build-image-gpu
-	docker build --build-arg APP_VERSION=${VERSION} --build-arg OMOIDE_BUILD_FLAVOR=cpu -t omoide .
-	docker tag omoide einaeffchen/omoide:latest
-	docker tag omoide einaeffchen/omoide:${VERSION}
-
-build-image-arm64:
-	docker buildx build --platform=linux/arm64 --build-arg APP_VERSION=${VERSION} --build-arg OMOIDE_BUILD_FLAVOR=cpu -t omoide:${VERSION}.arm64 --load .
-	docker tag omoide:${VERSION}.arm64 einaeffchen/omoide:${VERSION}.arm64
-
-build-image-gpu:
-	docker build --build-arg APP_VERSION=${VERSION} --build-arg OMOIDE_BUILD_FLAVOR=gpu -t omoide:gpu .
-	docker tag omoide:gpu einaeffchen/omoide:gpu
-	docker tag omoide:gpu einaeffchen/omoide:${VERSION}-gpu
+build-image:
+	docker buildx build \
+		--platform linux/amd64,linux/arm64/v8 \
+		--build-arg APP_VERSION=${VERSION} \
+		-t einaeffchen/omoide:latest \
+		-t einaeffchen/omoide:${VERSION} \
+		--push \
+		.
 
 build-release: build-image
 	git tag v${VERSION} -m "Release v${VERSION}"
 
 push: build-release
 	git push origin v${VERSION}
-	docker push einaeffchen/omoide:latest
-	docker push einaeffchen/omoide:${VERSION}	
-	docker push einaeffchen/omoide:${VERSION}.arm64	
-	docker push einaeffchen/omoide:gpu
-	docker push einaeffchen/omoide:${VERSION}-gpu
+
+push: build-release
+	git push origin v${VERSION}
 
 alembic-generate:
 	echo ${DATA_DIR}
