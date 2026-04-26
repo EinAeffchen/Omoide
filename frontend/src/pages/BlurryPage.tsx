@@ -24,6 +24,7 @@ import BlockIcon from "@mui/icons-material/Block";
 import DeleteForeverIcon from "@mui/icons-material/DeleteForever";
 import SelectAllIcon from "@mui/icons-material/SelectAll";
 import ClearAllIcon from "@mui/icons-material/ClearAll";
+import ReplayIcon from "@mui/icons-material/Replay";
 import { useInView } from "react-intersection-observer";
 
 import { BlurMediaItem } from "../types";
@@ -35,6 +36,7 @@ import {
   startBlurScoring,
 } from "../services/blur";
 import { useTaskCompletionVersion, useTaskEvents } from "../TaskEventsContext";
+import { RerunProcessorsDialog } from "../components/RerunProcessorsDialog";
 
 const formatBytes = (bytes: number) => {
   if (!bytes) return "0 B";
@@ -67,6 +69,7 @@ const BlurryPage: React.FC = () => {
   const [mediaType, setMediaType] = useState<"" | "image" | "video">("");
 
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [rerunDialogOpen, setRerunDialogOpen] = useState(false);
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: "success" | "error" }>({
     open: false, message: "", severity: "success",
   });
@@ -261,6 +264,15 @@ const BlurryPage: React.FC = () => {
             >
               Clear
             </Button>
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<ReplayIcon />}
+              onClick={() => setRerunDialogOpen(true)}
+              disabled={selectedCount === 0}
+            >
+              Rerun Processors
+            </Button>
             <Divider flexItem orientation="vertical" sx={{ display: { xs: "none", sm: "block" } }} />
             <Tooltip title="Delete files from disk">
               <span>
@@ -410,6 +422,13 @@ const BlurryPage: React.FC = () => {
           </Box>
         )}
       </Paper>
+
+      <RerunProcessorsDialog
+        open={rerunDialogOpen}
+        mediaIds={Array.from(selectedIds)}
+        onClose={() => setRerunDialogOpen(false)}
+        onStarted={() => setSnackbar({ open: true, message: "Processing started.", severity: "success" })}
+      />
 
       <Snackbar
         open={snackbar.open}

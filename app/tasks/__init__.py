@@ -22,6 +22,7 @@ from .maintenance import (
 from .media_processing import (
     run_media_processing,
     run_media_processing_and_chain,
+    run_processors_for_media,
     run_single_processor,
 )
 from .person_clustering import (
@@ -48,6 +49,7 @@ __all__ = [
     "run_duplicate_detection",
     "run_media_processing",
     "run_media_processing_and_chain",
+    "run_processors_for_media",
     "run_single_processor",
     "run_person_clustering",
     "rebuild_person_relationships",

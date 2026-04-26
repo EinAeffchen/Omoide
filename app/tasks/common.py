@@ -25,6 +25,7 @@ def create_and_run_task(
         "clean_missing_files",
         "compute_blur_scores",
         "run_processor",
+        "run_processor_for_media",
     ],
     callable_task: Callable[[str], None],
 ) -> ProcessingTask:

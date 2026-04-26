@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, select
 
@@ -19,6 +20,7 @@ from app.tasks import (
     run_duplicate_detection,
     run_media_processing,
     run_person_clustering,
+    run_processors_for_media,
     run_scan,
     run_single_processor,
 )
@@ -198,6 +200,35 @@ async def start_single_processor(
         task_type="run_processor",
         callable_task=lambda task_id: run_single_processor(
             task_id, processor_name, force=force
+        ),
+    )
+
+
+class RunProcessorsForMediaRequest(BaseModel):
+    media_ids: list[int]
+    processor_names: list[str]
+
+
+@router.post(
+    "/run_processors_for_media",
+    response_model=ProcessingTask,
+    summary="Run selected processors on a specific set of media items",
+)
+async def start_processors_for_media(
+    body: RunProcessorsForMediaRequest,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+):
+    """Run one or more processors over a specific list of media IDs.
+
+    Always resets and reprocesses the given items regardless of their current state.
+    """
+    return create_and_run_task(
+        session=session,
+        background_tasks=background_tasks,
+        task_type="run_processor_for_media",
+        callable_task=lambda task_id: run_processors_for_media(
+            task_id, body.processor_names, body.media_ids
         ),
     )
 

@@ -12,6 +12,7 @@ import {
   Typography,
 } from "@mui/material";
 import { NavLink as RouterNavLink, useLocation, Link } from "react-router-dom";
+import { useSelection } from "../context/SelectionContext";
 import PhotoLibraryIcon from "@mui/icons-material/PhotoLibrary";
 import MovieIcon from "@mui/icons-material/Movie";
 import LabelIcon from "@mui/icons-material/Label";
@@ -28,6 +29,8 @@ import LabelOffIcon from "@mui/icons-material/LabelOff";
 import VideocamOffIcon from "@mui/icons-material/VideocamOff";
 import PhotoSizeSelectSmallIcon from "@mui/icons-material/PhotoSizeSelectSmall";
 import EventBusyIcon from "@mui/icons-material/EventBusy";
+import CheckBoxOutlineBlankIcon from "@mui/icons-material/CheckBoxOutlineBlank";
+import CheckBoxIcon from "@mui/icons-material/CheckBox";
 import config from "../config";
 
 const DRAWER_WIDTH = 280;
@@ -51,6 +54,8 @@ interface SidebarProps {
 export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
   const theme = useTheme();
   const location = useLocation();
+  const { isSelecting, selectedIds, toggleSelecting } = useSelection();
+  const selectedCount = selectedIds.size;
   const base = import.meta.env.BASE_URL || "/";
   const wordmarkSrc = `${base}brand/omoide_header_${theme.palette.mode}.png`;
   const isTemporary = variant === "temporary";
@@ -69,7 +74,11 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
       items: [
         { label: "People", to: "/people", icon: <PeopleIcon /> },
         { label: "Unassigned Faces", to: "/orphanfaces", icon: <FaceIcon /> },
-        { label: "No Persons Detected", to: "/nopersons", icon: <PersonOffIcon /> },
+        {
+          label: "No Persons Detected",
+          to: "/nopersons",
+          icon: <PersonOffIcon />,
+        },
       ],
     },
     {
@@ -86,15 +95,27 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
         { label: "Missing Files", to: "/missing", icon: <BrokenImageIcon /> },
         { label: "Blurry Images", to: "/blur", icon: <BlurOnIcon /> },
         { label: "Untagged Media", to: "/untagged", icon: <LabelOffIcon /> },
-        { label: "Short Videos", to: "/shortvideos", icon: <VideocamOffIcon /> },
-        { label: "Low Resolution", to: "/lowresolution", icon: <PhotoSizeSelectSmallIcon /> },
+        {
+          label: "Short Videos",
+          to: "/shortvideos",
+          icon: <VideocamOffIcon />,
+        },
+        {
+          label: "Low Resolution",
+          to: "/lowresolution",
+          icon: <PhotoSizeSelectSmallIcon />,
+        },
         { label: "No EXIF Date", to: "/noexifdate", icon: <EventBusyIcon /> },
       ],
     },
     {
       label: "System",
       items: [
-        { label: "Configuration", to: "/configuration", icon: <SettingsIcon /> },
+        {
+          label: "Configuration",
+          to: "/configuration",
+          icon: <SettingsIcon />,
+        },
       ],
     },
   ];
@@ -112,7 +133,11 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
     "/lowresolution",
     "/noexifdate",
   ];
-  const pathsToExcludeInPeopleDisabled: string[] = ["/people", "/orphanfaces", "/nopersons"];
+  const pathsToExcludeInPeopleDisabled: string[] = [
+    "/people",
+    "/orphanfaces",
+    "/nopersons",
+  ];
   const shouldHidePath = (path: string) =>
     (config.PRESENTATION_MODE && pathsToExcludeInReadOnly.includes(path)) ||
     (!config.ENABLE_PEOPLE && pathsToExcludeInPeopleDisabled.includes(path));
@@ -138,7 +163,14 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
         overflowY: "auto",
       }}
     >
-      <Box sx={{ p: 2, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <Box
+        sx={{
+          p: 2,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
         <Link to="/">
           <Box
             component="img"
@@ -151,6 +183,41 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
       <Divider sx={{ mb: 2 }} />
 
       <List component="nav" sx={{ px: 2 }}>
+        <Box sx={{ px: 2, py: 1.5 }}>
+          <ListItemButton
+            onClick={toggleSelecting}
+            selected={isSelecting}
+            sx={{
+              borderRadius: 2,
+              py: 1,
+              "&.Mui-selected": {
+                bgcolor: "action.selected",
+                color: "primary.main",
+                "& .MuiListItemIcon-root": { color: "primary.main" },
+              },
+            }}
+          >
+            <ListItemIcon
+              sx={{
+                minWidth: 40,
+                color: isSelecting ? "primary.main" : "text.secondary",
+              }}
+            >
+              {isSelecting ? <CheckBoxIcon /> : <CheckBoxOutlineBlankIcon />}
+            </ListItemIcon>
+            <ListItemText
+              primary={
+                isSelecting && selectedCount > 0
+                  ? `${selectedCount} selected`
+                  : "Select Mode"
+              }
+              primaryTypographyProps={{
+                fontWeight: isSelecting ? 600 : 500,
+                fontSize: "0.9rem",
+              }}
+            />
+          </ListItemButton>
+        </Box>
         {navSections.map((section) => (
           <React.Fragment key={section.label}>
             <ListSubheader
@@ -211,13 +278,15 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
           </React.Fragment>
         ))}
       </List>
-      
+
       <Box sx={{ flexGrow: 1 }} />
-      
-      <Box sx={{ p: 2, textAlign: 'center' }}>
-         <Typography variant="caption" color="text.secondary">
-            v{config.APP_VERSION}
-         </Typography>
+
+      <Divider />
+
+      <Box sx={{ px: 2, pb: 1.5, textAlign: "center" }}>
+        <Typography variant="caption" color="text.secondary">
+          v{config.APP_VERSION}
+        </Typography>
       </Box>
     </Box>
   );

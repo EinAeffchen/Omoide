@@ -134,16 +134,47 @@ class FaceProcessor(MediaProcessor):
                 logger.warning("Skipping invalid scene array for media: %s", media.path)
                 continue
 
+            h_orig, w_orig = scene.shape[:2]
+            is_large = max(h_orig, w_orig) > 2000
+
+            # Pre-scale for memory/compute efficiency. Note: this does NOT improve
+            # detection sensitivity — the minimum detectable face size in the original
+            # equals 16px × (original_size / det_size) regardless of pre-scaling.
+            # We still do it to avoid feeding 4032×3024 images into ONNX directly.
+            MAX_DET_DIM = 1280
+            if max(h_orig, w_orig) > MAX_DET_DIM:
+                s = MAX_DET_DIM / max(h_orig, w_orig)
+                scene_det = cv2.resize(
+                    scene,
+                    (int(w_orig * s), int(h_orig * s)),
+                    interpolation=cv2.INTER_AREA,
+                )
+            else:
+                scene_det = scene
+
             try:
-                faces = self.model.get(scene)
+                faces = self.model.get(scene_det)
             except Exception as e:
-                # Guard against occasional internal errors for problematic frames
                 logger.exception(
                     "InsightFace failed on media %s scene: %s", media.path, e
                 )
                 continue
 
-            face_entries = self._parse_faces(faces, scene, media)
+            # Two-pass fallback for large images: if det_size=320 found nothing, retry
+            # at det_size=640 (min detectable face halves from ~200px to ~100px in the
+            # original). model.prepare() only updates parameters, not ONNX weights.
+            if not faces and is_large:
+                try:
+                    self.model.prepare(ctx_id=self._ctx_id, det_size=(640, 640))
+                    faces = self.model.get(scene_det)
+                except Exception as e:
+                    logger.exception(
+                        "InsightFace hi-res retry failed on media %s: %s", media.path, e
+                    )
+                finally:
+                    self.model.prepare(ctx_id=self._ctx_id, det_size=(320, 320))
+
+            face_entries = self._parse_faces(faces, scene_det, media)
 
             if not face_entries:
                 continue
@@ -183,6 +214,7 @@ class FaceProcessor(MediaProcessor):
 
         prefer_gpu = getattr(settings.processors, "prefer_gpu", True)
         providers, uses_gpu = resolve_onnx_providers(prefer_gpu)
+        self._ctx_id = 0 if uses_gpu else -1
         self.model = FaceAnalysis(
             "buffalo_l",
             root=str(settings.general.models_dir),
@@ -190,9 +222,7 @@ class FaceProcessor(MediaProcessor):
             allowed_modules=["detection", "landmark_2d_106", "recognition"],
             providers=providers,
         )
-        # Use CPU explicitly when GPU providers are unavailable.
-        ctx_id = 0 if uses_gpu else -1
-        self.model.prepare(ctx_id=ctx_id, det_size=(320, 320))
+        self.model.prepare(ctx_id=self._ctx_id, det_size=(320, 320))
 
     def unload(self):
         try:

@@ -6,6 +6,7 @@ import {
   CardActionArea,
   CardMedia,
   Box,
+  Checkbox,
   Typography,
   useTheme,
 } from "@mui/material";
@@ -13,6 +14,7 @@ import { MediaPreview } from "../types";
 import appConfig, { API } from "../config";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import PlayCircleOutlineIcon from "@mui/icons-material/PlayCircleOutline";
+import { useSelection } from "../context/SelectionContext";
 
 function formatDuration(d?: number): string {
   if (d == null) return "";
@@ -77,6 +79,7 @@ export default function MediaCard({
   navigationContext,
 }: MediaCardProps) {
   const theme = useTheme();
+  const { isSelecting, selectedIds, toggle } = useSelection();
   // This state now explicitly controls when the video player is active.
   const [isPlayerActive, setIsPlayerActive] = useState(false);
   const [playerUrl, setPlayerUrl] = useState<string | null>(null);
@@ -99,6 +102,7 @@ export default function MediaCard({
     : `${API}/static/brand/404.png`;
   const filename = media ? media.filename : "404 Not found";
   const mediaId = media ? media.id : null;
+  const isSelected = mediaId != null && selectedIds.has(mediaId);
   let thumbUrl;
   if (media) {
     if (useOriginalGif) {
@@ -176,18 +180,22 @@ export default function MediaCard({
     <Card
       elevation={0}
       sx={{
-        borderRadius: 3, // More rounded
+        borderRadius: 3,
         overflow: "hidden",
         position: "relative",
         transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
         backgroundColor: "background.paper",
+        outline: isSelected ? "3px solid" : "none",
+        outlineColor: isSelected ? "primary.main" : "transparent",
         "&:hover": {
-          transform: "translateY(-4px)", // Lift effect
-          boxShadow: "0 12px 24px -8px rgba(0, 0, 0, 0.15)", // Soft shadow
+          transform: isSelecting ? "none" : "translateY(-4px)",
+          boxShadow: isSelecting
+            ? "none"
+            : "0 12px 24px -8px rgba(0, 0, 0, 0.15)",
           zIndex: 10,
           "& .media-overlay": {
             opacity: 1,
-          }
+          },
         },
       }}
     >
@@ -196,6 +204,14 @@ export default function MediaCard({
         state={linkState}
         replace={!!location.state?.backgroundLocation}
         style={{ textDecoration: "none", color: "inherit" }}
+        onClick={
+          isSelecting && mediaId != null
+            ? (e) => {
+                e.preventDefault();
+                toggle(mediaId);
+              }
+            : undefined
+        }
       >
           <CardActionArea
             draggable={isDraggable}
@@ -359,6 +375,30 @@ export default function MediaCard({
           </Box>
         </CardActionArea>
       </Link>
+
+      {isSelecting && (
+        <Box
+          sx={{
+            position: "absolute",
+            top: 4,
+            left: 4,
+            zIndex: 20,
+            pointerEvents: "none",
+          }}
+        >
+          <Checkbox
+            checked={isSelected}
+            size="small"
+            sx={{
+              p: 0.5,
+              color: "white",
+              bgcolor: "rgba(0,0,0,0.45)",
+              borderRadius: 1,
+              "&.Mui-checked": { color: "primary.main" },
+            }}
+          />
+        </Box>
+      )}
     </Card>
   );
 }

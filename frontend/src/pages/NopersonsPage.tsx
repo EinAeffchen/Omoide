@@ -23,8 +23,10 @@ import BlockIcon from "@mui/icons-material/Block";
 import DeleteForeverIcon from "@mui/icons-material/DeleteForever";
 import SelectAllIcon from "@mui/icons-material/SelectAll";
 import ClearAllIcon from "@mui/icons-material/ClearAll";
+import ReplayIcon from "@mui/icons-material/Replay";
 import { useInView } from "react-intersection-observer";
 import { Link } from "react-router-dom";
+import { RerunProcessorsDialog } from "../components/RerunProcessorsDialog";
 
 import { NoPersonsMediaItem } from "../types";
 import { API } from "../config";
@@ -56,6 +58,7 @@ const NopersonsPage: React.FC = () => {
   const [scope, setScope] = useState<"processed" | "all">("processed");
 
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [rerunDialogOpen, setRerunDialogOpen] = useState(false);
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: "success" | "error" }>({
     open: false, message: "", severity: "success",
   });
@@ -200,6 +203,15 @@ const NopersonsPage: React.FC = () => {
             <Button size="small" startIcon={<ClearAllIcon />} onClick={clearSelection} disabled={selectedCount === 0}>
               Clear
             </Button>
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<ReplayIcon />}
+              onClick={() => setRerunDialogOpen(true)}
+              disabled={selectedCount === 0}
+            >
+              Rerun Processors
+            </Button>
             <Divider flexItem orientation="vertical" sx={{ display: { xs: "none", sm: "block" } }} />
             <Tooltip title="Delete files from disk">
               <span>
@@ -340,6 +352,13 @@ const NopersonsPage: React.FC = () => {
           </Box>
         )}
       </Paper>
+
+      <RerunProcessorsDialog
+        open={rerunDialogOpen}
+        mediaIds={Array.from(selectedIds)}
+        onClose={() => setRerunDialogOpen(false)}
+        onStarted={() => setSnackbar({ open: true, message: "Processing started.", severity: "success" })}
+      />
 
       <Snackbar
         open={snackbar.open}

@@ -25,7 +25,25 @@ __all__ = [
     "run_media_processing",
     "run_media_processing_and_chain",
     "run_single_processor",
+    "run_processors_for_media",
 ]
+
+
+def _is_task_cancelled(task_id: str) -> bool:
+    """Check cancellation using a fresh session.
+
+    The long-lived processing session holds an open transaction whose snapshot
+    predates any cancel committed by the API endpoint.  A throw-away session
+    always starts a new transaction and therefore reads the latest committed
+    status, making cancel responsive within a single item rather than a full
+    batch.
+    """
+    try:
+        with Session(db.engine) as s:
+            task = s.get(ProcessingTask, task_id)
+            return task is not None and task.status == Status.CANCELLED
+    except Exception:
+        return False
 
 
 def _media_processing_conditions() -> list:
@@ -378,15 +396,9 @@ def run_single_processor(
 
         set_task_progress(task_id, current_step="preparing", current_item=None)
 
-        def is_cancelled() -> bool:
-            try:
-                session.refresh(task, attribute_names=["status"])
-                return task.status == Status.CANCELLED
-            except Exception:
-                return False
-
         with heavy_writer(
-            name=f"run_processor_{processor_name}", cancelled=is_cancelled
+            name=f"run_processor_{processor_name}",
+            cancelled=lambda: _is_task_cancelled(task_id),
         ) as acquired:
             if not acquired:
                 session.refresh(task)
@@ -411,8 +423,7 @@ def run_single_processor(
 
             offset = 0
             while True:
-                session.refresh(task, attribute_names=["status"])
-                if task.status == Status.CANCELLED:
+                if _is_task_cancelled(task_id):
                     logger.info("Task cancelled. Stopping before next batch.")
                     break
 
@@ -440,8 +451,7 @@ def run_single_processor(
                 cancelled_mid_batch = False
 
                 for media in batch:
-                    session.refresh(task, attribute_names=["status"])
-                    if task.status == "cancelled":
+                    if _is_task_cancelled(task_id):
                         cancelled_mid_batch = True
                         break
 
@@ -488,13 +498,136 @@ def run_single_processor(
             except Exception:
                 pass
 
-            session.refresh(task)
             remaining = _count()
             task.total = task.processed + remaining
             task.status = (
-                Status.COMPLETED
-                if task.status != Status.CANCELLED
-                else Status.CANCELLED
+                Status.CANCELLED
+                if _is_task_cancelled(task_id)
+                else Status.COMPLETED
+            )
+            task.finished_at = datetime.now(timezone.utc)
+            session.add(task)
+            safe_commit(session)
+            clear_task_progress(task_id)
+
+
+def run_processors_for_media(
+    task_id: str, processor_names: list[str], media_ids: list[int]
+) -> None:
+    """Run a specific set of processors over a specific set of media IDs.
+
+    Each processor is run in sequence; each media item is reset before reprocessing.
+    """
+    if not processors:
+        load_processors()
+
+    targets = [p for p in processors if p.name in processor_names]
+    if not targets:
+        logger.error("None of the requested processors were found: %s", processor_names)
+        return
+
+    with Session(db.engine) as session:
+        task = session.get(ProcessingTask, task_id)
+        if not task:
+            logger.error("Task %s not found.", task_id)
+            return
+
+        task.status = Status.RUNNING
+        task.started_at = datetime.now(timezone.utc)
+        task.total = len(media_ids) * len(targets)
+        session.add(task)
+        safe_commit(session)
+
+        set_task_progress(task_id, current_step="preparing", current_item=None)
+
+        with heavy_writer(
+            name="run_processors_for_media",
+            cancelled=lambda: _is_task_cancelled(task_id),
+        ) as acquired:
+            if not acquired:
+                session.refresh(task)
+                task.status = Status.CANCELLED
+                task.finished_at = datetime.now(timezone.utc)
+                session.add(task)
+                safe_commit(session)
+                clear_task_progress(task_id)
+                return
+
+            for target in targets:
+                if _is_task_cancelled(task_id):
+                    break
+
+                target.load_model()
+                target.active = True
+
+                batch_size = 100
+                cancelled_processor = False
+
+                for batch_start in range(0, len(media_ids), batch_size):
+                    if _is_task_cancelled(task_id):
+                        cancelled_processor = True
+                        break
+
+                    batch_ids = media_ids[batch_start : batch_start + batch_size]
+                    batch: List[Media] = session.exec(
+                        select(Media).where(
+                            col(Media.id).in_(batch_ids),
+                            col(Media.missing_since).is_(None),
+                        )
+                    ).all()
+
+                    batch_dirty = False
+                    for media in batch:
+                        if _is_task_cancelled(task_id):
+                            cancelled_processor = True
+                            break
+
+                        media_path = Path(media.path) if media.path else None
+                        if media_path is None or not media_path.exists():
+                            task.processed += 1
+                            continue
+
+                        target.reset_for_media(media, session)
+
+                        set_task_progress(
+                            task_id,
+                            current_item=os.fspath(media.path),
+                            current_step="extracting_scenes",
+                        )
+                        scenes = _get_or_extract_scenes(media, session)
+
+                        if scenes:
+                            set_task_progress(
+                                task_id,
+                                current_item=os.fspath(media.path),
+                                current_step=target.name,
+                            )
+                            target.process(media, session, scenes=scenes)
+                            session.add(media)
+
+                        task.processed += 1
+                        batch_dirty = True
+                        session.add(task)
+                        set_task_progress(task_id, current_step="idle")
+
+                    if batch_dirty:
+                        safe_commit(session)
+
+                    if cancelled_processor:
+                        break
+
+                try:
+                    target.unload()
+                except Exception:
+                    pass
+
+                if cancelled_processor:
+                    break
+
+            task.status = (
+                Status.CANCELLED
+                if _is_task_cancelled(task_id)
+                else Status.COMPLETED
             )
             task.finished_at = datetime.now(timezone.utc)
             session.add(task)

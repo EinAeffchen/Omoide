@@ -5,6 +5,7 @@ import { Header } from "./Header";
 import { Sidebar } from "./Sidebar";
 import { BinaryNavigationControls } from "./BinaryNavigationControls";
 import ProfileSetupDialog from "./ProfileSetupDialog";
+import { SelectionActionBar } from "./SelectionActionBar";
 
 export function Layout() {
   return (
@@ -19,6 +20,7 @@ export function Layout() {
         </Box>
       </Box>
       <ProfileSetupDialog />
+      <SelectionActionBar />
     </Box>
   );
 }
