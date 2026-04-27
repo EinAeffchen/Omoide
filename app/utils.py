@@ -629,7 +629,7 @@ def generate_thumbnail(media: Media) -> tuple[str | None, str | None]:
             fix_image_rotation(filepath)
             try:
                 img_obj: Image.Image = Image.open(filepath)
-                img_obj.load()
+                img_obj.thumbnail((360, -1))
             except Exception:
                 if filepath.suffix.lower() in (".heic", ".heif"):
                     # Spatial HEICs (and other multi-image HEIF containers) can
@@ -637,9 +637,9 @@ def generate_thumbnail(media: Media) -> tuple[str | None, str | None]:
                     # disparity images. Open only the primary image explicitly.
                     heif_file = pillow_heif.open_heif(filepath)
                     img_obj = heif_file[0].to_pillow()
+                    img_obj.thumbnail((360, -1))
                 else:
                     raise
-            img_obj.thumbnail((360, -1))
             try:
                 img_obj.save(thumb_path, format="JPEG")
             except OSError:

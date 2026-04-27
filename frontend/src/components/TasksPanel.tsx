@@ -303,7 +303,7 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
                 // switch to an indeterminate bar to show activity.
                 const showIndeterminate =
                   t.status === "running" &&
-                  (effectiveTotal === 0 || staleForMs > 8000);
+                  (effectiveTotal === 0 || staleForMs > 8000 || t.current_step === "indexing");
                 const failureCount = t.failure_count ?? 0;
                 const clusteringPct =
                   isClusterTask && t.total > 0
