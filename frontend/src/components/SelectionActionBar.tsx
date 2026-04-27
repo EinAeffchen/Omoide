@@ -32,7 +32,7 @@ export const SelectionActionBar: React.FC = () => {
             bottom: 24,
             left: "50%",
             transform: "translateX(-50%)",
-            zIndex: 1300,
+            zIndex: 1250,
             px: 2,
             py: 1,
             display: "flex",
@@ -40,6 +40,7 @@ export const SelectionActionBar: React.FC = () => {
             gap: 1.5,
             borderRadius: 6,
             bgcolor: "background.paper",
+            maxWidth: "calc(100vw - 32px)",
           }}
         >
           <Chip label={`${count} selected`} size="small" color="primary" />

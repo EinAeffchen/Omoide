@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   Box,
+  Collapse,
   Typography,
   Button,
   LinearProgress,
@@ -10,6 +11,7 @@ import {
   ListItemButton,
   ListItemIcon,
   ListItemText,
+  ListSubheader,
   Divider,
   Snackbar,
   Alert,
@@ -23,6 +25,7 @@ import {
   startTask as startTaskService,
   cancelTask as cancelTaskService,
   getTaskFailures,
+  runProcessor,
 } from "../services/taskActions";
 import { useTaskEvents } from "../TaskEventsContext";
 import config from "../config";
@@ -31,15 +34,32 @@ import MovieIcon from "@mui/icons-material/Movie";
 import Diversity3Icon from "@mui/icons-material/Diversity3";
 import CleaningServicesIcon from "@mui/icons-material/CleaningServices";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
+import ExpandLessIcon from "@mui/icons-material/ExpandLess";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import FaceIcon from "@mui/icons-material/Face";
+import BubbleChartIcon from "@mui/icons-material/BubbleChart";
+import LabelIcon from "@mui/icons-material/Label";
+import BlurOnIcon from "@mui/icons-material/BlurOn";
+import CameraAltIcon from "@mui/icons-material/CameraAlt";
 
-type TaskLabels = Record<TaskType, string>;
+type TaskLabels = Partial<Record<TaskType, string>>;
 const TASK_LABELS: TaskLabels = {
-  scan: "Scan Folder",
-  process_media: "Process Media",
-  clean_missing_files: "Cleanup missing files",
+  scan: "Scan for New Files",
+  process_media: "Process Unindexed Media",
+  clean_missing_files: "Remove Missing Records",
   cluster_persons: "Cluster Persons",
-  find_duplicates: "Find duplicates",
+  find_duplicates: "Find Duplicates",
+  compute_blur_scores: "Score Blur",
+  run_processor: "Run Processor",
 };
+
+const PROCESSOR_ACTIONS = [
+  { name: "faces", label: "Face Detection", icon: <FaceIcon /> },
+  { name: "embedding_extractor", label: "Image Embeddings", icon: <BubbleChartIcon /> },
+  { name: "auto_tagger", label: "Auto Tags", icon: <LabelIcon /> },
+  { name: "blur", label: "Blur Score", icon: <BlurOnIcon /> },
+  { name: "exif", label: "EXIF Data", icon: <CameraAltIcon /> },
+] as const;
 
 type TaskManagerProps = {
   isActive: boolean;
@@ -48,6 +68,7 @@ type TaskManagerProps = {
 export default function TaskManager({ isActive }: TaskManagerProps) {
   const { activeTasks, forceRefresh, lastCompletedTasks } =
     useTaskEvents(isActive);
+  const [processorsExpanded, setProcessorsExpanded] = useState(false);
   const [snack, setSnack] = useState<{
     open: boolean;
     msg: string;
@@ -172,7 +193,7 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
       await forceRefresh();
       setSnack({
         open: true,
-        msg: `${TASK_LABELS[type]} started`,
+        msg: `${TASK_LABELS[type] ?? type} started`,
         sev: "success",
       });
     } catch (err: any) {
@@ -197,6 +218,18 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
         t.task_type === type &&
         (t.status === "running" || t.status === "pending")
     );
+
+  const isAnyProcessorRunning = isTaskRunning("run_processor");
+
+  const runProcessorAction = async (processorName: string, label: string) => {
+    try {
+      await runProcessor(processorName);
+      await forceRefresh();
+      setSnack({ open: true, msg: `${label} started`, sev: "success" });
+    } catch (err: any) {
+      setSnack({ open: true, msg: err?.message || "Failed to start processor", sev: "error" });
+    }
+  };
 
   return (
     <>
@@ -283,19 +316,18 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
                   effectiveTotal > 0 ? effectiveTotal : "?";
                 const pctLabel = showIndeterminate ? "..." : `${pct}%`;
                 return (
-                  <Box key={t.id}>
+                  <Box key={t.id} sx={{ overflow: "hidden", minWidth: 0 }}>
                     <Box
                       display="flex"
                       justifyContent="space-between"
                       alignItems="center"
+                      gap={1}
                     >
-                      <Typography variant="body2" fontWeight="bold">
-                        {TASK_LABELS[t.task_type]}
+                      <Typography variant="body2" fontWeight="bold" noWrap sx={{ flex: 1, minWidth: 0 }}>
+                        {TASK_LABELS[t.task_type] ?? t.task_type}
                       </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {t.status}
-                        {t.status === "running" &&
-                          ` (${pctLabel} - ${effectiveProcessed}/${totalDisplay})`}
+                      <Typography variant="caption" color="text.secondary" sx={{ flexShrink: 0 }}>
+                        {t.status === "running" ? pctLabel : t.status}
                       </Typography>
                     </Box>
                     {hasMergeProgress ? (
@@ -305,6 +337,8 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
                             <Typography
                               variant="caption"
                               color="text.secondary"
+                              noWrap
+                              sx={{ display: "block" }}
                             >
                               {`Clustering: ${clusteringPct}% (${t.processed}/${t.total})`}
                             </Typography>
@@ -326,11 +360,13 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
                         <Typography
                           variant="caption"
                           color="text.secondary"
+                          noWrap
                           sx={{
+                            display: "block",
                             mt: typeof clusteringPct === "number" ? 1 : 0,
                           }}
                         >
-                          {`Merging Similar Persons: ${pctLabel} (${effectiveProcessed}/${totalDisplay})${
+                          {`Merging: ${pctLabel} (${effectiveProcessed}/${totalDisplay})${
                             typeof t.merge_pending === "number"
                               ? ` • Queue ${t.merge_pending}`
                               : ""
@@ -369,6 +405,11 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
                         }}
                       />
                     )}
+                    {t.status === "running" && effectiveTotal > 0 && !showIndeterminate && (
+                      <Typography variant="caption" color="text.disabled" noWrap sx={{ display: "block" }}>
+                        {effectiveProcessed.toLocaleString()} / {effectiveTotal.toLocaleString()}
+                      </Typography>
+                    )}
                     {failureCount > 0 && (
                       <Box
                         display="flex"
@@ -392,13 +433,15 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
                       </Box>
                     )}
                     {t.status === "running" && (
-                      <Typography variant="caption" color="text.secondary">
+                      <Typography variant="caption" color="text.secondary" noWrap sx={{ display: "block" }}>
                         {t.current_step
-                          ? `Step: ${t.current_step}`
+                          ? `${t.current_step}`
                           : showIndeterminate
                             ? "Working..."
                             : ""}
-                        {t.current_item ? `  -  ${t.current_item}` : ""}
+                        {t.current_item
+                          ? `  —  ${t.current_item.replace(/.*[\\/]/, "")}`
+                          : ""}
                       </Typography>
                     )}
                     {t.status === "running" && (
@@ -418,7 +461,13 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
 
           <Divider sx={{ my: 2 }} />
 
-          <List>
+          <List disablePadding>
+            <ListSubheader
+              disableSticky
+              sx={{ bgcolor: "transparent", color: "text.secondary", fontSize: "0.7rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", lineHeight: 2 }}
+            >
+              Jobs
+            </ListSubheader>
             <ListItem disablePadding>
               <ListItemButton
                 onClick={() => startTask("scan")}
@@ -427,18 +476,7 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
                 <ListItemIcon>
                   <SyncIcon />
                 </ListItemIcon>
-                <ListItemText primary="Scan Media Folder" />
-              </ListItemButton>
-            </ListItem>
-            <ListItem disablePadding>
-              <ListItemButton
-                onClick={() => startTask("clean_missing_files")}
-                disabled={isTaskRunning("clean_missing_files")}
-              >
-                <ListItemIcon>
-                  <CleaningServicesIcon />
-                </ListItemIcon>
-                <ListItemText primary="Clean missing files" />
+                <ListItemText primary="Scan for New Files" />
               </ListItemButton>
             </ListItem>
             <ListItem disablePadding>
@@ -449,7 +487,18 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
                 <ListItemIcon>
                   <MovieIcon />
                 </ListItemIcon>
-                <ListItemText primary="Process New Media" />
+                <ListItemText primary="Process Unindexed Media" />
+              </ListItemButton>
+            </ListItem>
+            <ListItem disablePadding>
+              <ListItemButton
+                onClick={() => startTask("clean_missing_files")}
+                disabled={isTaskRunning("clean_missing_files")}
+              >
+                <ListItemIcon>
+                  <CleaningServicesIcon />
+                </ListItemIcon>
+                <ListItemText primary="Remove Missing Records" />
               </ListItemButton>
             </ListItem>
             {config.ENABLE_PEOPLE && (
@@ -476,6 +525,43 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
                 <ListItemText primary="Find Duplicates" />
               </ListItemButton>
             </ListItem>
+          </List>
+
+          <Divider sx={{ my: 1 }} />
+
+          <List disablePadding>
+            <ListItemButton
+              onClick={() => setProcessorsExpanded((v) => !v)}
+              sx={{ borderRadius: 1 }}
+            >
+              <ListSubheader
+                disableSticky
+                component="div"
+                sx={{ bgcolor: "transparent", color: "text.secondary", fontSize: "0.7rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", p: 0, lineHeight: 1 }}
+              >
+                Individual Processors
+              </ListSubheader>
+              <Box sx={{ flexGrow: 1 }} />
+              {processorsExpanded ? <ExpandLessIcon fontSize="small" sx={{ color: "text.secondary" }} /> : <ExpandMoreIcon fontSize="small" sx={{ color: "text.secondary" }} />}
+            </ListItemButton>
+            <Collapse in={processorsExpanded} unmountOnExit>
+              <Typography variant="caption" color="text.secondary" sx={{ px: 2, pb: 1, display: "block" }}>
+                Runs on all unprocessed items. Use select mode to rerun on specific files.
+              </Typography>
+              {PROCESSOR_ACTIONS.map((p) => (
+                <ListItem key={p.name} disablePadding>
+                  <ListItemButton
+                    onClick={() => runProcessorAction(p.name, p.label)}
+                    disabled={isAnyProcessorRunning}
+                  >
+                    <ListItemIcon sx={{ color: "text.secondary" }}>
+                      {p.icon}
+                    </ListItemIcon>
+                    <ListItemText primary={p.label} />
+                  </ListItemButton>
+                </ListItem>
+              ))}
+            </Collapse>
           </List>
         </Box>
         <Typography

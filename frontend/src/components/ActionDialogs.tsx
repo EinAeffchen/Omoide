@@ -1,7 +1,12 @@
 import React from "react";
-import { Dialog, DialogTitle, DialogActions, Button } from "@mui/material";
-
-const ERROR = "error";
+import {
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogContentText,
+  DialogActions,
+  Button,
+} from "@mui/material";
 
 interface ActionDialogsProps {
   dialogType: "convert" | "deleteRecord" | "deleteFile" | null;
@@ -24,9 +29,7 @@ export function ActionDialogs({
       <Dialog open={dialogType === "convert"} onClose={onClose}>
         <DialogTitle>Convert Video Format?</DialogTitle>
         <DialogActions>
-          <Button onClick={onClose} sx={{ color: "white" }}>
-            Cancel
-          </Button>
+          <Button onClick={onClose}>Cancel</Button>
           <Button variant="contained" onClick={onConfirmConvert}>
             Confirm
           </Button>
@@ -35,17 +38,17 @@ export function ActionDialogs({
 
       {/* Delete Record Dialog */}
       <Dialog open={dialogType === "deleteRecord"} onClose={onClose}>
-        <DialogTitle>Delete Database Record?</DialogTitle>
+        <DialogTitle>Remove from Library?</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            The record will be removed from the database. The file on disk is
+            kept and can be re-imported by scanning.
+          </DialogContentText>
+        </DialogContent>
         <DialogActions>
-          <Button onClick={onClose} sx={{ color: "white" }}>
-            Cancel
-          </Button>
-          <Button
-            variant="contained"
-            color={ERROR}
-            onClick={onConfirmDeleteRecord}
-          >
-            Delete
+          <Button onClick={onClose}>Cancel</Button>
+          <Button variant="outlined" color="error" onClick={onConfirmDeleteRecord}>
+            Remove Record
           </Button>
         </DialogActions>
       </Dialog>
@@ -53,16 +56,16 @@ export function ActionDialogs({
       {/* Delete File Dialog */}
       <Dialog open={dialogType === "deleteFile"} onClose={onClose}>
         <DialogTitle>Delete File from Disk?</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            The file will be permanently deleted from disk. This cannot be
+            undone.
+          </DialogContentText>
+        </DialogContent>
         <DialogActions>
-          <Button onClick={onClose} sx={{ color: "white" }}>
-            Cancel
-          </Button>
-          <Button
-            variant="contained"
-            color={ERROR}
-            onClick={onConfirmDeleteFile}
-          >
-            Delete
+          <Button onClick={onClose}>Cancel</Button>
+          <Button variant="contained" color="error" onClick={onConfirmDeleteFile}>
+            Delete File
           </Button>
         </DialogActions>
       </Dialog>

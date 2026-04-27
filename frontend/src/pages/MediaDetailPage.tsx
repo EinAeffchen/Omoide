@@ -300,6 +300,14 @@ export default function MediaDetailPage() {
       closeDialog();
     }
   };
+  const navigateAfterDelete = useCallback(() => {
+    if (backgroundLocation) {
+      navigate(backgroundLocation.pathname + backgroundLocation.search);
+    } else {
+      navigate("/");
+    }
+  }, [navigate, backgroundLocation]);
+
   const confirmDeleteRecord = async () => {
     if (!detail || !detail.media) return;
     try {
@@ -310,7 +318,7 @@ export default function MediaDetailPage() {
         message: "Record deleted",
         severity: "success",
       });
-      navigate("/");
+      navigateAfterDelete();
     } catch {
       setSnackbar({ open: true, message: "Delete failed", severity: "error" });
     } finally {
@@ -320,9 +328,10 @@ export default function MediaDetailPage() {
   const confirmDeleteFile = async () => {
     if (!detail || !detail.media) return;
     try {
+      if (mediaListKey) removeItem(mediaListKey, detail.media.id);
       await deleteMediaFile(detail.media.id);
       setSnackbar({ open: true, message: "File deleted", severity: "success" });
-      navigate("/");
+      navigateAfterDelete();
     } catch {
       setSnackbar({
         open: true,

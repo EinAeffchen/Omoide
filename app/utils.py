@@ -569,74 +569,96 @@ def generate_thumbnail(media: Media) -> tuple[str | None, str | None]:
         accel = get_ffmpeg_accel_config(
             getattr(settings.processors, "prefer_gpu", True)
         )
-        cmd = [
-            "ffmpeg",
-            *accel.hwaccel_args,
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-ss",
-            "1",
-            "-i",
-            os.fspath(filepath),
-            "-vf",
-            "scale=360:-1",
-            "-vframes",
-            "1",
-            "-y",
-            os.fspath(thumb_path),
-        ]
-        try:
-            run_silent(
-                cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=20,
-                check=True,
-            )
-        except subprocess.TimeoutExpired:
-            logger.error(
-                "ffmpeg timed out generating thumbnail for %s (20s)", filepath
-            )
-            return None, "ffmpeg timed out while generating thumbnail"
-        except subprocess.CalledProcessError as e:
-            logger.error(
-                "ffmpeg failed to generate thumbnail for %s: %s", filepath, e
-            )
-            return None, f"ffmpeg failed to generate thumbnail: {e}"
-        except Exception as exc:  # pragma: no cover - defensive safeguard
-            logger.exception(
-                "Unexpected ffmpeg error while thumbnailing %s: %s",
-                filepath,
-                exc,
-            )
-            return None, f"Unexpected ffmpeg error: {exc}"
+        last_error: str | None = None
+        for seek in ("1", "0"):
+            cmd = [
+                "ffmpeg",
+                *accel.hwaccel_args,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-ss",
+                seek,
+                "-i",
+                os.fspath(filepath),
+                "-vf",
+                "scale=360:-1",
+                "-vframes",
+                "1",
+                "-y",
+                os.fspath(thumb_path),
+            ]
+            try:
+                run_silent(
+                    cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=20,
+                    check=True,
+                )
+            except subprocess.TimeoutExpired:
+                logger.error(
+                    "ffmpeg timed out generating thumbnail for %s (20s)", filepath
+                )
+                return None, "ffmpeg timed out while generating thumbnail"
+            except subprocess.CalledProcessError as e:
+                last_error = f"ffmpeg failed to generate thumbnail: {e}"
+                logger.debug(
+                    "ffmpeg failed with -ss %s for %s, %s",
+                    seek,
+                    filepath,
+                    "retrying with -ss 0" if seek == "1" else "giving up",
+                )
+                continue
+            except Exception as exc:  # pragma: no cover - defensive safeguard
+                logger.exception(
+                    "Unexpected ffmpeg error while thumbnailing %s: %s",
+                    filepath,
+                    exc,
+                )
+                return None, f"Unexpected ffmpeg error: {exc}"
+            if thumb_path.exists():
+                break
+        else:
+            logger.error("ffmpeg failed to generate thumbnail for %s", filepath)
+            return None, last_error or "ffmpeg did not produce a thumbnail file"
         if not thumb_path.exists():
             return None, "ffmpeg did not produce a thumbnail file"
     else:
         try:
             fix_image_rotation(filepath)
-            with Image.open(filepath) as img:
-                img.thumbnail((360, -1))
+            try:
+                img_obj: Image.Image = Image.open(filepath)
+                img_obj.load()
+            except Exception:
+                if filepath.suffix.lower() in (".heic", ".heif"):
+                    # Spatial HEICs (and other multi-image HEIF containers) can
+                    # fail when pillow_heif tries to decode auxiliary depth/
+                    # disparity images. Open only the primary image explicitly.
+                    heif_file = pillow_heif.open_heif(filepath)
+                    img_obj = heif_file[0].to_pillow()
+                else:
+                    raise
+            img_obj.thumbnail((360, -1))
+            try:
+                img_obj.save(thumb_path, format="JPEG")
+            except OSError:
                 try:
-                    img.save(thumb_path, format="JPEG")
-                except OSError:
-                    try:
-                        img.convert("RGB").save(thumb_path, format="JPEG")
-                    except OSError as rgb_exc:
-                        logger.warning(
-                            "Failed to save thumbnail for %s: %s",
-                            filepath,
-                            rgb_exc,
-                        )
-                        return None, f"Unable to save thumbnail: {rgb_exc}"
-                    except ValueError as img_sice_err:
-                        logger.warning(
-                            "Failed to save thumbnail for %s: %s",
-                            filepath,
-                            img_sice_err,
-                        )
-                        return None, f"Unable to save thumbnail: {img_sice_err}"
+                    img_obj.convert("RGB").save(thumb_path, format="JPEG")
+                except OSError as rgb_exc:
+                    logger.warning(
+                        "Failed to save thumbnail for %s: %s",
+                        filepath,
+                        rgb_exc,
+                    )
+                    return None, f"Unable to save thumbnail: {rgb_exc}"
+                except ValueError as img_sice_err:
+                    logger.warning(
+                        "Failed to save thumbnail for %s: %s",
+                        filepath,
+                        img_sice_err,
+                    )
+                    return None, f"Unable to save thumbnail: {img_sice_err}"
 
         except UnidentifiedImageError:
             logger.warning("Couldn't open %s", filepath)

@@ -59,6 +59,7 @@ const NopersonsPage: React.FC = () => {
 
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [rerunDialogOpen, setRerunDialogOpen] = useState(false);
+  const [rerunIds, setRerunIds] = useState<number[]>([]);
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: "success" | "error" }>({
     open: false, message: "", severity: "success",
   });
@@ -207,10 +208,14 @@ const NopersonsPage: React.FC = () => {
               size="small"
               variant="outlined"
               startIcon={<ReplayIcon />}
-              onClick={() => setRerunDialogOpen(true)}
-              disabled={selectedCount === 0}
+              onClick={() => {
+                const ids = selectedCount > 0 ? Array.from(selectedIds) : items.map((i) => i.id);
+                setRerunIds(ids);
+                setRerunDialogOpen(true);
+              }}
+              disabled={items.length === 0}
             >
-              Rerun Processors
+              {selectedCount > 0 ? `Rerun (${selectedCount} selected)` : `Rerun all visible (${items.length})`}
             </Button>
             <Divider flexItem orientation="vertical" sx={{ display: { xs: "none", sm: "block" } }} />
             <Tooltip title="Delete files from disk">
@@ -355,7 +360,7 @@ const NopersonsPage: React.FC = () => {
 
       <RerunProcessorsDialog
         open={rerunDialogOpen}
-        mediaIds={Array.from(selectedIds)}
+        mediaIds={rerunIds}
         onClose={() => setRerunDialogOpen(false)}
         onStarted={() => setSnackbar({ open: true, message: "Processing started.", severity: "success" })}
       />

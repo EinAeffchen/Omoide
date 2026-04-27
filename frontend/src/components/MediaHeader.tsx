@@ -89,6 +89,7 @@ export function MediaHeader({
           display: "flex",
           alignItems: "center",
           gap: 1,
+          flexShrink: 0,
         }}
       >
         <BinaryNavigationControls variant="overlay" />

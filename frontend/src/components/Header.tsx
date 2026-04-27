@@ -31,6 +31,9 @@ import config from "../config";
 import { useTheme } from "@mui/material/styles";
 import { useTaskEvents } from "../TaskEventsContext";
 import { Sidebar } from "./Sidebar";
+import { useSelection } from "../context/SelectionContext";
+import CheckBoxOutlineBlankIcon from "@mui/icons-material/CheckBoxOutlineBlank";
+import CheckBoxIcon from "@mui/icons-material/CheckBox";
 
 function TaskStatusButton({ onClick }: { onClick: () => void }) {
   const theme = useTheme();
@@ -106,6 +109,7 @@ export function Header() {
   const theme = useTheme();
   const base = import.meta.env.BASE_URL || "/";
   const wordmarkSrc = `${base}brand/omoide_header_${theme.palette.mode}.png`;
+  const { isSelecting, selectedIds, toggleSelecting } = useSelection();
   const [isControlPanelOpen, setIsControlPanelOpen] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isSearchVisible, setIsSearchVisible] = useState(false);
@@ -179,17 +183,28 @@ export function Header() {
       
       <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
         <Box sx={{ display: { xs: "none", md: "flex" } }}>
-             <ThemeToggleButton />
+          <ThemeToggleButton />
         </Box>
-       
+
+        <Tooltip title={isSelecting ? `Select mode — ${selectedIds.size} selected` : "Select items"}>
+          <IconButton
+            onClick={toggleSelecting}
+            color={isSelecting ? "primary" : "default"}
+            size="large"
+            sx={{ p: 1 }}
+          >
+            {isSelecting ? <CheckBoxIcon /> : <CheckBoxOutlineBlankIcon />}
+          </IconButton>
+        </Tooltip>
+
         {!config.PRESENTATION_MODE && (
           <TaskStatusButton onClick={() => setIsControlPanelOpen(true)} />
         )}
-        
+
         <Box sx={{ display: { xs: "flex", md: "none" } }}>
-             <IconButton color="primary" onClick={() => setIsSearchVisible(true)}>
-              <SearchIcon />
-            </IconButton>
+          <IconButton color="primary" onClick={() => setIsSearchVisible(true)}>
+            <SearchIcon />
+          </IconButton>
         </Box>
       </Box>
     </>
