@@ -229,7 +229,7 @@ const BlurryPage: React.FC = () => {
       </Paper>
 
       {/* Stats + bulk actions */}
-      <Paper variant="outlined" sx={{ mb: 3 }}>
+      <Paper variant="outlined" sx={{ mb: 3, position: "sticky", top: 64, zIndex: 10 }}>
         <Stack
           direction={{ xs: "column", md: "row" }}
           spacing={2}

@@ -24,7 +24,7 @@ import DeleteForeverIcon from "@mui/icons-material/DeleteForever";
 import SelectAllIcon from "@mui/icons-material/SelectAll";
 import ClearAllIcon from "@mui/icons-material/ClearAll";
 import { useInView } from "react-intersection-observer";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 
 import { NoExifDateItem } from "../types";
 import { API } from "../config";
@@ -40,6 +40,7 @@ const formatBytes = (bytes: number) => {
 };
 
 const NoExifDatePage: React.FC = () => {
+  const location = useLocation();
   const [items, setItems] = useState<NoExifDateItem[]>([]);
   const [total, setTotal] = useState(0);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -156,7 +157,7 @@ const NoExifDatePage: React.FC = () => {
       </Paper>
 
       {/* Stats + bulk actions */}
-      <Paper variant="outlined" sx={{ mb: 3 }}>
+      <Paper variant="outlined" sx={{ mb: 3, position: "sticky", top: 64, zIndex: 10 }}>
         <Stack
           direction={{ xs: "column", md: "row" }}
           spacing={2}
@@ -268,6 +269,7 @@ const NoExifDatePage: React.FC = () => {
                   <Box
                     component={Link}
                     to={`/medium/${item.id}`}
+                    state={{ backgroundLocation: location }}
                     onClick={(e) => e.stopPropagation()}
                     sx={{ display: "block", lineHeight: 0 }}
                   >

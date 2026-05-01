@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, func, or_
+from sqlalchemy import and_, func
 from sqlmodel import Session, select
 
 from app.database import get_session
-from app.models import Blacklist, Face, Media, PersonMediaLink
+from app.models import Blacklist, Face, Media
 from app.schemas.nopersons import NoPersonsMediaItem, NoPersonsPage, NoPersonsResolveRequest
 from app.utils import delete_file, delete_record
 
@@ -20,21 +20,16 @@ def get_no_persons_media(
     media_type: str | None = Query(None, description="'image', 'video', or omit for all"),
     scope: str = Query("processed", description="'processed' (faces_extracted=true only) or 'all'"),
 ):
-    """Paginated list of media with no persons linked, ordered newest-first."""
-    has_face_person = select(Face.media_id).where(Face.person_id.isnot(None))
-    has_person_link = select(PersonMediaLink.media_id)
+    """Paginated list of media where face detection ran but found no faces."""
+    has_any_face = select(Face.media_id)
 
     if scope == "processed":
         base_filter = and_(
             Media.faces_extracted == True,  # noqa: E712
-            Media.id.not_in(has_face_person),
-            Media.id.not_in(has_person_link),
+            Media.id.not_in(has_any_face),
         )
     else:
-        base_filter = and_(
-            Media.id.not_in(has_face_person),
-            Media.id.not_in(has_person_link),
-        )
+        base_filter = and_(Media.id.not_in(has_any_face))
 
     if media_type == "image":
         base_filter = and_(base_filter, Media.duration.is_(None))

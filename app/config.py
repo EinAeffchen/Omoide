@@ -597,8 +597,8 @@ class FaceRecognitionSettings(BaseModel):
     # is the original image, not a thumbnail!
     face_recognition_min_face_pixels: int = 1600
     # skip blurry/occluded face crops before embedding (Laplacian variance check)
-    face_sharpness_filter_enabled: bool = True
-    face_sharpness_min_variance: float = 80.0
+    face_sharpness_filter_enabled: bool = False
+    face_sharpness_min_variance: float = 30.0
     # number of faces needed to automatically create a person
     person_min_face_count: int = 2
     # require a person to span at least this many distinct media assets

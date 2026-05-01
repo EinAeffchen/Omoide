@@ -25,6 +25,26 @@ class FaceProcessor(MediaProcessor):
     name = "faces"
     order = 20
 
+    @staticmethod
+    def _iou(a: list, b: list) -> float:
+        ix1, iy1 = max(a[0], b[0]), max(a[1], b[1])
+        ix2, iy2 = min(a[2], b[2]), min(a[3], b[3])
+        inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+        if inter == 0:
+            return 0.0
+        area_a = (a[2] - a[0]) * (a[3] - a[1])
+        area_b = (b[2] - b[0]) * (b[3] - b[1])
+        union = area_a + area_b - inter
+        return inter / union if union > 0 else 0.0
+
+    def _merge_faces(self, base: list, extra: list, iou_threshold: float = 0.45) -> list:
+        """Add faces from extra that don't substantially overlap any face already in base."""
+        merged = list(base)
+        for fb in extra:
+            if not any(self._iou(fa.bbox, fb.bbox) > iou_threshold for fa in merged):
+                merged.append(fb)
+        return merged
+
     def _crop_with_margin(self, img: np.ndarray, bbox: list[int], pad_pct: float = 0.2):
         """
         img: HxWx3 BGR or RGB array
@@ -135,7 +155,6 @@ class FaceProcessor(MediaProcessor):
                 continue
 
             h_orig, w_orig = scene.shape[:2]
-            is_large = max(h_orig, w_orig) > 2000
 
             # Pre-scale for memory/compute efficiency. Note: this does NOT improve
             # detection sensitivity — the minimum detectable face size in the original
@@ -159,20 +178,6 @@ class FaceProcessor(MediaProcessor):
                     "InsightFace failed on media %s scene: %s", media.path, e
                 )
                 continue
-
-            # Two-pass fallback for large images: if det_size=320 found nothing, retry
-            # at det_size=640 (min detectable face halves from ~200px to ~100px in the
-            # original). model.prepare() only updates parameters, not ONNX weights.
-            if not faces and is_large:
-                try:
-                    self.model.prepare(ctx_id=self._ctx_id, det_size=(640, 640))
-                    faces = self.model.get(scene_det)
-                except Exception as e:
-                    logger.exception(
-                        "InsightFace hi-res retry failed on media %s: %s", media.path, e
-                    )
-                finally:
-                    self.model.prepare(ctx_id=self._ctx_id, det_size=(320, 320))
 
             face_entries = self._parse_faces(faces, scene_det, media)
 
@@ -222,7 +227,7 @@ class FaceProcessor(MediaProcessor):
             allowed_modules=["detection", "landmark_2d_106", "recognition"],
             providers=providers,
         )
-        self.model.prepare(ctx_id=self._ctx_id, det_size=(320, 320))
+        self.model.prepare(ctx_id=self._ctx_id, det_size=(640, 640))
 
     def unload(self):
         try:

@@ -527,6 +527,8 @@ export interface AppConfig {
     existing_person_cosine_threshold: number;
     existing_person_min_cosine_margin: number;
     face_recognition_min_face_pixels: number;
+    face_sharpness_filter_enabled: boolean;
+    face_sharpness_min_variance: number;
     person_min_face_count: number;
     person_min_media_count: number;
     person_merge_search_k: number;

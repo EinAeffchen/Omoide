@@ -62,7 +62,7 @@ type FacePresetKey = "strict" | "normal" | "loose";
 
 const facePresets: Record<
   FacePresetKey,
-  Omit<AppConfig["face_recognition"], "preset">
+  Omit<AppConfig["face_recognition"], "preset" | "face_sharpness_filter_enabled" | "face_sharpness_min_variance">
 > = {
   strict: {
     face_recognition_min_confidence: 0.6,
@@ -1532,6 +1532,48 @@ export default function ConfigurationPage() {
                     helperText="Minimum face area (in pixels) to be considered detectible"
                   />
                 </Grid>
+                <Grid size={{ xs: 12 }}>
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={
+                          config.face_recognition.face_sharpness_filter_enabled
+                        }
+                        onChange={(e) =>
+                          setFaceValue(
+                            "face_sharpness_filter_enabled",
+                            e.target.checked
+                          )
+                        }
+                      />
+                    }
+                    label="Sharpness filter"
+                  />
+                  <Typography variant="caption" display="block" color="text.secondary">
+                    Skip blurry or out-of-focus face crops before embedding. Disable to detect faces in soft-focus photos (e.g. baby close-ups).
+                  </Typography>
+                </Grid>
+                {config.face_recognition.face_sharpness_filter_enabled && (
+                  <Grid size={{ xs: 12, sm: 6 }}>
+                    <TextField
+                      label="Sharpness Min Variance"
+                      value={
+                        config.face_recognition.face_sharpness_min_variance
+                      }
+                      onChange={(e) =>
+                        setFaceValue(
+                          "face_sharpness_min_variance",
+                          parseFloat(e.target.value)
+                        )
+                      }
+                      fullWidth
+                      margin="normal"
+                      type="number"
+                      inputProps={{ step: 1, min: 0 }}
+                      helperText="Laplacian variance threshold — lower = accept more blur (try 20–40)"
+                    />
+                  </Grid>
+                )}
                 <Grid size={{ xs: 12, sm: 6 }}>
                   <TextField
                     label="Min Face Count per Person"
