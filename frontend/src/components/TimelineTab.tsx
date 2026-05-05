@@ -1,5 +1,5 @@
 import AddIcon from "@mui/icons-material/Add";
-import { Dialog, DialogTitle, DialogContent } from "@mui/material";
+import { Dialog, DialogTitle, DialogContent, ImageList, ImageListItem, ImageListItemBar, IconButton, Tooltip } from "@mui/material";
 import {
   Timeline,
   TimelineConnector,
@@ -8,13 +8,14 @@ import {
   TimelineItem,
   TimelineSeparator,
 } from "@mui/lab";
-import { MediaGrid } from "../components/MediaGrid";
 import { Box, Button, CircularProgress, Typography } from "@mui/material";
 import React, { useEffect, useMemo, useState } from "react";
 import { useInView } from "react-intersection-observer";
 import { EventFormDialog } from "../components/EventFormDialog";
 import { EventCard } from "./EventCard";
 import { MediaItemGroup } from "./MediaItemGroup";
+import LinkOffIcon from "@mui/icons-material/LinkOff";
+import PersonSearchIcon from "@mui/icons-material/PersonSearch";
 import {
   createTimelineEvent,
   deleteTimelineEvent,
@@ -29,14 +30,21 @@ import {
   TimelineEventCreate,
   TimelineDisplayItem,
 } from "../types";
+import { API } from "../config";
 
-export const TimelineTab: React.FC<{ person: Person }> = ({ person }) => {
+interface TimelineTabProps {
+  person: Person;
+  onDetachMedia?: (mediaId: number) => Promise<void>;
+  onJumpToFace?: (mediaId: number) => void;
+}
+
+export const TimelineTab: React.FC<TimelineTabProps> = ({ person, onDetachMedia, onJumpToFace }) => {
   const [dayToView, setDayToView] = useState<MediaPreview[] | null>(null);
   const listKey = useMemo(() => `person-${person.id}-timeline`, [person.id]);
   const { items, hasMore, isLoading } = useListStore(
     (state) => state.lists[listKey] || defaultListState
   );
-  const { fetchInitial, loadMore, clearList, removeItem } = useListStore();
+  const { fetchInitial, loadMore, clearList } = useListStore();
   const { ref, inView } = useInView({
     threshold: 0.5,
     skip: isLoading || !hasMore,
@@ -96,10 +104,23 @@ export const TimelineTab: React.FC<{ person: Person }> = ({ person }) => {
         clearList(listKey);
         fetchInitial(listKey, () => getPersonTimeline(person.id, null));
       }
-      handleCloseDialog(); // Use the unified close handler
+      handleCloseDialog();
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const handleRemoveMedia = async (mediaId: number) => {
+    if (!onDetachMedia) return;
+    await onDetachMedia(mediaId);
+    clearList(listKey);
+    fetchInitial(listKey, () => getPersonTimeline(person.id, null));
+    // Also remove from current day-view if open
+    setDayToView((prev) => {
+      if (!prev) return null;
+      const updated = prev.filter((m) => m.id !== mediaId);
+      return updated.length > 0 ? updated : null;
+    });
   };
 
   const displayItems: TimelineDisplayItem[] = useMemo(() => {
@@ -108,7 +129,6 @@ export const TimelineTab: React.FC<{ person: Person }> = ({ person }) => {
       | { type: "media_group"; date: string; items: MediaPreview[] }
     )[] = [];
 
-    // The grouping logic from before remains the same...
     for (const item of items) {
       if (item.type === "event") {
         grouped.push(item);
@@ -152,7 +172,6 @@ export const TimelineTab: React.FC<{ person: Person }> = ({ person }) => {
                 {index < displayItems.length - 1 && <TimelineConnector />}
               </TimelineSeparator>
               <TimelineContent sx={{ py: "12px", px: 0 }}>
-                {/* Each content block is now a collapsible Accordion */}
                 <Typography variant="caption" color="text.secondary">
                   {item.date}
                 </Typography>
@@ -168,9 +187,9 @@ export const TimelineTab: React.FC<{ person: Person }> = ({ person }) => {
                   ) : (
                     <MediaItemGroup
                       mediaItems={item.items}
-                      listKey={listKey}
-                      date={""}
                       onViewAll={() => setDayToView(item.items)}
+                      onRemoveMedia={onDetachMedia ? (id) => { void handleRemoveMedia(id); } : undefined}
+                      onJumpToFace={onJumpToFace}
                     />
                   )}
                 </Typography>
@@ -186,6 +205,7 @@ export const TimelineTab: React.FC<{ person: Person }> = ({ person }) => {
         isSubmitting={isSubmitting}
         initialData={eventToEdit}
       />
+      {/* Day-view dialog with per-item remove */}
       <Dialog
         open={!!dayToView}
         onClose={() => setDayToView(null)}
@@ -194,13 +214,56 @@ export const TimelineTab: React.FC<{ person: Person }> = ({ person }) => {
       >
         <DialogTitle>
           Photos from{" "}
-          {dayToView
-            ? new Date(dayToView[0].created_at).toLocaleDateString()
+          {dayToView && dayToView.length > 0
+            ? new Date(dayToView[0].inserted_at).toLocaleDateString()
             : ""}
         </DialogTitle>
         <DialogContent>
-          {/* We reuse our generic grid component inside the dialog! */}
-          {dayToView && <MediaGrid mediaItems={dayToView} listKey={listKey} />}
+          {dayToView && (
+            <ImageList cols={4} gap={8}>
+              {dayToView.map((media) => (
+                <ImageListItem key={media.id}>
+                  <img
+                    src={`${API}/thumbnails/${media.thumbnail_path || `${media.id}.jpg`}`}
+                    alt={media.filename}
+                    style={{ height: 180, objectFit: "cover", width: "100%" }}
+                  />
+                  {(onDetachMedia || onJumpToFace) && (
+                    <ImageListItemBar
+                      actionIcon={
+                        <Box sx={{ display: "flex" }}>
+                          {onJumpToFace && (
+                            <Tooltip title="Find face in Faces tab">
+                              <IconButton
+                                size="small"
+                                onClick={() => { setDayToView(null); onJumpToFace(media.id); }}
+                                sx={{ color: "white" }}
+                              >
+                                <PersonSearchIcon fontSize="small" />
+                              </IconButton>
+                            </Tooltip>
+                          )}
+                          {onDetachMedia && (
+                            <Tooltip title="Remove from this person">
+                              <IconButton
+                                size="small"
+                                onClick={() => { void handleRemoveMedia(media.id); }}
+                                sx={{ color: "white" }}
+                              >
+                                <LinkOffIcon fontSize="small" />
+                              </IconButton>
+                            </Tooltip>
+                          )}
+                        </Box>
+                      }
+                      actionPosition="right"
+                      sx={{ background: "rgba(0,0,0,0.4)" }}
+                    />
+                  )}
+                </ImageListItem>
+              ))}
+            </ImageList>
+          )}
         </DialogContent>
       </Dialog>
       {hasMore && <Box ref={ref} sx={{ height: "1px" }} />}

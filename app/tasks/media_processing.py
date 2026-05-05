@@ -73,7 +73,9 @@ def _count_media_to_process(session: Session) -> int:
         return 0
     return (
         session.exec(
-            select(func.count(Media.id)).where(or_(*conditions))
+            select(func.count(Media.id)).where(
+                or_(*conditions), Media.missing_since.is_(None)
+            )
         ).first()
         or 0
     )
@@ -334,6 +336,9 @@ def run_media_processing(task_id: str) -> None:
                     set_task_progress(task_id, current_step="idle")
 
                 if batch_dirty:
+                    remaining = _count_media_to_process(session)
+                    task.total = task.processed + remaining
+                    session.add(task)
                     safe_commit(session)
 
                 if cancelled_mid_batch:

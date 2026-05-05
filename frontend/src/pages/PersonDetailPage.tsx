@@ -68,6 +68,7 @@ export default function PersonDetailPage() {
     handleAssignWrapper,
     handleDeleteWrapper,
     handleDetachWrapper,
+    handleDetachMediaWrapper,
     handleCreateWrapper,
     handleAutoSelectProfileFace,
     handleProfileAssignmentWrapper,
@@ -80,6 +81,9 @@ export default function PersonDetailPage() {
     isLoadingSuggestedFaces,
     suggestedFacesLimit,
     setSuggestedFacesLimit,
+    facesSortBy,
+    handleFacesSortChange,
+    fetchFacesForMedia,
   } = usePersonDetailPage();
 
   if (loading || !person) {
@@ -143,6 +147,10 @@ export default function PersonDetailPage() {
         isLoadingRelationships={isLoadingRelationships}
         hasLoadedRelationships={hasLoadedRelationships}
         onLoadRelationships={(depth) => loadRelationshipGraph(depth)}
+        onDetachMedia={handleDetachMediaWrapper}
+        facesSortBy={facesSortBy}
+        onFacesSortChange={handleFacesSortChange}
+        onFetchFacesForMedia={fetchFacesForMedia}
       />
 
       <Snackbar

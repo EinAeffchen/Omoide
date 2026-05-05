@@ -3,6 +3,8 @@ import {
   Box,
   Button,
   CircularProgress,
+  MenuItem,
+  Select,
   Slider,
   Tab,
   Tabs,
@@ -81,6 +83,10 @@ interface PersonContentTabsProps {
   isLoadingRelationships: boolean;
   hasLoadedRelationships: boolean;
   onLoadRelationships: (depth?: number) => Promise<void> | void;
+  onDetachMedia?: (mediaId: number) => Promise<void>;
+  facesSortBy: string;
+  onFacesSortChange: (sort: string) => void;
+  onFetchFacesForMedia: (mediaId: number) => Promise<FaceRead[]>;
 }
 
 export function PersonContentTabs({
@@ -116,6 +122,10 @@ export function PersonContentTabs({
   isLoadingRelationships,
   hasLoadedRelationships,
   onLoadRelationships,
+  onDetachMedia,
+  facesSortBy,
+  onFacesSortChange,
+  onFetchFacesForMedia,
 }: PersonContentTabsProps) {
   const [tabValue, setTabValue] = useState(0);
   const [faceTabValue, setFaceTabValue] = useState(0);
@@ -123,6 +133,7 @@ export function PersonContentTabs({
   const [hasRequestedRelationships, setHasRequestedRelationships] =
     useState(false);
   const [isProcessingFaces, setIsProcessingFaces] = useState(false);
+  const [pinnedFaces, setPinnedFaces] = useState<FaceRead[] | null>(null);
   const [isLoadingSimilarTab, setIsLoadingSimilarTab] = useState(false);
   const [selectedSimilarIds, setSelectedSimilarIds] = useState<number[]>([]);
 
@@ -185,8 +196,16 @@ export function PersonContentTabs({
     }
   };
 
+  const handleJumpToFace = async (mediaId: number) => {
+    setTabValue(1);
+    setFaceTabValue(0);
+    const faces = await onFetchFacesForMedia(mediaId);
+    setPinnedFaces(faces.length > 0 ? faces : null);
+  };
+
   const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
     setTabValue(newValue);
+    if (newValue !== 1) setPinnedFaces(null);
 
     if (newValue === 2 && !hasLoadedSimilar) {
       setHasLoadedSimilar(true);
@@ -281,6 +300,18 @@ export function PersonContentTabs({
         </Box>
 
         <TabPanel value={faceTabValue} index={0}>
+          <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 1 }}>
+            <Select
+              size="small"
+              value={facesSortBy}
+              onChange={(e) => onFacesSortChange(e.target.value)}
+              sx={{ minWidth: 160 }}
+            >
+              <MenuItem value="id_desc">Newest added</MenuItem>
+              <MenuItem value="date_desc">Newest photo</MenuItem>
+              <MenuItem value="date_asc">Oldest photo</MenuItem>
+            </Select>
+          </Box>
           <Suspense fallback={<CircularProgress />}>
             <DetectedFaces
               isProcessing={isProcessingFaces}
@@ -298,6 +329,8 @@ export function PersonContentTabs({
               hasMore={hasMoreFaces}
               isLoadingMore={loadingMoreFaces}
               personId={person.id}
+              pinnedFaces={pinnedFaces ?? undefined}
+              onClearPinned={() => setPinnedFaces(null)}
             />
           </Suspense>
         </TabPanel>
@@ -440,7 +473,11 @@ export function PersonContentTabs({
 
       <TabPanel value={tabValue} index={4}>
         <Suspense fallback={<CircularProgress />}>
-          <TimelineTab person={person} />
+          <TimelineTab
+            person={person}
+            onDetachMedia={onDetachMedia}
+            onJumpToFace={handleJumpToFace}
+          />
         </Suspense>
       </TabPanel>
 

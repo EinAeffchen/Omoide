@@ -369,32 +369,117 @@ def suggest_faces(
     return face_return
 
 
+@router.post("/{person_id}/media/{media_id}/detach", status_code=200)
+def detach_media_from_person(
+    person_id: int,
+    media_id: int,
+    session: Session = Depends(get_session),
+):
+    """Detach all faces linking this person to this media, and remove any manual PersonMediaLink."""
+    if settings.general.presentation_mode:
+        raise HTTPException(status_code=403, detail="Not allowed in presentation mode.")
+
+    from app.api.face import update_face_embedding
+
+    faces = safe_execute(
+        session,
+        select(Face).where(Face.person_id == person_id, Face.media_id == media_id),
+    ).all()
+
+    for face in faces:
+        face.person_id = None
+        session.add(face)
+        update_face_embedding(session, face.id, -1)
+
+    link = safe_execute(
+        session,
+        select(PersonMediaLink).where(
+            PersonMediaLink.person_id == person_id,
+            PersonMediaLink.media_id == media_id,
+        ),
+    ).first()
+    if link:
+        session.delete(link)
+
+    recalculate_person_appearance_counts(session, {person_id})
+    if session.get(Person, person_id):
+        update_person_embedding(session, person_id)
+    safe_commit(session)
+    return {"message": "Media detached from person"}
+
+
 @router.get("/{person_id}/faces", response_model=FaceCursorPage)
 def get_faces(
     person_id: int,
     session: Session = Depends(get_session),
-    cursor: str | None = Query(
-        None,
-        description="encoded as `<id>`; e.g. `1234`",
-    ),
+    cursor: str | None = Query(None),
+    sort_by: str = Query("id_desc"),
+    media_id: int | None = Query(None),
     limit: int = 10,
 ):
     person = session.get(Person, person_id)
     if not person:
         raise HTTPException(status_code=404, detail="Person not found")
 
-    before_id = None
-    if cursor:
-        before_id = int(cursor)
-    q = select(Face).where(Face.person_id == person.id).order_by(Face.id.desc())
-    if before_id:
-        q = q.where(Face.id < before_id)
+    if media_id is not None:
+        faces = safe_execute(
+            session,
+            select(Face).where(Face.person_id == person_id, Face.media_id == media_id),
+        ).all()
+        return FaceCursorPage(next_cursor=None, items=faces)
 
-    faces = safe_execute(session, q.limit(limit)).all()
-    if len(faces) == limit:
-        next_cursor = str(faces[-1].id)
+    if sort_by in ("date_desc", "date_asc"):
+        q = (
+            select(Face)
+            .join(Media, Face.media_id == Media.id)
+            .where(Face.person_id == person_id)
+        )
+        if sort_by == "date_desc":
+            q = q.order_by(Media.created_at.desc().nullslast(), Face.id.desc())
+        else:
+            q = q.order_by(Media.created_at.asc().nullsfirst(), Face.id.asc())
+
+        if cursor:
+            parts = cursor.rsplit("_", 1)
+            if len(parts) == 2:
+                try:
+                    cursor_dt = datetime.fromisoformat(parts[0])
+                    cursor_face_id = int(parts[1])
+                    if sort_by == "date_desc":
+                        q = q.where(
+                            or_(
+                                Media.created_at < cursor_dt,
+                                and_(Media.created_at == cursor_dt, Face.id < cursor_face_id),
+                            )
+                        )
+                    else:
+                        q = q.where(
+                            or_(
+                                Media.created_at > cursor_dt,
+                                and_(Media.created_at == cursor_dt, Face.id > cursor_face_id),
+                            )
+                        )
+                except (ValueError, IndexError):
+                    pass
+
+        faces = safe_execute(session, q.limit(limit)).all()
+        if len(faces) == limit:
+            last_face = faces[-1]
+            last_media = session.get(Media, last_face.media_id)
+            next_cursor = (
+                f"{last_media.created_at.isoformat()}_{last_face.id}"
+                if last_media and last_media.created_at
+                else None
+            )
+        else:
+            next_cursor = None
     else:
-        next_cursor = None
+        before_id = int(cursor) if cursor else None
+        q = select(Face).where(Face.person_id == person_id).order_by(Face.id.desc())
+        if before_id:
+            q = q.where(Face.id < before_id)
+        faces = safe_execute(session, q.limit(limit)).all()
+        next_cursor = str(faces[-1].id) if len(faces) == limit else None
 
     return FaceCursorPage(next_cursor=next_cursor, items=faces)
 

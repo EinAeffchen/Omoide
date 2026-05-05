@@ -1,4 +1,3 @@
-import gc
 import os
 import time
 from pathlib import Path
@@ -212,6 +211,8 @@ class FaceProcessor(MediaProcessor):
     def load_model(self):
         if settings.general.enable_people and settings.processors.face_processor_active:
             self.active = True
+        if getattr(self, "model", None) is not None:
+            return
         # Reduce ORT's long-lived CPU memory arenas so memory is released faster
         os.environ.setdefault("ORT_DISABLE_MEMORY_ARENA", "1")
         # Import InsightFace lazily to speed up application startup
@@ -230,12 +231,7 @@ class FaceProcessor(MediaProcessor):
         self.model.prepare(ctx_id=self._ctx_id, det_size=(640, 640))
 
     def unload(self):
-        try:
-            if getattr(self, "model", None) is not None:
-                # Drop references and encourage release of ORT allocations
-                self.model = None
-        finally:
-            gc.collect()
+        pass  # Keep InsightFace warm to avoid reload cost on the next run
 
     def get_results(self, media_id: int, session):
         return session.exec(

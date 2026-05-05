@@ -1,25 +1,26 @@
-import React, { useRef, useCallback, useState, useEffect } from "react";
+import React, { useRef, useCallback, useState, useEffect, useMemo } from "react";
 import {
   Avatar,
   Box,
-  Typography,
-  CircularProgress,
   Button,
-  Stack,
-  Paper,
-  useTheme,
+  CircularProgress,
   Dialog,
-  DialogTitle,
-  DialogContent,
-  TextField,
   DialogActions,
+  DialogContent,
+  DialogTitle,
   List,
   ListItemAvatar,
   ListItemButton,
   ListItemText,
+  Paper,
+  Stack,
+  TextField,
+  Typography,
+  useTheme,
 } from "@mui/material";
 import { FaceRead, Person } from "../types";
 import FaceCard from "./FaceCard";
+import FaceMediaGroup from "./FaceMediaGroup";
 import { useFaceSelection } from "../hooks/useFaceSelection";
 import { searchPersonsByName } from "../services/personActions";
 import config, { API } from "../config";
@@ -32,18 +33,20 @@ interface DetectedFacesProps {
   onDetach: (faceIds: number[]) => void;
   onAssign: (faceIds: number[], personId: number) => void;
   onCreateMultiple?: (faceIds: number[], name?: string) => Promise<Person>;
-  personId?: number; // Make optional for orphan faces
+  personId?: number;
 
-  // --- Profile Actions ---
   profileFaceId?: number;
   onSetProfile?: (faceId: number) => void;
 
-  // --- Infinite Scroll ---
   onLoadMore?: () => void;
   hasMore?: boolean;
   isLoadingMore?: boolean;
 
   disableInternalScroll?: boolean;
+
+  // Pinned faces jumped from timeline
+  pinnedFaces?: FaceRead[];
+  onClearPinned?: () => void;
 }
 
 export default function DetectedFaces({
@@ -61,6 +64,8 @@ export default function DetectedFaces({
   isLoadingMore,
   onCreateMultiple,
   disableInternalScroll = false,
+  pinnedFaces,
+  onClearPinned,
 }: DetectedFacesProps) {
   const theme = useTheme();
   const observerRef = useRef<IntersectionObserver | null>(null);
@@ -75,15 +80,41 @@ export default function DetectedFaces({
   const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false);
   const [assignSearchTerm, setAssignSearchTerm] = useState("");
   const [assignCandidates, setAssignCandidates] = useState<Person[]>([]);
-  const [assignTargetPerson, setAssignTargetPerson] = useState<Person | null>(
-    null
-  );
+  const [assignTargetPerson, setAssignTargetPerson] = useState<Person | null>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [openCreateDialog, setOpenCreateDialog] = useState(false);
   const [newPersonName, setNewPersonName] = useState("");
 
   const canMutate = !config.PRESENTATION_MODE;
   const isAnythingSelected = selectedFaceIds.length > 0;
+
+  // Group faces by media_id; preserve iteration order
+  const groupedItems = useMemo(() => {
+    const map = new Map<number, FaceRead[]>();
+    for (const face of faces) {
+      const existing = map.get(face.media_id);
+      if (existing) {
+        existing.push(face);
+      } else {
+        map.set(face.media_id, [face]);
+      }
+    }
+    return Array.from(map.entries()).map(([mediaId, fs]) => ({ mediaId, faces: fs }));
+  }, [faces]);
+
+  const handleToggleGroupSelect = useCallback(
+    (faceIds: number[]) => {
+      const allSelected = faceIds.every((id) => selectedFaceIds.includes(id));
+      setSelectedFaceIds((prev) => {
+        if (allSelected) {
+          return prev.filter((id) => !faceIds.includes(id));
+        } else {
+          return [...new Set([...prev, ...faceIds])];
+        }
+      });
+    },
+    [selectedFaceIds, setSelectedFaceIds],
+  );
 
   const resolveProfileThumb = useCallback((person: Person) => {
     const thumbPath = person.profile_face?.thumbnail_path;
@@ -103,25 +134,19 @@ export default function DetectedFaces({
     (node: HTMLDivElement | null) => {
       if (isLoadingMore) return;
       if (observerRef.current) observerRef.current.disconnect();
-
       observerRef.current = new IntersectionObserver(
         (entries) => {
-          if (
-            entries[0].isIntersecting &&
-            hasMore &&
-            onLoadMore &&
-            !isLoadingMore
-          ) {
+          if (entries[0].isIntersecting && hasMore && onLoadMore && !isLoadingMore) {
             onLoadMore();
           }
         },
-        { threshold: 0.1, rootMargin: "0px 0px 100px 0px" } // Trigger when 100px from bottom
+        { threshold: 0.1, rootMargin: "0px 0px 100px 0px" },
       );
-
       if (node) observerRef.current.observe(node);
     },
-    [isLoadingMore, hasMore, onLoadMore]
+    [isLoadingMore, hasMore, onLoadMore],
   );
+
   useEffect(() => {
     onClearSelection();
   }, [personId]);
@@ -139,16 +164,13 @@ export default function DetectedFaces({
       setAssignCandidates([]);
       return;
     }
-
     if (!assignSearchTerm.trim()) {
       setAssignCandidates([]);
       return;
     }
-
     const handler = setTimeout(async () => {
       setIsSearching(true);
       try {
-        // Assumes a service function that returns a list of people
         const results = await searchPersonsByName(assignSearchTerm);
         setAssignCandidates(results);
       } catch (error) {
@@ -156,45 +178,30 @@ export default function DetectedFaces({
       } finally {
         setIsSearching(false);
       }
-    }, 300); // 300ms debounce
-
-    return () => {
-      clearTimeout(handler);
-    };
+    }, 300);
+    return () => clearTimeout(handler);
   }, [assignSearchTerm, canMutate]);
 
-  if (
-    faces.length === 0 &&
-    !isLoadingMore &&
-    !hasMore &&
-    title === "Detected Faces"
-  ) {
+  if (faces.length === 0 && !isLoadingMore && !hasMore && title === "Detected Faces") {
     return null;
   }
-
   if (faces.length === 0 && isLoadingMore && onLoadMore) {
     return null;
   }
 
-  const handleAssign = async (
-    faceIds: number[],
-    assignedToPersonId: number
-  ) => {
-    if (!canMutate) {
-      return;
-    }
+  const handleAssign = async (faceIds: number[], assignedToPersonId: number) => {
+    if (!canMutate) return;
     onClearSelection();
     await onAssign(faceIds, assignedToPersonId);
   };
+
   const handleDetach = async () => {
-    if (!onDetach || selectedFaceIds.length === 0 || !canMutate) {
-      return;
-    }
+    if (!onDetach || selectedFaceIds.length === 0 || !canMutate) return;
     const faceIds = [...selectedFaceIds];
     onClearSelection();
     await onDetach(faceIds);
   };
-  // --- NEW: Handlers for the assign dialog ---
+
   const handleCloseAssignDialog = () => {
     setIsAssignDialogOpen(false);
     setAssignSearchTerm("");
@@ -209,14 +216,10 @@ export default function DetectedFaces({
   };
 
   const handleAssignClick = () => {
-    if (!canMutate) {
-      return;
-    }
+    if (!canMutate) return;
     if (personId) {
-      // Context: We are on a person's page. Assign directly.
       handleAssign(selectedFaceIds, personId);
     } else {
-      // Context: We are on a page with unassigned faces. Open the search dialog.
       setIsAssignDialogOpen(true);
     }
   };
@@ -225,19 +228,14 @@ export default function DetectedFaces({
     ? {
         maxHeight: "400px",
         overflowY: "auto",
-        pr: 1, // Padding for scrollbar
-        // Custom scrollbar styling
+        pr: 1,
         "&::-webkit-scrollbar": { width: "8px" },
-        "&::-webkit-scrollbar-track": {
-          background: theme.palette.background.default,
-        },
+        "&::-webkit-scrollbar-track": { background: theme.palette.background.default },
         "&::-webkit-scrollbar-thumb": {
           backgroundColor: theme.palette.divider,
           borderRadius: "4px",
         },
-        "&::-webkit-scrollbar-thumb:hover": {
-          background: theme.palette.text.secondary,
-        },
+        "&::-webkit-scrollbar-thumb:hover": { background: theme.palette.text.secondary },
       }
     : {};
 
@@ -253,7 +251,6 @@ export default function DetectedFaces({
               {selectedFaceIds.length} selected
             </Button>
             <Box sx={{ flexGrow: 1 }} />
-
             <Button
               variant="contained"
               size="small"
@@ -315,10 +312,9 @@ export default function DetectedFaces({
           {selectedFaceIds.length < faces.length ? "Select All" : "Select None"}
         </Button>
       </Box>
-      <Dialog
-        open={canMutate && openCreateDialog}
-        onClose={() => setOpenCreateDialog(false)}
-      >
+
+      {/* Create-person dialog */}
+      <Dialog open={canMutate && openCreateDialog} onClose={() => setOpenCreateDialog(false)}>
         <DialogTitle>Create New Person</DialogTitle>
         <DialogContent>
           <TextField
@@ -336,10 +332,7 @@ export default function DetectedFaces({
           <Button onClick={() => setOpenCreateDialog(false)}>Cancel</Button>
           <Button
             onClick={async () => {
-              if (onCreateMultiple) {
-                if (!canMutate) {
-                  return;
-                }
+              if (onCreateMultiple && canMutate) {
                 await onCreateMultiple(selectedFaceIds, newPersonName);
                 setOpenCreateDialog(false);
                 setSelectedFaceIds([]);
@@ -351,6 +344,8 @@ export default function DetectedFaces({
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Assign-to-person dialog */}
       <Dialog
         open={canMutate && isAssignDialogOpen}
         onClose={handleCloseAssignDialog}
@@ -392,9 +387,7 @@ export default function DetectedFaces({
                 <ListItemText
                   primary={person.name || `Person ${person.id}`}
                   secondary={
-                    person.appearance_count
-                      ? `${person.appearance_count} media`
-                      : undefined
+                    person.appearance_count ? `${person.appearance_count} media` : undefined
                   }
                 />
               </ListItemButton>
@@ -403,53 +396,92 @@ export default function DetectedFaces({
         </DialogContent>
         <DialogActions>
           <Button onClick={handleCloseAssignDialog}>Cancel</Button>
-          <Button
-            onClick={handleConfirmAssign}
-            disabled={!assignTargetPerson || isProcessing}
-          >
+          <Button onClick={handleConfirmAssign} disabled={!assignTargetPerson || isProcessing}>
             Assign
           </Button>
         </DialogActions>
       </Dialog>
-      {/* --- Faces Grid --- */}
+
+      {/* Pinned faces (jumped from timeline) */}
+      {pinnedFaces && pinnedFaces.length > 0 && (
+        <Paper
+          variant="outlined"
+          sx={{ p: 2, mb: 2, borderColor: "primary.main", borderWidth: 2 }}
+        >
+          <Box
+            sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 1 }}
+          >
+            <Typography variant="body2" color="primary">
+              Jumped from timeline — {pinnedFaces.length} face
+              {pinnedFaces.length !== 1 ? "s" : ""} from this photo
+            </Typography>
+            <Button size="small" onClick={onClearPinned}>
+              Clear
+            </Button>
+          </Box>
+          <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
+            {pinnedFaces.map((face) => (
+              <FaceCard
+                key={face.id}
+                face={face as any}
+                isProfile={face.id === profileFaceId}
+                onSetProfile={canMutate ? onSetProfile : undefined}
+                selected={canMutate && selectedFaceIds.includes(face.id)}
+                onToggleSelect={canMutate ? onToggleSelect : undefined}
+              />
+            ))}
+          </Box>
+        </Paper>
+      )}
+
+      {/* Faces grid — grouped by media */}
       <Box sx={scrollContainerSx}>
         {faces.length === 0 && !isLoadingMore ? (
-          <Typography
-            sx={{ textAlign: "center", p: 4, color: "text.secondary" }}
-          >
+          <Typography sx={{ textAlign: "center", p: 4, color: "text.secondary" }}>
             No faces to display.
           </Typography>
         ) : (
-          <Box
-            sx={{
-              display: "flex",
-              flexWrap: "wrap",
-              gap: 2,
-              justifyContent: "flex-start",
-            }}
-          >
-            {faces.map((face, index) => (
-              <div
-                key={face.id}
-                // Only attach the internal scroller's ref if internal scroll is enabled
-                ref={
-                  !disableInternalScroll && index === faces.length - 1
-                    ? lastCardRef
-                    : null
-                }
-                style={{ padding: "4px" }}
-              >
-                <FaceCard
-                  face={face}
-                  isProfile={face.id === profileFaceId}
-                  onSetProfile={canMutate ? onSetProfile : undefined}
-                  selected={
-                    canMutate && selectedFaceIds.includes(face.id)
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+            {groupedItems.map((item, groupIndex) => {
+              const isLastGroup = groupIndex === groupedItems.length - 1;
+              if (item.faces.length > 1) {
+                return (
+                  <div
+                    key={item.mediaId}
+                    ref={
+                      !disableInternalScroll && isLastGroup ? lastCardRef : null
+                    }
+                  >
+                    <FaceMediaGroup
+                      faces={item.faces}
+                      profileFaceId={profileFaceId}
+                      onSetProfile={canMutate ? onSetProfile : undefined}
+                      selectedFaceIds={selectedFaceIds}
+                      onToggleSelect={onToggleSelect}
+                      onToggleGroupSelect={handleToggleGroupSelect}
+                      canMutate={canMutate}
+                    />
+                  </div>
+                );
+              }
+              return (
+                <div
+                  key={item.faces[0].id}
+                  ref={
+                    !disableInternalScroll && isLastGroup ? lastCardRef : null
                   }
-                  onToggleSelect={canMutate ? onToggleSelect : undefined}
-                />
-              </div>
-            ))}
+                  style={{ padding: "4px" }}
+                >
+                  <FaceCard
+                    face={item.faces[0] as any}
+                    isProfile={item.faces[0].id === profileFaceId}
+                    onSetProfile={canMutate ? onSetProfile : undefined}
+                    selected={canMutate && selectedFaceIds.includes(item.faces[0].id)}
+                    onToggleSelect={canMutate ? onToggleSelect : undefined}
+                  />
+                </div>
+              );
+            })}
           </Box>
         )}
         {isLoadingMore && (

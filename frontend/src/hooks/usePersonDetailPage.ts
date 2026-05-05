@@ -4,6 +4,7 @@ import { getPerson, getPersonMediaAppearances } from "../services/person";
 import {
   autoMergeSimilarPersons,
   deletePerson as deletePersonService,
+  detachMediaFromPerson,
   getPersonFaces,
   getSimilarPersons,
   getPersonRelationshipGraph,
@@ -89,6 +90,10 @@ export const usePersonDetailPage = () => {
     return `person-${id}-media-appearances-${filterIds}${tagKey}`;
   }, [id, filterPeople, filterTags]);
 
+  const [facesSortBy, setFacesSortBy] = useState("id_desc");
+  const facesSortByRef = useRef(facesSortBy);
+  facesSortByRef.current = facesSortBy;
+
   const detectedFacesListKey = useMemo(
     () => (id ? `/api/person/${id}/faces` : ""),
     [id],
@@ -108,7 +113,7 @@ export const usePersonDetailPage = () => {
     if (!id || !detectedFacesListKey) return;
     clearList(detectedFacesListKey);
     await fetchInitial(detectedFacesListKey, () =>
-      getPersonFaces(Number(id), null, 20),
+      getPersonFaces(Number(id), null, 20, facesSortByRef.current),
     );
   }, [id, detectedFacesListKey, clearList, fetchInitial]);
 
@@ -157,9 +162,31 @@ export const usePersonDetailPage = () => {
   const loadMoreDetectedFaces = useCallback(async () => {
     if (!id) return;
     await loadMore(detectedFacesListKey, (cursor) =>
-      getPersonFaces(Number(id), cursor ?? null, 20),
+      getPersonFaces(Number(id), cursor ?? null, 20, facesSortByRef.current),
     );
   }, [id, loadMore, detectedFacesListKey]);
+
+  const fetchFacesForMedia = useCallback(
+    async (mediaId: number): Promise<FaceRead[]> => {
+      if (!id) return [];
+      const result = await getPersonFaces(Number(id), null, 50, "id_desc", mediaId);
+      return result.items ?? [];
+    },
+    [id],
+  );
+
+  const handleFacesSortChange = useCallback(
+    async (sort: string) => {
+      if (!id) return;
+      setFacesSortBy(sort);
+      facesSortByRef.current = sort;
+      clearList(detectedFacesListKey);
+      await fetchInitial(detectedFacesListKey, () =>
+        getPersonFaces(Number(id), null, 20, sort),
+      );
+    },
+    [id, detectedFacesListKey, clearList, fetchInitial],
+  );
 
   const fetchSuggestedFaces = useCallback(
     async (signal?: AbortSignal) => {
@@ -450,6 +477,19 @@ export const usePersonDetailPage = () => {
       }
   };
 
+  const handleDetachMediaWrapper = async (mediaId: number) => {
+    if (!id) return;
+    try {
+      await detachMediaFromPerson(Number(id), mediaId);
+      await Promise.all([refreshDetectedFaces(), refreshMediaAppearances(), loadDetail()]);
+      await refreshSuggestedFaces();
+      await reloadRelationshipGraphIfLoaded();
+    } catch (err) {
+      console.error("Failed to detach media from person:", err);
+      showMessage("Failed to remove media from person", "error");
+    }
+  };
+
   const handleCreateWrapper = async (
     faceIds: number[],
     name?: string,
@@ -697,7 +737,11 @@ export const usePersonDetailPage = () => {
     handleAssignWrapper,
     handleDeleteWrapper,
     handleDetachWrapper,
+    handleDetachMediaWrapper,
     handleCreateWrapper,
+    facesSortBy,
+    handleFacesSortChange,
+    fetchFacesForMedia,
     mergeSelectedSimilar,
     autoMergeSimilar,
     isMergingSimilar,

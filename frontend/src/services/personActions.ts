@@ -137,19 +137,32 @@ export const getPersonRelationshipGraph = async (
 export const getPersonFaces = async (
   personId: number,
   cursor: string | null,
-  limit: number
+  limit: number,
+  sortBy: string = "id_desc",
+  mediaId?: number
 ): Promise<any> => {
   const params = new URLSearchParams({
     limit: limit.toString(),
+    sort_by: sortBy,
   });
-  if (cursor) {
-    params.append("cursor", cursor);
-  }
+  if (cursor) params.append("cursor", cursor);
+  if (mediaId != null) params.append("media_id", mediaId.toString());
   const res = await fetch(
     `${API}/api/person/${personId}/faces?${params.toString()}`
   );
   if (!res.ok) throw new Error("Failed to fetch person faces");
   return res.json();
+};
+
+export const detachMediaFromPerson = async (
+  personId: number,
+  mediaId: number
+): Promise<void> => {
+  const res = await fetch(
+    `${API}/api/person/${personId}/media/${mediaId}/detach`,
+    { method: "POST" }
+  );
+  if (!res.ok) throw new Error("Failed to detach media from person");
 };
 
 export const setProfileFace = async (faceId: number, personId: number) => {
