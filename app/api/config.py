@@ -14,9 +14,10 @@ from app.config import (
     settings,
     write_bootstrap,
 )
-from app.models import ProcessingTask
+from app.models import Media, ProcessingTask
 from app.tagging import sanitize_custom_tag_list
 from app.tasks import schedule_custom_auto_tagging
+from app.utils import delete_record
 
 
 def _ensure_config_access_allowed() -> None:
@@ -29,6 +30,58 @@ def _ensure_config_access_allowed() -> None:
 
 router = APIRouter(dependencies=[Depends(_ensure_config_access_allowed)])
 logger = logging.getLogger(__name__)
+
+
+def _resolve_path_for_compare(value: Path) -> Path:
+    try:
+        return value.expanduser().resolve()
+    except Exception:
+        try:
+            return value.expanduser()
+        except Exception:
+            return value
+
+
+def _is_within(path: Path, base: Path) -> bool:
+    try:
+        path.relative_to(base)
+        return True
+    except ValueError:
+        return False
+
+
+def _removed_media_dirs(
+    current_settings: AppSettings, incoming_settings: AppSettings
+) -> list[Path]:
+    current_dirs = {
+        _resolve_path_for_compare(base)
+        for base, _ in current_settings.general.resolved_media_dirs()
+    }
+    incoming_dirs = {
+        _resolve_path_for_compare(base)
+        for base, _ in incoming_settings.general.resolved_media_dirs()
+    }
+    return sorted(current_dirs - incoming_dirs, key=lambda p: str(p).lower())
+
+
+def _media_ids_under_dirs(session: Session, base_dirs: list[Path]) -> list[int]:
+    if not base_dirs:
+        return []
+    media_rows = session.exec(select(Media.id, Media.path)).all()
+    affected: list[int] = []
+    for media_id, raw_path in media_rows:
+        try:
+            media_path = _resolve_path_for_compare(Path(raw_path))
+        except Exception:
+            continue
+        if any(_is_within(media_path, base) for base in base_dirs):
+            affected.append(media_id)
+    return affected
+
+
+class SaveSettingsRequest(BaseModel):
+    settings: AppSettings
+    acknowledge_media_dir_removals: bool = False
 
 
 @router.post("/reload", status_code=204)
@@ -55,9 +108,39 @@ async def get_settings():
 
 @router.post("/", response_model=AppSettings)
 async def save_settings_endpoint(
-    settings_model: AppSettings,
+    payload: SaveSettingsRequest | AppSettings,
 ):
     """Saves the settings model to the config.yaml file."""
+    if isinstance(payload, SaveSettingsRequest):
+        settings_model = payload.settings
+        acknowledge_removals = bool(payload.acknowledge_media_dir_removals)
+    else:
+        settings_model = payload
+        acknowledge_removals = False
+
+    removed_dirs = _removed_media_dirs(settings, settings_model)
+    if removed_dirs:
+        with Session(db.engine) as session:
+            removed_media_ids = _media_ids_under_dirs(session, removed_dirs)
+            if removed_media_ids and not acknowledge_removals:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": "Removing media directories removes indexed media records for those directories.",
+                        "removed_media_dirs": [str(p) for p in removed_dirs],
+                        "media_records_to_remove": len(removed_media_ids),
+                        "requires_acknowledgement": True,
+                    },
+                )
+            if removed_media_ids:
+                logger.warning(
+                    "Purging %d media records after media directory removal: %s",
+                    len(removed_media_ids),
+                    ", ".join(str(p) for p in removed_dirs),
+                )
+                for media_id in removed_media_ids:
+                    delete_record(media_id, session)
+
     incoming_custom = sanitize_custom_tag_list(settings_model.tagging.custom_tags)
     existing_custom = sanitize_custom_tag_list(settings.tagging.custom_tags)
 

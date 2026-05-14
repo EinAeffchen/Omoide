@@ -24,11 +24,15 @@ def _resolve_webview2_runtime_dir() -> Path | None:
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
         candidates.append(Path(sys._MEIPASS) / "webview2runtime")
     try:
-        candidates.append(Path(sys.executable).resolve().parent / "webview2runtime")
+        candidates.append(
+            Path(sys.executable).resolve().parent / "webview2runtime"
+        )
     except Exception:
         pass
     try:
-        candidates.append(Path(__file__).resolve().parent.parent / "webview2runtime")
+        candidates.append(
+            Path(__file__).resolve().parent.parent / "webview2runtime"
+        )
     except Exception:
         pass
     for candidate in candidates:
@@ -51,29 +55,30 @@ if sys.platform.startswith("win"):
     disable_gpu = disable_gpu_raw is None or _env_truthy(disable_gpu_raw)
     if gui_choice == "qt" and disable_gpu:
         flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
-        extra_flags = (
-            "--disable-gpu --disable-gpu-compositing --disable-gpu-rasterization"
-        )
+        extra_flags = "--disable-gpu --disable-gpu-compositing --disable-gpu-rasterization"
         if extra_flags not in flags:
-            os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = f"{flags} {extra_flags}".strip()
+            os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
+                f"{flags} {extra_flags}".strip()
+            )
 import socket
 
 import pillow_heif
 import uvicorn
 import webview
 from anyio import to_thread
-from PIL import Image, ImageOps
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from PIL import Image, ImageOps
 from sqlalchemy import and_, or_
 from sqlmodel import Session, select
 
 import app.database as db
 from app.api import (
     blur,
+    broken,
     config,
     duplicates,
     face,
@@ -130,16 +135,21 @@ def scheduled_scan_job():
                         ProcessingTask.status == "running",
                         ProcessingTask.status == "pending",
                     ),
-                    ProcessingTask.created_at > datetime.now() - timedelta(hours=6),
+                    ProcessingTask.created_at
+                    > datetime.now() - timedelta(hours=6),
                 )
             )
         ).first()
         if running_task:
-            logger.info("A processing task is already running. Skipping scheduled run.")
+            logger.info(
+                "A processing task is already running. Skipping scheduled run."
+            )
             return
 
         # Create the first task in the chain
-        task = ProcessingTask(task_type="clean_missing_files", total=0, processed=0)
+        task = ProcessingTask(
+            task_type="clean_missing_files", total=0, processed=0
+        )
         session.add(task)
         session.commit()
         session.refresh(task)
@@ -182,7 +192,9 @@ def configure_auto_scan_job() -> None:
             misfire_grace_time=60,
             replace_existing=True,
         )
-        logger.info("Auto scan enabled. Scan job scheduled every %s minutes.", interval)
+        logger.info(
+            "Auto scan enabled. Scan job scheduled every %s minutes.", interval
+        )
 
     if not scheduler.running:
         scheduler.start()
@@ -315,9 +327,14 @@ app.include_router(config, prefix="/api/config", tags=["config"])
 app.include_router(missing, prefix="/api/missing", tags=["missing"])
 app.include_router(nopersons, prefix="/api/nopersons", tags=["nopersons"])
 app.include_router(untagged, prefix="/api/untagged", tags=["untagged"])
-app.include_router(shortvideos, prefix="/api/shortvideos", tags=["shortvideos"])
-app.include_router(lowresolution, prefix="/api/lowresolution", tags=["lowresolution"])
+app.include_router(
+    shortvideos, prefix="/api/shortvideos", tags=["shortvideos"]
+)
+app.include_router(
+    lowresolution, prefix="/api/lowresolution", tags=["lowresolution"]
+)
 app.include_router(noexifdate, prefix="/api/noexifdate", tags=["noexifdate"])
+app.include_router(broken.router, prefix="/api/broken", tags=["broken"])
 
 
 @app.get("/thumbnails/{file_path:path}", include_in_schema=False)
@@ -380,7 +397,9 @@ async def serve_original_media(file_path: str):
             continue
         seen.add(normalized)
 
-        if not any(_is_within(normalized, media_dir) for media_dir in media_dirs):
+        if not any(
+            _is_within(normalized, media_dir) for media_dir in media_dirs
+        ):
             continue
 
         if not normalized.is_file():
@@ -393,6 +412,7 @@ async def serve_original_media(file_path: str):
         raise HTTPException(status_code=404, detail="File not found")
 
     if resolved_target.suffix.lower() in (".heic", ".heif"):
+
         def _to_jpeg() -> bytes:
             pillow_heif.register_heif_opener()
             img = ImageOps.exif_transpose(Image.open(resolved_target))
@@ -478,15 +498,21 @@ async def spa_catch_all(full_path: str):
         "VITE_API_PRESENTATION_MODE": _bool_to_js(
             bool(settings.general.presentation_mode)
         ),
-        "VITE_API_ENABLE_PEOPLE": _bool_to_js(bool(settings.general.enable_people)),
+        "VITE_API_ENABLE_PEOPLE": _bool_to_js(
+            bool(settings.general.enable_people)
+        ),
         "VITE_API_MEME_MODE": _bool_to_js(bool(settings.general.meme_mode)),
         "PERSON_RELATIONSHIP_MAX_NODES": str(
             settings.general.person_relationship_max_nodes
         ),
         "APP_VERSION": APP_VERSION,
     }
-    config_script = f"<script>window.runtimeConfig = {json.dumps(config)};</script>"
-    modified_html = html_content.replace("</head>", f"{config_script}</head>", 1)
+    config_script = (
+        f"<script>window.runtimeConfig = {json.dumps(config)};</script>"
+    )
+    modified_html = html_content.replace(
+        "</head>", f"{config_script}</head>", 1
+    )
 
     return HTMLResponse(
         content=modified_html,
@@ -677,6 +703,7 @@ if __name__ == "__main__":
         logger.exception("Failed to start webview window: %s", exc)
         if sys.platform.startswith("win"):
             import ctypes
+
             ctypes.windll.user32.MessageBoxW(
                 0,
                 (

@@ -45,6 +45,12 @@ import {
   Radio,
   ToggleButton,
   ToggleButtonGroup,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogContentText,
+  DialogActions,
+  Checkbox,
 } from "@mui/material";
 import {
   Paper,
@@ -68,6 +74,7 @@ const facePresets: Record<
     face_recognition_min_confidence: 0.6,
     existing_person_cosine_threshold: 0.86,
     existing_person_min_cosine_margin: 0.07,
+    rerun_face_iou_dedupe_threshold: 0.7,
     face_recognition_min_face_pixels: 1600,
     person_min_face_count: 3,
     person_min_media_count: 2,
@@ -87,6 +94,7 @@ const facePresets: Record<
     face_recognition_min_confidence: 0.5,
     existing_person_cosine_threshold: 0.8,
     existing_person_min_cosine_margin: 0.05,
+    rerun_face_iou_dedupe_threshold: 0.7,
     face_recognition_min_face_pixels: 1600,
     person_min_face_count: 2,
     person_min_media_count: 2,
@@ -106,6 +114,7 @@ const facePresets: Record<
     face_recognition_min_confidence: 0.4,
     existing_person_cosine_threshold: 0.75,
     existing_person_min_cosine_margin: 0.03,
+    rerun_face_iou_dedupe_threshold: 0.7,
     face_recognition_min_face_pixels: 1200,
     person_min_face_count: 2,
     person_min_media_count: 2,
@@ -154,6 +163,29 @@ function TabPanel(props: TabPanelProps) {
   );
 }
 
+const normalizeMediaDirPath = (raw: string): string => {
+  const trimmed = (raw ?? "").trim();
+  if (!trimmed) return "";
+  const unified = trimmed.replace(/[\\/]+/g, "/");
+  return unified.replace(/\/+$/, "").toLowerCase();
+};
+
+const normalizedMediaDirPaths = (dirs: MediaDirectory[] = []): string[] =>
+  Array.from(
+    new Set(
+      dirs
+        .map((dir) => normalizeMediaDirPath(dir?.path ?? ""))
+        .filter((p) => p.length > 0)
+    )
+  );
+
+interface MediaDirRemovalDialogState {
+  open: boolean;
+  index: number;
+  path: string;
+  acknowledged: boolean;
+}
+
 export default function ConfigurationPage() {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -184,6 +216,16 @@ export default function ConfigurationPage() {
     "presets" | "manual"
   >("presets");
   const [runningProcessor, setRunningProcessor] = useState<string | null>(null);
+  const [savedMediaDirPaths, setSavedMediaDirPaths] = useState<string[]>([]);
+  const [acknowledgedRemovedMediaDirPaths, setAcknowledgedRemovedMediaDirPaths] =
+    useState<Set<string>>(new Set());
+  const [removeMediaDirDialog, setRemoveMediaDirDialog] =
+    useState<MediaDirRemovalDialogState>({
+      open: false,
+      index: -1,
+      path: "",
+      acknowledged: false,
+    });
 
   // Local state for comma-separated text fields — avoids cursor-jump caused by
   // the parse→join round-trip through config state on every keystroke.
@@ -222,6 +264,10 @@ export default function ConfigurationPage() {
           }),
         ]);
         setConfig(data);
+        setSavedMediaDirPaths(
+          normalizedMediaDirPaths(data.general.media_dirs ?? [])
+        );
+        setAcknowledgedRemovedMediaDirPaths(new Set());
         if (release) {
           setUpdateInfo(release);
           setUpdateError(release.error ?? null);
@@ -290,7 +336,22 @@ export default function ConfigurationPage() {
         },
       };
 
-      await saveConfig(sanitized);
+      const currentNormalizedPaths = normalizedMediaDirPaths(
+        sanitized.general.media_dirs ?? []
+      );
+      const removedMountedPaths = savedMediaDirPaths.filter(
+        (path) => !currentNormalizedPaths.includes(path)
+      );
+      const hasUnacknowledgedRemoval = removedMountedPaths.some(
+        (path) => !acknowledgedRemovedMediaDirPaths.has(path)
+      );
+      if (hasUnacknowledgedRemoval) {
+        throw new Error(
+          "Removing a media directory requires acknowledgement. Remove it via the delete button and confirm the warning first."
+        );
+      }
+
+      await saveConfig(sanitized, removedMountedPaths.length > 0);
 
       // If a different profile is selected, switch to it as part of Save
       if (
@@ -306,6 +367,10 @@ export default function ConfigurationPage() {
       // update local state with the authoritative server config.
       const latest = await reloadConfig();
       setConfig(latest);
+      setSavedMediaDirPaths(
+        normalizedMediaDirPaths(latest.general.media_dirs ?? [])
+      );
+      setAcknowledgedRemovedMediaDirPaths(new Set());
       await refreshProfiles();
 
       // If the profile changed, do a full page reload to ensure all pages pull fresh data
@@ -380,7 +445,21 @@ export default function ConfigurationPage() {
     });
   };
 
-  const removeMediaDir = (index: number) => {
+  const requestRemoveMediaDir = (index: number) => {
+    const currentPath =
+      (config?.general.media_dirs?.[index]?.path ?? "").trim() || "(empty path)";
+    setRemoveMediaDirDialog({
+      open: true,
+      index,
+      path: currentPath,
+      acknowledged: false,
+    });
+  };
+
+  const confirmRemoveMediaDir = () => {
+    const index = removeMediaDirDialog.index;
+    const removedPath = normalizeMediaDirPath(removeMediaDirDialog.path);
+    if (index < 0) return;
     setConfig((prev) => {
       if (!prev) return prev;
       const next = prev.general.media_dirs.filter((_, i) => i !== index);
@@ -388,6 +467,28 @@ export default function ConfigurationPage() {
         ...prev,
         general: { ...prev.general, media_dirs: next },
       };
+    });
+    if (removedPath) {
+      setAcknowledgedRemovedMediaDirPaths((prev) => {
+        const next = new Set(prev);
+        next.add(removedPath);
+        return next;
+      });
+    }
+    setRemoveMediaDirDialog({
+      open: false,
+      index: -1,
+      path: "",
+      acknowledged: false,
+    });
+  };
+
+  const closeRemoveMediaDirDialog = () => {
+    setRemoveMediaDirDialog({
+      open: false,
+      index: -1,
+      path: "",
+      acknowledged: false,
     });
   };
 
@@ -574,6 +675,10 @@ export default function ConfigurationPage() {
       await apiCreateProfile(newProfilePath, newProfileName || "Profile");
       const latest = await reloadConfig();
       setConfig(latest);
+      setSavedMediaDirPaths(
+        normalizedMediaDirPaths(latest.general.media_dirs ?? [])
+      );
+      setAcknowledgedRemovedMediaDirPaths(new Set());
       const lp = await listProfiles();
       setProfiles(lp);
       setSelectedProfilePath(lp.active_path);
@@ -957,7 +1062,7 @@ export default function ConfigurationPage() {
                   </IconButton>
                   <IconButton
                     aria-label="remove media directory"
-                    onClick={() => removeMediaDir(idx)}
+                    onClick={() => requestRemoveMediaDir(idx)}
                     size="large"
                   >
                     <DeleteIcon />
@@ -1512,6 +1617,25 @@ export default function ConfigurationPage() {
                     type="number"
                     inputProps={{ step: 0.01 }}
                     helperText="Require a gap between best and 2nd-best match to avoid ambiguity"
+                  />
+                </Grid>
+                <Grid size={{ xs: 12, sm: 6 }}>
+                  <TextField
+                    label="Rerun Face IoU Dedup Threshold"
+                    value={
+                      config.face_recognition.rerun_face_iou_dedupe_threshold
+                    }
+                    onChange={(e) =>
+                      setFaceValue(
+                        "rerun_face_iou_dedupe_threshold",
+                        parseFloat(e.target.value)
+                      )
+                    }
+                    fullWidth
+                    margin="normal"
+                    type="number"
+                    inputProps={{ step: 0.01, min: 0, max: 1 }}
+                    helperText="On face rerun, skip detections overlapping existing faces above this IoU"
                   />
                 </Grid>
                 <Grid size={{ xs: 12, sm: 6 }}>
@@ -2132,6 +2256,49 @@ export default function ConfigurationPage() {
           {isSaving ? <CircularProgress size={24} color="inherit" /> : "Save"}
         </Button>
       </Box>
+      <Dialog
+        open={removeMediaDirDialog.open}
+        onClose={closeRemoveMediaDirDialog}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Remove Media Directory</DialogTitle>
+        <DialogContent>
+          <DialogContentText sx={{ mb: 2 }}>
+            Removing this media directory from configuration will remove all indexed
+            media records under that path from Omoide on save. Original files on disk
+            are not deleted.
+          </DialogContentText>
+          <DialogContentText sx={{ mb: 2 }}>
+            Directory: <code>{removeMediaDirDialog.path}</code>
+          </DialogContentText>
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={removeMediaDirDialog.acknowledged}
+                onChange={(e) =>
+                  setRemoveMediaDirDialog((prev) => ({
+                    ...prev,
+                    acknowledged: e.target.checked,
+                  }))
+                }
+              />
+            }
+            label="I understand the indexed media for this directory will be removed when I save."
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeRemoveMediaDirDialog}>Cancel</Button>
+          <Button
+            color="error"
+            variant="contained"
+            onClick={confirmRemoveMediaDir}
+            disabled={!removeMediaDirDialog.acknowledged}
+          >
+            Remove Directory
+          </Button>
+        </DialogActions>
+      </Dialog>
       <Snackbar
         open={snackbar.open}
         autoHideDuration={6000}

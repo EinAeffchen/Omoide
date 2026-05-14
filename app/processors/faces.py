@@ -15,9 +15,14 @@ from app.api.media import delete_media_record
 from app.config import settings
 from app.database import safe_commit
 from app.logger import logger
-from app.models import ExifData, Face, Media, Scene
+from app.models import ExifData, Face, Media, Person, Scene
 from app.processors.base import MediaProcessor
-from app.utils import get_thumb_folder, to_posix_str, vector_to_blob
+from app.utils import (
+    auto_select_profile_face,
+    get_thumb_folder,
+    to_posix_str,
+    vector_to_blob,
+)
 
 
 class FaceProcessor(MediaProcessor):
@@ -43,6 +48,15 @@ class FaceProcessor(MediaProcessor):
             if not any(self._iou(fa.bbox, fb.bbox) > iou_threshold for fa in merged):
                 merged.append(fb)
         return merged
+
+    @staticmethod
+    def _stored_bbox_to_xyxy(bbox: list[int] | None) -> list[int] | None:
+        if not bbox or len(bbox) < 4:
+            return None
+        x, y, w, h = map(int, bbox[:4])
+        if w <= 0 or h <= 0:
+            return None
+        return [x, y, x + w, y + h]
 
     def _crop_with_margin(self, img: np.ndarray, bbox: list[int], pad_pct: float = 0.2):
         """
@@ -124,6 +138,17 @@ class FaceProcessor(MediaProcessor):
             )
         ).first():
             return True
+        dedupe_iou_threshold = settings.face_recognition.rerun_face_iou_dedupe_threshold
+        existing_bboxes = [
+            parsed
+            for parsed in (
+                self._stored_bbox_to_xyxy(face.bbox)
+                for face in session.exec(
+                    select(Face).where(Face.media_id == media.id)
+                ).all()
+            )
+            if parsed is not None
+        ]
         for scene in tqdm(scenes):
             try:
                 if isinstance(scene, tuple):
@@ -179,6 +204,21 @@ class FaceProcessor(MediaProcessor):
                 continue
 
             face_entries = self._parse_faces(faces, scene_det, media)
+            if existing_bboxes and face_entries:
+                filtered_face_entries: list[tuple[Face, np.ndarray]] = []
+                for face_obj, embedding_vec in face_entries:
+                    candidate_bbox = self._stored_bbox_to_xyxy(face_obj.bbox)
+                    if candidate_bbox is None:
+                        continue
+                    if any(
+                        self._iou(existing_bbox, candidate_bbox)
+                        > dedupe_iou_threshold
+                        for existing_bbox in existing_bboxes
+                    ):
+                        continue
+                    filtered_face_entries.append((face_obj, embedding_vec))
+                    existing_bboxes.append(candidate_bbox)
+                face_entries = filtered_face_entries
 
             if not face_entries:
                 continue
@@ -242,5 +282,45 @@ class FaceProcessor(MediaProcessor):
         return Media.faces_extracted == False  # noqa: E712
 
     def reset_for_media(self, media: Media, session) -> None:
+        orphan_faces = session.exec(
+            select(Face).where(
+                Face.media_id == media.id,
+                Face.person_id.is_(None),
+            )
+        ).all()
+
+        if orphan_faces:
+            face_ids = [face.id for face in orphan_faces]
+            profile_owner_ids = session.exec(
+                select(Person.id).where(Person.profile_face_id.in_(face_ids))
+            ).all()
+
+            for face in orphan_faces:
+                session.exec(
+                    text(
+                        """
+                        DELETE FROM face_embeddings
+                        WHERE face_id=:f_id
+                        """
+                    ).bindparams(f_id=face.id)
+                )
+                session.delete(face)
+                if not face.thumbnail_path:
+                    continue
+                thumb = settings.general.thumb_dir / face.thumbnail_path
+                try:
+                    thumb.unlink()
+                except FileNotFoundError:
+                    pass
+                except OSError as exc:
+                    logger.debug(
+                        "Failed to remove face thumbnail %s: %s",
+                        thumb,
+                        exc,
+                    )
+
+            for person_id in profile_owner_ids:
+                auto_select_profile_face(session, person_id)
+
         media.faces_extracted = False
         session.add(media)

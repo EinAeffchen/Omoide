@@ -113,6 +113,8 @@ class Media(SQLModel, table=True):
     missing_since: datetime | None = Field(default=None, index=True)
     missing_confirmed: bool = Field(default=False, index=True)
 
+    processing_error: str | None = Field(default=None, nullable=True)
+
     is_favorite: bool = Field(default=False)
     phash: str | None = Field(index=True)
     laplacian_score: float | None = Field(default=None, nullable=True, index=True)

@@ -25,7 +25,7 @@ from sqlmodel import Session, delete, select, text, update
 from tqdm import tqdm
 
 from app.accelerators import get_ffmpeg_accel_config
-from app.config import ReadOnlyMediaError, settings
+from app.config import settings
 from app.database import safe_commit
 from app.ffmpeg import ensure_ffmpeg_available
 from app.logger import logger
@@ -103,6 +103,8 @@ def recalculate_person_appearance_counts(
     ids = {pid for pid in person_ids if pid is not None}
     if not ids:
         return
+
+    session.flush()
 
     appearance_pairs = union_all(
         select(
@@ -399,28 +401,20 @@ def get_thumb_folder(path: Path) -> Path:
         return latest
 
 
-def fix_image_rotation(full_path: Path) -> None:
+def _apply_thumbnail_orientation(
+    img: Image.Image, source_path: Path
+) -> Image.Image:
+    """Apply EXIF orientation in-memory for thumbnail generation."""
     if not settings.scan.auto_rotate:
-        return
-
-    img = Image.open(full_path)
+        return img
     try:
-        exif = img.getexif()
-        orientation = exif.get(274)
-        if not orientation or orientation == 1:
-            return
-    except SyntaxError:
-        return
-    try:
-        transposed = ImageOps.exif_transpose(img)
+        return ImageOps.exif_transpose(img)
     except OSError:
         logger.warning(
-            "Image: %s is truncated, you might want to delete it.", full_path
+            "Image: %s is truncated, using un-rotated decode for thumbnail.",
+            source_path,
         )
-        return
-    del exif[274]
-    exif_bytes = exif.tobytes()
-    transposed.save(full_path, format=img.format, exif=exif_bytes)
+        return img
 
 
 def _frame_to_image(frame: np.ndarray) -> Image.Image | None:
@@ -626,10 +620,10 @@ def generate_thumbnail(media: Media) -> tuple[str | None, str | None]:
             return None, "ffmpeg did not produce a thumbnail file"
     else:
         try:
-            fix_image_rotation(filepath)
             try:
-                img_obj: Image.Image = Image.open(filepath)
-                img_obj.thumbnail((360, -1))
+                with Image.open(filepath) as src_img:
+                    img_obj = _apply_thumbnail_orientation(src_img, filepath)
+                    img_obj.thumbnail((360, -1))
             except Exception:
                 if filepath.suffix.lower() in (".heic", ".heif"):
                     # Spatial HEICs (and other multi-image HEIF containers) can
@@ -637,6 +631,7 @@ def generate_thumbnail(media: Media) -> tuple[str | None, str | None]:
                     # disparity images. Open only the primary image explicitly.
                     heif_file = pillow_heif.open_heif(filepath)
                     img_obj = heif_file[0].to_pillow()
+                    img_obj = _apply_thumbnail_orientation(img_obj, filepath)
                     img_obj.thumbnail((360, -1))
                 else:
                     raise
@@ -1201,7 +1196,7 @@ def delete_file(session: Session, media_id: int):
     orig = Path(media.path)
     try:
         settings.general.ensure_media_path_writable(orig)
-    except ReadOnlyMediaError as exc:
+    except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     delete_record(media_id, session)

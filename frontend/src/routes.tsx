@@ -22,6 +22,7 @@ import UntaggedPage from "./pages/UntaggedPage";
 import ShortVideosPage from "./pages/ShortVideosPage";
 import LowResolutionPage from "./pages/LowResolutionPage";
 import NoExifDatePage from "./pages/NoExifDatePage";
+import BrokenMediaPage from "./pages/BrokenMediaPage";
 import { WriteModeBoundary } from "./components/ReadOnlyBoundary";
 
 export const AppRoutes = () => {
@@ -127,6 +128,14 @@ export const AppRoutes = () => {
             element={
               <WriteModeBoundary description="No-EXIF-date review is disabled while the system is in read-only mode.">
                 <NoExifDatePage />
+              </WriteModeBoundary>
+            }
+          />
+          <Route
+            path="/broken"
+            element={
+              <WriteModeBoundary description="Broken media review is disabled while the system is in read-only mode.">
+                <BrokenMediaPage />
               </WriteModeBoundary>
             }
           />

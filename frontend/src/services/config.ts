@@ -10,16 +10,23 @@ export const getConfig = async (): Promise<AppConfig> => {
   return response.json();
 };
 
-export const saveConfig = async (config: AppConfig): Promise<AppConfig> => {
+export const saveConfig = async (
+  config: AppConfig,
+  acknowledgeMediaDirRemovals = false
+): Promise<AppConfig> => {
   const response = await fetch(`${API}/api/config/`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(config),
+    body: JSON.stringify({
+      settings: config,
+      acknowledge_media_dir_removals: acknowledgeMediaDirRemovals,
+    }),
   });
   if (!response.ok) {
-    throw new Error("Failed to save config");
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err?.detail?.message || err?.detail || "Failed to save config");
   }
   return response.json();
 };

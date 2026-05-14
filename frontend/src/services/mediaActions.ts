@@ -32,3 +32,13 @@ export const openMediaFolder = async (mediaId: number): Promise<void> => {
     throw new Error(msg || "Failed to open folder");
   }
 };
+
+export const openMediaFile = async (mediaId: number): Promise<void> => {
+  const res = await fetch(`${API}/api/media/${mediaId}/open-file`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const msg = await res.text().catch(() => "Failed to open file");
+    throw new Error(msg || "Failed to open file");
+  }
+};

@@ -24,6 +24,28 @@ from app.tasks.state import (
 )
 from app.utils import vector_from_stored
 
+COUNT_CUSTOM_AUTOTAG_MEDIA_SQL = text(
+    """
+    SELECT COUNT(1)
+    FROM media AS m
+    JOIN media_embeddings AS me ON me.media_id = m.id
+    WHERE m.missing_since IS NULL
+      AND m.embeddings_created = 1
+    """
+)
+SELECT_CUSTOM_AUTOTAG_MEDIA_SQL = text(
+    """
+    SELECT
+        m.id   AS media_id,
+        m.path AS path,
+        me.embedding AS embedding
+    FROM media AS m
+    JOIN media_embeddings AS me ON me.media_id = m.id
+    WHERE m.missing_since IS NULL
+      AND m.embeddings_created = 1
+    """
+)
+
 
 def _get_or_create_tag(
     session: Session,
@@ -66,28 +88,6 @@ def run_custom_auto_tagging(task_id: str, tags: Sequence[str]) -> None:
         [tag_vectors[tag] for tag in ordered_tags], axis=0
     ).astype(np.float32, copy=False)
 
-    count_sql = text(
-        """
-        SELECT COUNT(1)
-        FROM media AS m
-        JOIN media_embeddings AS me ON me.media_id = m.id
-        WHERE m.missing_since IS NULL
-          AND m.embeddings_created = 1
-        """
-    )
-    data_sql = text(
-        """
-        SELECT
-            m.id   AS media_id,
-            m.path AS path,
-            me.embedding AS embedding
-        FROM media AS m
-        JOIN media_embeddings AS me ON me.media_id = m.id
-        WHERE m.missing_since IS NULL
-          AND m.embeddings_created = 1
-        """
-    )
-
     with Session(db.engine) as session:
         task = session.get(ProcessingTask, task_id)
         if task is None:
@@ -97,9 +97,11 @@ def run_custom_auto_tagging(task_id: str, tags: Sequence[str]) -> None:
             )
             return
 
+        total = session.exec(COUNT_CUSTOM_AUTOTAG_MEDIA_SQL).scalar_one_or_none() or 0
         task.status = "running"
         task.started_at = datetime.now(timezone.utc)
         task.processed = 0
+        task.total = total
         session.add(task)
         safe_commit(session)
 
@@ -109,11 +111,6 @@ def run_custom_auto_tagging(task_id: str, tags: Sequence[str]) -> None:
             current_item=None,
             tags=len(ordered_tags),
         )
-
-        total = session.exec(count_sql).scalar_one_or_none() or 0
-        task.total = total
-        session.add(task)
-        safe_commit(session)
 
         if total == 0:
             task.status = "completed"
@@ -129,7 +126,7 @@ def run_custom_auto_tagging(task_id: str, tags: Sequence[str]) -> None:
         cancelled = False
 
         try:
-            rows = session.exec(data_sql).mappings()
+            rows = session.exec(SELECT_CUSTOM_AUTOTAG_MEDIA_SQL).mappings()
             for row in rows:
                 session.refresh(task, attribute_names=["status"])
                 if task.status == "cancelled":
@@ -238,6 +235,13 @@ def schedule_custom_auto_tagging(tags: Sequence[str]) -> ProcessingTask | None:
                 existing.id,
             )
             return existing
+
+        total = session.exec(COUNT_CUSTOM_AUTOTAG_MEDIA_SQL).scalar_one_or_none() or 0
+        if total == 0:
+            logger.info(
+                "Auto-tagging task skipped: no embedded media available for tagging."
+            )
+            return None
 
         task = ProcessingTask(task_type="auto_tag_custom")
         session.add(task)

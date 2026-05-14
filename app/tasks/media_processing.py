@@ -74,7 +74,9 @@ def _count_media_to_process(session: Session) -> int:
     return (
         session.exec(
             select(func.count(Media.id)).where(
-                or_(*conditions), Media.missing_since.is_(None)
+                or_(*conditions),
+                col(Media.missing_since).is_(None),
+                col(Media.processing_error).is_(None),
             )
         ).first()
         or 0
@@ -87,7 +89,11 @@ def _fetch_media_batch_to_process(session: Session, limit: int) -> list[Media]:
         return []
     return session.exec(
         select(Media)
-        .where(or_(*conditions), Media.missing_since.is_(None))
+        .where(
+            or_(*conditions),
+            col(Media.missing_since).is_(None),
+            col(Media.processing_error).is_(None),
+        )
         .order_by(Media.duration.asc())
         .limit(limit)
     ).all()
@@ -114,10 +120,16 @@ def _get_or_extract_scenes(
     except UnidentifiedImageError:
         logger.warning("Skipping broken image file: %s.", media_path_obj)
         media.extracted_scenes = True
+        media.processing_error = "Unrecognized image format: PIL could not identify this file."
         session.add(media)
         return []
-    except Exception:
-        logger.exception("Failed to extract scenes for %s.", media.path)
+    except Exception as exc:
+        logger.exception("Failed to extract frames for %s.", media.path)
+        media.extracted_scenes = True
+        media.processing_error = (
+            f"Failed to extract frames: {type(exc).__name__}: {str(exc)}"
+        )[:500]
+        session.add(media)
         return []
 
     media.extracted_scenes = True

@@ -9,6 +9,11 @@
 
 Omoide is a self-hosted, offline-capable photo and video library designed for privacy and longevity. It uses local AI to organize your media, making it searchable and discoverable without sending a single byte to the cloud.
 
+> **Data safety warning**
+>
+> Always keep verified backups of your media.
+> Never import your only irreplaceable originals into any system you did not build and fully validate yourself.
+
 ---
 
 ## 📥 Download - Now also available on macOS!

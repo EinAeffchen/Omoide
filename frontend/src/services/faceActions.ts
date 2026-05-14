@@ -2,11 +2,12 @@ import { API } from "../config";
 import { Person } from "../types";
 
 export const assignFace = async (faceIds: number[], personId: number) => {
-  await fetch(`${API}/api/faces/assign`, {
+  const res = await fetch(`${API}/api/faces/assign`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ face_ids: faceIds, person_id: personId }),
   });
+  if (!res.ok) throw new Error(`Assign failed: ${res.status}`);
 };
 
 export const createPersonFromFaces = async (

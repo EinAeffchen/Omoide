@@ -11,7 +11,7 @@ import {
   FormGroup,
   Typography,
 } from "@mui/material";
-import { API } from "../config";
+import { runProcessorsForMedia } from "../services/taskActions";
 
 const PROCESSORS = [
   { name: "faces", label: "Face Detection" },
@@ -52,15 +52,7 @@ export const RerunProcessorsDialog: React.FC<Props> = ({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API}/api/tasks/run_processors_for_media`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          media_ids: mediaIds,
-          processor_names: Array.from(selected),
-        }),
-      });
-      if (!res.ok) throw new Error(await res.text());
+      await runProcessorsForMedia(mediaIds, Array.from(selected));
       onStarted();
       onClose();
     } catch (e) {

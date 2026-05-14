@@ -1,148 +1,153 @@
-import React, { useState } from "react";
-import {
-  Box,
-  Checkbox,
-  Chip,
-  Collapse,
-  IconButton,
-  Paper,
-  Typography,
-} from "@mui/material";
-import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
-import ExpandLessIcon from "@mui/icons-material/ExpandLess";
-import FaceCard from "./FaceCard";
+import { Box, Card, Checkbox, IconButton, Typography } from "@mui/material";
+import { alpha } from "@mui/material/styles";
+import VideoLibraryIcon from "@mui/icons-material/VideoLibrary";
+import UnfoldMoreIcon from "@mui/icons-material/UnfoldMore";
+import { useNavigate, useLocation } from "react-router-dom";
 import { FaceRead } from "../types";
 import { API } from "../config";
 
-interface FaceMediaGroupProps {
+interface FaceGroupCardProps {
   faces: FaceRead[];
-  profileFaceId?: number;
-  onSetProfile?: (faceId: number) => void;
   selectedFaceIds: number[];
-  onToggleSelect: (faceId: number) => void;
   onToggleGroupSelect: (faceIds: number[]) => void;
   canMutate: boolean;
+  onToggleExpand: () => void;
 }
 
-export default function FaceMediaGroup({
+export default function FaceGroupCard({
   faces,
-  profileFaceId,
-  onSetProfile,
   selectedFaceIds,
-  onToggleSelect,
   onToggleGroupSelect,
   canMutate,
-}: FaceMediaGroupProps) {
-  const [expanded, setExpanded] = useState(faces.length <= 8);
+  onToggleExpand,
+}: FaceGroupCardProps) {
+  const navigate = useNavigate();
+  const location = useLocation();
 
   const faceIds = faces.map((f) => f.id);
   const selectedCount = faceIds.filter((id) => selectedFaceIds.includes(id)).length;
   const allSelected = selectedCount === faces.length;
   const someSelected = selectedCount > 0 && !allSelected;
 
+  const preview = faces.slice(0, 4);
+
+  const handleCardClick = () => {
+    navigate(`/medium/${faces[0].media_id}`, {
+      state: { backgroundLocation: location },
+    });
+  };
+
   return (
-    <Paper
-      variant="outlined"
+    <Card
+      elevation={someSelected || allSelected ? 8 : 2}
       sx={{
-        p: 1,
-        borderWidth: someSelected || allSelected ? 2 : 1,
-        borderColor: allSelected
-          ? "primary.main"
+        width: 140,
+        height: 140,
+        position: "relative",
+        cursor: "pointer",
+        overflow: "hidden",
+        flexShrink: 0,
+        outline: allSelected
+          ? "2px solid"
           : someSelected
-          ? "primary.light"
-          : "divider",
+          ? "2px solid"
+          : "none",
+        outlineColor: allSelected ? "primary.main" : "primary.light",
       }}
+      onClick={handleCardClick}
     >
-      {/* Header row */}
+      {/* 2×2 thumbnail collage */}
       <Box
         sx={{
-          display: "flex",
-          alignItems: "center",
-          gap: 1,
-          cursor: "pointer",
-          userSelect: "none",
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gridTemplateRows: "1fr 1fr",
+          width: "100%",
+          height: "100%",
+          gap: "1px",
+          bgcolor: "divider",
         }}
-        onClick={() => setExpanded((e) => !e)}
       >
-        {canMutate && (
-          <Checkbox
-            checked={allSelected}
-            indeterminate={someSelected}
-            size="small"
-            onClick={(e) => e.stopPropagation()}
-            onChange={() => onToggleGroupSelect(faceIds)}
-          />
-        )}
-
-        {/* Thumbnail strip shown when collapsed */}
-        {!expanded && (
-          <Box sx={{ display: "flex", gap: 0.5, flexShrink: 0 }}>
-            {faces.slice(0, 4).map((face) => (
-              <Box
-                key={face.id}
-                component="img"
-                src={`${API}/thumbnails/${face.thumbnail_path}`}
-                sx={{
-                  width: 36,
-                  height: 36,
-                  objectFit: "cover",
-                  borderRadius: 0.5,
-                }}
-              />
-            ))}
-            {faces.length > 4 && (
-              <Box
-                sx={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: 0.5,
-                  bgcolor: "action.hover",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <Typography variant="caption" color="text.secondary">
-                  +{faces.length - 4}
-                </Typography>
-              </Box>
-            )}
-          </Box>
-        )}
-
-        <Chip
-          label={`${faces.length} faces · same video`}
-          size="small"
-          variant="outlined"
-          sx={{ flexGrow: 1, pointerEvents: "none" }}
-        />
-
-        <IconButton size="small" tabIndex={-1}>
-          {expanded ? (
-            <ExpandLessIcon fontSize="small" />
-          ) : (
-            <ExpandMoreIcon fontSize="small" />
-          )}
-        </IconButton>
+        {Array.from({ length: 4 }).map((_, i) => {
+          const face = preview[i] ?? preview[0];
+          return (
+            <Box
+              key={i}
+              component="img"
+              src={`${API}/thumbnails/${face.thumbnail_path}`}
+              sx={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+            />
+          );
+        })}
       </Box>
 
-      {/* Expanded face grid */}
-      <Collapse in={expanded} unmountOnExit>
-        <Box
-          sx={{ display: "flex", flexWrap: "wrap", gap: 1, pt: 1 }}
-        >
-          {faces.map((face) => (
-            <FaceCard
-              key={face.id}
-              face={face as any}
-              isProfile={face.id === profileFaceId}
-              onSetProfile={canMutate ? onSetProfile : undefined}
-              selected={canMutate && selectedFaceIds.includes(face.id)}
-              onToggleSelect={canMutate ? onToggleSelect : undefined}
-            />
-          ))}
-        </Box>
-      </Collapse>
-    </Paper>
+      {/* Bottom gradient + count */}
+      <Box
+        sx={{
+          position: "absolute",
+          bottom: 0,
+          left: 0,
+          right: 0,
+          background: "linear-gradient(transparent, rgba(0,0,0,0.75))",
+          px: 0.5,
+          pb: 0.5,
+          pt: 1.5,
+          display: "flex",
+          alignItems: "center",
+          gap: 0.4,
+        }}
+      >
+        <VideoLibraryIcon sx={{ fontSize: 13, color: "white" }} />
+        <Typography variant="caption" sx={{ color: "white", fontWeight: 700, lineHeight: 1 }}>
+          {faces.length}
+        </Typography>
+      </Box>
+
+      {/* Checkbox */}
+      {canMutate && (
+        <Checkbox
+          checked={allSelected}
+          indeterminate={someSelected}
+          size="small"
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleGroupSelect(faceIds);
+          }}
+          sx={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            color: "white",
+            "&.Mui-checked": { color: "white" },
+            p: 0.5,
+            bgcolor: (theme) => alpha(theme.palette.common.black, 0.3),
+            borderRadius: "20%",
+          }}
+        />
+      )}
+
+      {/* Expand button */}
+      <IconButton
+        size="small"
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggleExpand();
+        }}
+        sx={{
+          position: "absolute",
+          top: 0,
+          right: 0,
+          color: "white",
+          p: 0.5,
+          bgcolor: (theme) => alpha(theme.palette.common.black, 0.3),
+          borderRadius: "20%",
+          "&:hover": {
+            bgcolor: (theme) => alpha(theme.palette.common.black, 0.5),
+          },
+        }}
+      >
+        <UnfoldMoreIcon sx={{ fontSize: 16 }} />
+      </IconButton>
+    </Card>
   );
 }

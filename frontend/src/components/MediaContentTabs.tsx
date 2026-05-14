@@ -12,6 +12,8 @@ import TagIcon from "@mui/icons-material/Tag";
 import PeopleIcon from "@mui/icons-material/People";
 import CollectionsIcon from "@mui/icons-material/Collections";
 import DataObjectIcon from "@mui/icons-material/DataObject";
+import ReplayIcon from "@mui/icons-material/Replay";
+import { MediaProcessorsTab } from "./MediaProcessorsTab";
 interface TabPanelProps {
   children?: React.ReactNode;
   index: number;
@@ -55,6 +57,7 @@ export function MediaContentTabs(props: MediaContentTabsProps) {
     people: config.ENABLE_PEOPLE ? 1 : -1, // -1 if not rendered
     tags: config.ENABLE_PEOPLE ? 2 : 1,
     exif: config.ENABLE_PEOPLE ? 3 : 2,
+    processors: config.ENABLE_PEOPLE ? 4 : 3,
   };
 
   return (
@@ -73,6 +76,7 @@ export function MediaContentTabs(props: MediaContentTabsProps) {
             renderTab(`People (${persons.length})`, <PeopleIcon />)}
           {renderTab("Tags", <TagIcon />)}
           {renderTab("Exif Data", <DataObjectIcon />)}
+          {renderTab("Processors", <ReplayIcon />)}
         </Tabs>
       </Box>
       {media && (
@@ -103,6 +107,9 @@ export function MediaContentTabs(props: MediaContentTabsProps) {
 
           <TabPanel value={tabValue} index={tabIndices.exif}>
             <MediaExif mediaId={media.id} />
+          </TabPanel>
+          <TabPanel value={tabValue} index={tabIndices.processors}>
+            <MediaProcessorsTab mediaId={media.id} />
           </TabPanel>
         </>
       )}

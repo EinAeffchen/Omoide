@@ -10,7 +10,7 @@ from sqlmodel import Session
 
 import app.database as db
 from app.accelerators import get_ffmpeg_accel_config
-from app.config import ReadOnlyMediaError, settings
+from app.config import settings
 from app.database import get_session
 from app.ffmpeg import ensure_ffmpeg_available
 from app.logger import logger
@@ -61,7 +61,7 @@ def start_conversion(
         raise HTTPException(404, "Media not found")
     try:
         settings.general.ensure_media_path_writable(Path(media.path))
-    except ReadOnlyMediaError as exc:
+    except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
     task = ProcessingTask(
         task_type="convert",
@@ -97,7 +97,7 @@ def _run_conversion(task_id: str, media_path: str, media_id: int):
 
         try:
             settings.general.ensure_media_path_writable(media_path_obj)
-        except ReadOnlyMediaError as exc:
+        except PermissionError as exc:
             logger.warning("Conversion blocked: %s", exc)
             task.status = "failed"
             task.error = str(exc)

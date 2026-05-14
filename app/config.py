@@ -218,6 +218,14 @@ class ReadOnlyMediaError(PermissionError):
         super().__init__(f"Media directory '{base}' is read-only.")
 
 
+class MediaPathNotMountedError(PermissionError):
+    def __init__(self, target: Path):
+        self.target = target
+        super().__init__(
+            f"Media path '{target}' is not inside any currently configured media directory."
+        )
+
+
 def _resolve_path_safe(value: Path) -> Path:
     try:
         return value.expanduser().resolve()
@@ -417,13 +425,14 @@ class GeneralSettings(BaseModel):
         return resolved
 
     def ensure_media_path_writable(self, target: Path) -> None:
-        """Raise if the path lives inside a read-only media directory."""
+        """Raise if the path is not writable due to mount/read-only restrictions."""
         normalized = _resolve_path_safe(target)
         for base, read_only in self.resolved_media_dirs():
             if _is_within(normalized, base):
                 if read_only:
                     raise ReadOnlyMediaError(normalized, base)
                 return
+        raise MediaPathNotMountedError(normalized)
 
 
 class TaggingSettings(BaseModel):
@@ -529,6 +538,7 @@ FACE_RECOGNITION_PRESETS: dict[
         "face_recognition_min_confidence": 0.6,
         "existing_person_cosine_threshold": 0.86,
         "existing_person_min_cosine_margin": 0.07,
+        "rerun_face_iou_dedupe_threshold": 0.70,
         "face_recognition_min_face_pixels": 1600,
         "person_min_face_count": 3,
         "person_min_media_count": 2,
@@ -548,6 +558,7 @@ FACE_RECOGNITION_PRESETS: dict[
         "face_recognition_min_confidence": 0.5,
         "existing_person_cosine_threshold": 0.80,
         "existing_person_min_cosine_margin": 0.05,
+        "rerun_face_iou_dedupe_threshold": 0.70,
         "face_recognition_min_face_pixels": 1600,
         "person_min_face_count": 2,
         "person_min_media_count": 2,
@@ -567,6 +578,7 @@ FACE_RECOGNITION_PRESETS: dict[
         "face_recognition_min_confidence": 0.4,
         "existing_person_cosine_threshold": 0.75,
         "existing_person_min_cosine_margin": 0.03,
+        "rerun_face_iou_dedupe_threshold": 0.70,
         "face_recognition_min_face_pixels": 1200,
         "person_min_face_count": 2,
         "person_min_media_count": 2,
@@ -593,6 +605,8 @@ class FaceRecognitionSettings(BaseModel):
     existing_person_cosine_threshold: float = 0.80
     # requires a margin between best and second-best match (cosine space)
     existing_person_min_cosine_margin: float = 0.05
+    # on processor re-run, treat detections with IoU above this threshold as duplicates
+    rerun_face_iou_dedupe_threshold: float = Field(default=0.70, ge=0.0, le=1.0)
     # minimum size of a face in pixels to be detected. Base size for detection
     # is the original image, not a thumbnail!
     face_recognition_min_face_pixels: int = 1600

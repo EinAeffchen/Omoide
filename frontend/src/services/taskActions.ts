@@ -22,6 +22,22 @@ export const runProcessor = async (
   return res.json();
 };
 
+export const runProcessorsForMedia = async (
+  mediaIds: number[],
+  processorNames: string[]
+): Promise<Task> => {
+  const res = await fetch(`${API}/api/tasks/run_processors_for_media`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      media_ids: mediaIds,
+      processor_names: processorNames,
+    }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+};
+
 export const cancelTask = async (id: string): Promise<void> => {
   const res = await fetch(`${API}/api/tasks/${id}/cancel`, { method: "POST" });
   if (!res.ok) throw new Error(`Failed to cancel task ${id}`);

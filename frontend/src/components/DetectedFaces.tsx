@@ -77,6 +77,17 @@ export default function DetectedFaces({
     setSelectedFaceIds,
   } = useFaceSelection();
 
+  const [expandedGroupIds, setExpandedGroupIds] = useState<Set<number>>(new Set());
+
+  const toggleGroupExpand = useCallback((mediaId: number) => {
+    setExpandedGroupIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(mediaId)) next.delete(mediaId);
+      else next.add(mediaId);
+      return next;
+    });
+  }, []);
+
   const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false);
   const [assignSearchTerm, setAssignSearchTerm] = useState("");
   const [assignCandidates, setAssignCandidates] = useState<Person[]>([]);
@@ -441,36 +452,58 @@ export default function DetectedFaces({
             No faces to display.
           </Typography>
         ) : (
-          <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-            {groupedItems.map((item, groupIndex) => {
+          <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1, alignItems: "flex-start" }}>
+            {groupedItems.flatMap((item, groupIndex) => {
               const isLastGroup = groupIndex === groupedItems.length - 1;
+
               if (item.faces.length > 1) {
-                return (
+                const isExpanded = expandedGroupIds.has(item.mediaId);
+                return [
                   <div
-                    key={item.mediaId}
-                    ref={
-                      !disableInternalScroll && isLastGroup ? lastCardRef : null
-                    }
+                    key={`group-${item.mediaId}`}
+                    ref={!disableInternalScroll && isLastGroup && !isExpanded ? lastCardRef : null}
                   >
                     <FaceMediaGroup
                       faces={item.faces}
-                      profileFaceId={profileFaceId}
-                      onSetProfile={canMutate ? onSetProfile : undefined}
                       selectedFaceIds={selectedFaceIds}
-                      onToggleSelect={onToggleSelect}
                       onToggleGroupSelect={handleToggleGroupSelect}
                       canMutate={canMutate}
+                      onToggleExpand={() => toggleGroupExpand(item.mediaId)}
                     />
-                  </div>
-                );
+                  </div>,
+                  isExpanded && (
+                    <Box
+                      key={`expanded-${item.mediaId}`}
+                      ref={!disableInternalScroll && isLastGroup ? lastCardRef : null}
+                      sx={{
+                        flexBasis: "100%",
+                        display: "flex",
+                        flexWrap: "wrap",
+                        gap: 1,
+                        p: 1,
+                        borderRadius: 1,
+                        bgcolor: "action.hover",
+                      }}
+                    >
+                      {item.faces.map((face) => (
+                        <FaceCard
+                          key={face.id}
+                          face={face as any}
+                          isProfile={face.id === profileFaceId}
+                          onSetProfile={canMutate ? onSetProfile : undefined}
+                          selected={canMutate && selectedFaceIds.includes(face.id)}
+                          onToggleSelect={canMutate ? onToggleSelect : undefined}
+                        />
+                      ))}
+                    </Box>
+                  ),
+                ].filter(Boolean) as React.ReactNode[];
               }
-              return (
+
+              return [
                 <div
                   key={item.faces[0].id}
-                  ref={
-                    !disableInternalScroll && isLastGroup ? lastCardRef : null
-                  }
-                  style={{ padding: "4px" }}
+                  ref={!disableInternalScroll && isLastGroup ? lastCardRef : null}
                 >
                   <FaceCard
                     face={item.faces[0] as any}
@@ -479,8 +512,8 @@ export default function DetectedFaces({
                     selected={canMutate && selectedFaceIds.includes(item.faces[0].id)}
                     onToggleSelect={canMutate ? onToggleSelect : undefined}
                   />
-                </div>
-              );
+                </div>,
+              ];
             })}
           </Box>
         )}

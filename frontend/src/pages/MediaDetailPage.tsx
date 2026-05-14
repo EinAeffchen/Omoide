@@ -35,6 +35,7 @@ import {
   deleteMediaRecord,
   deleteMediaFile,
   openMediaFolder,
+  openMediaFile,
 } from "../services/mediaActions";
 import { getTask } from "../services/task";
 
@@ -73,7 +74,7 @@ export default function MediaDetailPage() {
   const [detail, setDetail] = useState<MediaDetail | null>(
     preloadedMedia ? { media: preloadedMedia, persons: [], orphans: [] } : null
   );
-  const [isDetailLoading, setIsDetailLoading] = useState(!preloadedMedia);
+  const [isDetailLoading, setIsDetailLoading] = useState(true);
   const [loadError, setLoadError] = useState<{ status?: number; message: string } | null>(null);
 
   // C. Local state for all other UI and features
@@ -174,7 +175,7 @@ export default function MediaDetailPage() {
       setIsDetailLoading(true);
       try {
         const data = await getMedia(id);
-        setDetail(data);
+        if (!signal?.aborted) setDetail(data);
       } catch (err) {
         if (!signal?.aborted)
           console.error("Failed to fetch media detail:", err);
@@ -459,11 +460,18 @@ export default function MediaDetailPage() {
                           error instanceof Error && error.message
                             ? error.message
                             : "Failed to open folder";
-                        setSnackbar({
-                          open: true,
-                          message,
-                          severity: "error",
-                        });
+                        setSnackbar({ open: true, message, severity: "error" });
+                      }
+                    }}
+                    onOpenFile={async (mediaId) => {
+                      try {
+                        await openMediaFile(mediaId);
+                      } catch (error: unknown) {
+                        const message =
+                          error instanceof Error && error.message
+                            ? error.message
+                            : "Failed to open file";
+                        setSnackbar({ open: true, message, severity: "error" });
                       }
                     }}
                   />

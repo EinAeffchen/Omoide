@@ -12,8 +12,8 @@ from sqlalchemy import and_, func, or_, text, tuple_, union_all
 from sqlalchemy.orm import aliased, selectinload
 from sqlmodel import Session, select
 
-from app.config import ReadOnlyMediaError, settings
-from app.database import get_session
+from app.config import settings
+from app.database import get_session, safe_execute
 from app.logger import logger
 from app.models import ExifData, Face, Media, Person, PersonMediaLink, Scene, Tag
 from app.schemas.face import FaceRead
@@ -651,6 +651,52 @@ def open_media_folder(
     return
 
 
+@router.post("/{media_id}/open-file", status_code=204)
+def open_media_file(
+    media_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+):
+    """Open the media file directly in the OS default application.
+
+    Only supported when running as a packaged/binary app and not in Docker.
+    """
+    if settings.general.is_docker:
+        raise HTTPException(400, "Opening files not supported in Docker")
+    if not settings.general.is_binary and not _is_local_request(request):
+        raise HTTPException(
+            400,
+            "Opening files only allowed in the desktop app or from a local session",
+        )
+
+    media = session.get(Media, media_id)
+    if not media:
+        raise HTTPException(404, "Media not found")
+
+    _, resolved_file = _resolve_media_parent(media.path)
+    if not resolved_file:
+        if _is_local_request(request):
+            try:
+                candidate = Path(media.path).expanduser().resolve(strict=False)
+            except Exception:
+                candidate = None
+            if candidate is not None and candidate.is_file():
+                resolved_file = candidate
+        if not resolved_file:
+            raise HTTPException(404, "Media file not found")
+
+    try:
+        if sys.platform.startswith("win"):
+            os.startfile(str(resolved_file))
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(resolved_file)])
+        else:
+            subprocess.Popen(["xdg-open", str(resolved_file)])
+    except Exception as e:
+        raise HTTPException(500, f"Failed to open file: {e}")
+    return
+
+
 @router.get("/{media_id}/neighbors", response_model=MediaNeighbors)
 def get_neighbors(
     media_id: int,
@@ -769,7 +815,10 @@ def get_media(media_id: int, session: Session = Depends(get_session)):
                     ),
                 )
             )
-    orphans = [f for f in media.faces if not f.person]
+    orphans = safe_execute(
+        session,
+        select(Face).where(Face.media_id == media_id, Face.person_id.is_(None)),
+    ).all()
     return MediaDetail(media=media, persons=persons, orphans=orphans)
 
 
@@ -910,7 +959,7 @@ def update_geolocation(
         raise HTTPException(404, "Media not found")
     try:
         settings.general.ensure_media_path_writable(Path(media.path))
-    except ReadOnlyMediaError as exc:
+    except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
     media.exif.lat = data.latitude
     media.exif.lon = data.longitude

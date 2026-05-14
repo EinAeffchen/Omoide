@@ -1,15 +1,10 @@
-import React, { useState } from "react";
 import {
   Box,
   Typography,
-  Menu,
-  MenuItem,
-  ListItemIcon,
-  ListItemText,
   IconButton,
-  Divider,
+  Tooltip,
 } from "@mui/material";
-import { MoreVert, Vrpano, Delete, FolderOpen } from "@mui/icons-material";
+import { Vrpano, Delete, DeleteForever, FolderOpen, OpenInNew } from "@mui/icons-material";
 import { Media } from "../types";
 import config from "../config";
 import { BinaryNavigationControls } from "./BinaryNavigationControls";
@@ -22,6 +17,7 @@ interface MediaHeaderProps {
   onOpenDialog: (type: "convert" | "deleteRecord" | "deleteFile") => void;
   isBinary?: boolean;
   onOpenFolder?: (mediaId: number) => void;
+  onOpenFile?: (mediaId: number) => void;
 }
 
 export function MediaHeader({
@@ -29,28 +25,10 @@ export function MediaHeader({
   onOpenDialog,
   isBinary = false,
   onOpenFolder,
+  onOpenFile,
 }: MediaHeaderProps) {
-  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
-  const menuOpen = Boolean(anchorEl);
   const filename = media ? media.filename : "File not found!";
   const isVideo = typeof media?.duration === "number";
-  const handleMenuClick = (event: React.MouseEvent<HTMLElement>) => {
-    setAnchorEl(event.currentTarget);
-  };
-
-  const handleMenuClose = () => {
-    setAnchorEl(null);
-  };
-
-  const handleAction = (type: "convert" | "deleteRecord" | "deleteFile") => {
-    try {
-      onOpenDialog(type);
-    } catch (error) {
-      console.error("Failed to handle action:", error);
-    } finally {
-      handleMenuClose();
-    }
-  };
 
   return (
     <Box
@@ -93,55 +71,40 @@ export function MediaHeader({
         }}
       >
         <BinaryNavigationControls variant="overlay" />
-        <IconButton onClick={handleMenuClick} color="primary">
-          <MoreVert />
-        </IconButton>
-
+        {!config.PRESENTATION_MODE && isBinary && media && (
+          <>
+            <Tooltip title="Open file">
+              <IconButton onClick={() => onOpenFile?.(media.id)} color="primary" size="small">
+                <OpenInNew />
+              </IconButton>
+            </Tooltip>
+            <Tooltip title="Open folder">
+              <IconButton onClick={() => onOpenFolder?.(media.id)} color="primary" size="small">
+                <FolderOpen />
+              </IconButton>
+            </Tooltip>
+          </>
+        )}
         {!config.PRESENTATION_MODE && (
-          <Menu anchorEl={anchorEl} open={menuOpen} onClose={handleMenuClose}>
-            <>
-              <Divider />
-              {isBinary && media && (
-                <MenuItem
-                  onClick={() => {
-                    onOpenFolder?.(media.id);
-                    handleMenuClose();
-                  }}
-                >
-                  <ListItemIcon>
-                    <FolderOpen fontSize="small" />
-                  </ListItemIcon>
-                  <ListItemText>Open Containing Folder</ListItemText>
-                </MenuItem>
-              )}
-              {media && isVideo && (
-                <MenuItem onClick={() => handleAction("convert")}>
-                  <ListItemIcon>
-                    <Vrpano fontSize="small" />
-                  </ListItemIcon>
-                  <ListItemText>Convert</ListItemText>
-                </MenuItem>
-              )}
-              <MenuItem
-                onClick={() => handleAction("deleteRecord")}
-                sx={{ color: ERROR_COLOR }}
-              >
-                <ListItemIcon>
-                  <Delete fontSize="small" sx={{ color: ERROR_COLOR }} />
-                </ListItemIcon>
-                <ListItemText>Delete Record</ListItemText>
-              </MenuItem>
-              <MenuItem
-                onClick={() => handleAction("deleteFile")}
-                sx={{ color: ERROR_COLOR }}
-              >
-                <ListItemIcon>
-                  <Delete fontSize="small" sx={{ color: ERROR_COLOR }} />
-                </ListItemIcon>
-                <ListItemText>Delete File</ListItemText>
-              </MenuItem>
-            </>
-          </Menu>
+          <>
+            {media && isVideo && (
+              <Tooltip title="Convert">
+                <IconButton onClick={() => onOpenDialog("convert")} color="primary" size="small">
+                  <Vrpano />
+                </IconButton>
+              </Tooltip>
+            )}
+            <Tooltip title="Remove from library">
+              <IconButton onClick={() => onOpenDialog("deleteRecord")} sx={{ color: ERROR_COLOR }} size="small">
+                <Delete />
+              </IconButton>
+            </Tooltip>
+            <Tooltip title="Delete file">
+              <IconButton onClick={() => onOpenDialog("deleteFile")} sx={{ color: ERROR_COLOR }} size="small">
+                <DeleteForever />
+              </IconButton>
+            </Tooltip>
+          </>
         )}
       </Box>
     </Box>

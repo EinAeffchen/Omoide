@@ -51,6 +51,8 @@ const TASK_LABELS: TaskLabels = {
   find_duplicates: "Find Duplicates",
   compute_blur_scores: "Score Blur",
   run_processor: "Run Processor",
+  run_processor_for_media: "Rerun Processors (Selection)",
+  auto_tag_custom: "Apply New Custom Tags",
 };
 
 const PROCESSOR_ACTIONS = [
@@ -219,7 +221,10 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
         (t.status === "running" || t.status === "pending")
     );
 
-  const isAnyProcessorRunning = isTaskRunning("run_processor");
+  const isAnyProcessorRunning =
+    isTaskRunning("run_processor") ||
+    isTaskRunning("run_processor_for_media") ||
+    isTaskRunning("auto_tag_custom");
 
   const runProcessorAction = async (processorName: string, label: string) => {
     try {

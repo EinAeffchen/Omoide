@@ -142,7 +142,9 @@ export type TaskType =
   | "scan"
   | "find_duplicates"
   | "compute_blur_scores"
-  | "run_processor";
+  | "run_processor"
+  | "run_processor_for_media"
+  | "auto_tag_custom";
 export type TaskStatus = "pending" | "running" | "completed" | "cancelled";
 
 export interface Task {
@@ -298,6 +300,27 @@ export interface MissingConfirmResponse {
 
 export interface MissingResetResponse {
   cleared: number;
+}
+
+export interface BrokenMediaItem {
+  id: number;
+  path: string;
+  filename: string;
+  size: number;
+  processing_error: string;
+  parent_directory: string;
+  thumbnail_path?: string | null;
+  inserted_at: string;
+}
+
+export interface BrokenMediaPage extends CursorPage<BrokenMediaItem> {
+  total: number;
+}
+
+export interface BrokenResolvePayload {
+  media_ids?: number[];
+  select_all?: boolean;
+  action: "DELETE_FILES" | "DELETE_RECORDS" | "BLACKLIST_RECORDS";
 }
 
 export interface DuplicatePage {
@@ -526,6 +549,7 @@ export interface AppConfig {
     face_recognition_min_confidence: number;
     existing_person_cosine_threshold: number;
     existing_person_min_cosine_margin: number;
+    rerun_face_iou_dedupe_threshold: number;
     face_recognition_min_face_pixels: number;
     face_sharpness_filter_enabled: boolean;
     face_sharpness_min_variance: number;

@@ -29,6 +29,7 @@ import LabelOffIcon from "@mui/icons-material/LabelOff";
 import VideocamOffIcon from "@mui/icons-material/VideocamOff";
 import PhotoSizeSelectSmallIcon from "@mui/icons-material/PhotoSizeSelectSmall";
 import EventBusyIcon from "@mui/icons-material/EventBusy";
+import ReportProblemIcon from "@mui/icons-material/ReportProblem";
 import CheckBoxOutlineBlankIcon from "@mui/icons-material/CheckBoxOutlineBlank";
 import CheckBoxIcon from "@mui/icons-material/CheckBox";
 import config from "../config";
@@ -106,6 +107,7 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
           icon: <PhotoSizeSelectSmallIcon />,
         },
         { label: "No EXIF Date", to: "/noexifdate", icon: <EventBusyIcon /> },
+        { label: "Broken Media", to: "/broken", icon: <ReportProblemIcon /> },
       ],
     },
     {
@@ -132,6 +134,7 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
     "/shortvideos",
     "/lowresolution",
     "/noexifdate",
+    "/broken",
   ];
   const pathsToExcludeInPeopleDisabled: string[] = [
     "/people",
