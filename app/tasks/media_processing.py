@@ -152,6 +152,8 @@ def _apply_processors(
         media.faces_extracted = True
         media.ran_auto_tagging = True
         media.embeddings_created = True
+        if media.laplacian_score is None:
+            media.laplacian_score = -1.0
         session.add(media)
         return True
 
@@ -181,6 +183,8 @@ def _apply_processors(
                 media.faces_extracted = True
                 media.ran_auto_tagging = True
                 media.embeddings_created = True
+                if media.laplacian_score is None:
+                    media.laplacian_score = -1.0
                 session.add(media)
                 success = False
                 break
@@ -198,6 +202,8 @@ def _apply_processors(
             media.faces_extracted = True
             media.ran_auto_tagging = True
             media.embeddings_created = True
+            if media.laplacian_score is None:
+                media.laplacian_score = -1.0
             session.add(media)
             success = False
             break

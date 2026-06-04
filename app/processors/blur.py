@@ -88,6 +88,8 @@ class BlurProcessor(MediaProcessor):
             scores.append(_laplacian_score(arr))
 
         if not scores:
+            media.laplacian_score = -1.0
+            session.add(media)
             return True
 
         media.laplacian_score = float(np.median(scores))
