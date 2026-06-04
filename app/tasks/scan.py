@@ -280,10 +280,8 @@ def run_scan(task_id: str) -> None:
                         reason,
                     )
                     record_task_failure(task_id, os.fspath(filepath), reason)
-                    try:
-                        sess.delete(media_obj)
-                    except Exception:
-                        pass
+                    media_obj.processing_error = reason
+                    sess.add(media_obj)
                     safe_commit(sess)
                     continue
 

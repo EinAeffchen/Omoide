@@ -346,7 +346,7 @@ def process_file(filepath: Path) -> tuple[Media | None, str | None]:
                     width, height = im.size
             except UnidentifiedImageError:
                 logger.warning("Skipping %s, not an image!", filepath)
-            except OSError as exc:
+            except (OSError, ValueError) as exc:
                 logger.warning(
                     "Image %s could not be opened: %s", filepath, exc
                 )
@@ -636,25 +636,31 @@ def generate_thumbnail(media: Media) -> tuple[str | None, str | None]:
                 else:
                     raise
             try:
-                img_obj.save(thumb_path, format="JPEG")
-            except OSError:
-                try:
-                    img_obj.convert("RGB").save(thumb_path, format="JPEG")
-                except OSError as rgb_exc:
+                img_obj.convert("RGB").save(thumb_path, format="JPEG")
+            except (OSError, ValueError) as save_exc:
+                if filepath.suffix.lower() in (".heic", ".heif"):
+                    # Spatial/auxiliary HEIC frames can fail lazy-decode on save;
+                    # re-decode the primary frame directly via pillow_heif.
+                    try:
+                        heif_file = pillow_heif.open_heif(filepath)
+                        img_obj = heif_file[0].to_pillow()
+                        img_obj = _apply_thumbnail_orientation(img_obj, filepath)
+                        img_obj.thumbnail((360, -1))
+                        img_obj.convert("RGB").save(thumb_path, format="JPEG")
+                    except Exception as heic_exc:
+                        logger.warning(
+                            "Failed to save HEIC thumbnail for %s: %s",
+                            filepath,
+                            heic_exc,
+                        )
+                        return None, f"Unable to save HEIC thumbnail: {heic_exc}"
+                else:
                     logger.warning(
                         "Failed to save thumbnail for %s: %s",
                         filepath,
-                        rgb_exc,
+                        save_exc,
                     )
-                    return None, f"Unable to save thumbnail: {rgb_exc}"
-                except ValueError as img_sice_err:
-                    logger.warning(
-                        "Failed to save thumbnail for %s: %s",
-                        filepath,
-                        img_sice_err,
-                    )
-                    return None, f"Unable to save thumbnail: {img_sice_err}"
-
+                    return None, f"Unable to save thumbnail: {save_exc}"
         except UnidentifiedImageError:
             logger.warning("Couldn't open %s", filepath)
             return None, "File is not a valid image"
@@ -663,6 +669,11 @@ def generate_thumbnail(media: Media) -> tuple[str | None, str | None]:
                 "Failed to process image %s, because of: %s", filepath, exc
             )
             return None, f"Unable to read image: {exc}"
+        except Exception as exc:
+            logger.warning(
+                "Unexpected error thumbnailing %s: %s", filepath, exc
+            )
+            return None, f"Unexpected error generating thumbnail: {exc}"
 
         if not thumb_path.is_file():
             return None, "Thumbnail file was not created"
@@ -876,6 +887,94 @@ def _extract_frame_worker(
         timestamps[idx + 1] if idx + 1 < len(timestamps) else max(ts, duration)
     )
     return idx, (ts, next_ts, frame_rgb, thumb_file)
+
+
+def extract_scene_frame_and_thumbnail(
+    media: Media, start_time: float
+) -> tuple[str | None, np.ndarray | None]:
+    """Extract one frame at *start_time* from a video, save a thumbnail, and
+    return (thumbnail_relative_posix_path, frame_rgb) or (None, None) on failure.
+    """
+    import time as _t
+
+    video_path = Path(media.path)
+    if not video_path.exists():
+        logger.warning("Video file missing: %s", video_path)
+        return None, None
+
+    ffmpeg_binary = ensure_ffmpeg_available()
+    if not ffmpeg_binary:
+        logger.error("ffmpeg is required but could not be provisioned.")
+        return None, None
+
+    accel = get_ffmpeg_accel_config(False)
+    thumb_dir = get_thumb_folder(settings.general.thumb_dir / "scenes")
+    thumb_file = thumb_dir / f"{media.id}_manual_{int(_t.time() * 1000)}.jpg"
+
+    cmd = [
+        str(ffmpeg_binary),
+        *accel.hwaccel_args,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-ss",
+        str(start_time),
+        "-i",
+        os.fspath(video_path),
+        "-frames:v",
+        "1",
+        "-f",
+        "image2pipe",
+        "-strict",
+        "-1",
+        "-vcodec",
+        "mjpeg",
+        "-",
+    ]
+    try:
+        result = run_silent(
+            cmd,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except Exception as exc:
+        logger.warning("Frame extraction failed at %.2fs for %s: %s", start_time, media.path, exc)
+        return None, None
+
+    if result.returncode != 0 or not result.stdout:
+        logger.warning(
+            "ffmpeg returned no data at %.2fs for %s (code=%s)",
+            start_time,
+            media.path,
+            result.returncode,
+        )
+        return None, None
+
+    frame_buf = np.frombuffer(result.stdout, np.uint8)
+    frame_bgr = cv2.imdecode(frame_buf, cv2.IMREAD_COLOR)
+    if frame_bgr is None:
+        return None, None
+
+    height, width = frame_bgr.shape[:2]
+    if width <= 0 or height <= 0:
+        return None, None
+
+    target_width = 360
+    if width > target_width:
+        scale = target_width / float(width)
+        thumb_bgr = cv2.resize(
+            frame_bgr,
+            (target_width, max(1, int(height * scale))),
+            interpolation=cv2.INTER_AREA,
+        )
+    else:
+        thumb_bgr = frame_bgr
+
+    cv2.imwrite(str(thumb_file), thumb_bgr)
+    frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+    thumb_relative = to_posix_str(thumb_file.relative_to(settings.general.thumb_dir))
+    return thumb_relative, frame_rgb
 
 
 def _split_by_frames(media: Media) -> list[tuple[Scene, cv2.typing.MatLike]]:
