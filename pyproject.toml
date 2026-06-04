@@ -1,6 +1,6 @@
 [project]
 name = "omoide"
-version = "0.6.7"
+version = "0.6.8"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
