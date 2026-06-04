@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from . import state
 from .auto_tagging import run_custom_auto_tagging, schedule_custom_auto_tagging
+from .backfill import run_backfill_face_timestamps
 from .blur import compute_blur_scores
 from .common import create_and_run_task
 from .duplicates import run_duplicate_detection
@@ -37,6 +38,7 @@ from .scan import run_scan
 __all__ = [
     "clean_missing_files",
     "compute_blur_scores",
+    "run_backfill_face_timestamps",
     "create_and_run_task",
     "generate_hashes",
     "merge_similar_persons",

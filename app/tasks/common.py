@@ -26,6 +26,7 @@ def create_and_run_task(
         "compute_blur_scores",
         "run_processor",
         "run_processor_for_media",
+        "backfill_face_timestamps",
     ],
     callable_task: Callable[[str], None],
 ) -> ProcessingTask:

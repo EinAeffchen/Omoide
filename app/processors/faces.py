@@ -80,7 +80,7 @@ class FaceProcessor(MediaProcessor):
         return img[y1:y2, x1:x2]
 
     def _parse_faces(
-        self, faces: list, scene: MatLike, media: Media
+        self, faces: list, scene: MatLike, media: Media, timestamp: float | None = None
     ) -> list[tuple[Face, np.ndarray]]:
         face_entries: list[tuple[Face, np.ndarray]] = []
         for i, f in enumerate(faces):
@@ -120,6 +120,7 @@ class FaceProcessor(MediaProcessor):
                     thumb_file.relative_to(settings.general.thumb_dir)
                 ),
                 bbox=[x1, y1, x2 - x1, y2 - y1],
+                timestamp=timestamp,
             )
             face_entries.append((face, vec))
         return face_entries
@@ -150,11 +151,23 @@ class FaceProcessor(MediaProcessor):
             if parsed is not None
         ]
         for scene in tqdm(scenes):
+            scene_timestamp: float | None = None
             try:
                 if isinstance(scene, tuple):
-                    # scenes from videos arrive as RGB ndarray already
+                    # scenes from videos arrive as (Scene, RGB ndarray)
+                    scene_obj = scene[0]
+                    try:
+                        raw_ts = scene_obj.start_time
+                        get_secs = getattr(raw_ts, "get_seconds", None)
+                        scene_timestamp = float(get_secs()) if get_secs is not None else float(raw_ts)
+                    except (TypeError, AttributeError, ValueError):
+                        scene_timestamp = None
                     scene = scene[1]
                 elif isinstance(scene, Scene):
+                    try:
+                        scene_timestamp = float(scene.start_time)
+                    except (TypeError, ValueError, AttributeError):
+                        scene_timestamp = None
                     # stored scene thumbnails on disk → open as RGB
                     scene = Image.open(
                         settings.general.thumb_dir / scene.thumbnail_path
@@ -203,7 +216,7 @@ class FaceProcessor(MediaProcessor):
                 )
                 continue
 
-            face_entries = self._parse_faces(faces, scene_det, media)
+            face_entries = self._parse_faces(faces, scene_det, media, timestamp=scene_timestamp)
             if existing_bboxes and face_entries:
                 filtered_face_entries: list[tuple[Face, np.ndarray]] = []
                 for face_obj, embedding_vec in face_entries:

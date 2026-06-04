@@ -17,6 +17,7 @@ from app.tasks import (
     clean_missing_files,
     compute_blur_scores,
     create_and_run_task,
+    run_backfill_face_timestamps,
     run_duplicate_detection,
     run_media_processing,
     run_person_clustering,
@@ -230,6 +231,23 @@ async def start_processors_for_media(
         callable_task=lambda task_id: run_processors_for_media(
             task_id, body.processor_names, body.media_ids
         ),
+    )
+
+
+@router.post(
+    "/backfill_face_timestamps",
+    response_model=ProcessingTask,
+    summary="Backfill missing face timestamps for existing video faces",
+)
+async def start_backfill_face_timestamps(
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+):
+    return create_and_run_task(
+        session=session,
+        background_tasks=background_tasks,
+        task_type="backfill_face_timestamps",
+        callable_task=run_backfill_face_timestamps,
     )
 
 

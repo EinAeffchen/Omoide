@@ -6,6 +6,7 @@ class FaceRead(BaseModel):
     media_id: int
     thumbnail_path: str
     similarity: float | None = None
+    timestamp: float | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

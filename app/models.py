@@ -81,6 +81,7 @@ class Face(SQLModel, table=True):
     person_id: int | None = Field(foreign_key="person.id", default=None, index=True)
     thumbnail_path: str | None = Field(default=None)
     bbox: list[int] = Field(sa_column=Column(JSON))
+    timestamp: float | None = Field(default=None, nullable=True)  # video frame time in seconds
 
     media: "Media" = Relationship(back_populates="faces")
     person: Optional["Person"] = Relationship(
