@@ -1,4 +1,4 @@
-import React, { Suspense, useState } from "react";
+import React, { Suspense, useState, MutableRefObject } from "react";
 import { Box, Tabs, Tab, CircularProgress } from "@mui/material";
 
 import { TagsSection } from "./TagsSection";
@@ -8,12 +8,15 @@ import { MediaDetail, Tag } from "../types";
 import { Media } from "../types";
 import config from "../config";
 import { PeopleTabContent } from "./PeopleTabContent";
+import { SceneManager } from "./SceneManager";
 import TagIcon from "@mui/icons-material/Tag";
 import PeopleIcon from "@mui/icons-material/People";
 import CollectionsIcon from "@mui/icons-material/Collections";
 import DataObjectIcon from "@mui/icons-material/DataObject";
 import ReplayIcon from "@mui/icons-material/Replay";
+import MovieIcon from "@mui/icons-material/Movie";
 import { MediaProcessorsTab } from "./MediaProcessorsTab";
+
 interface TabPanelProps {
   children?: React.ReactNode;
   index: number;
@@ -34,31 +37,35 @@ interface MediaContentTabsProps {
   onTagUpdate: (updatedMedia: Media) => void;
   onTagAdded: (newTag: Tag) => void;
   onDetailReload: () => void;
+  onSeekRequest: (time: number) => void;
+  videoTimeRef?: MutableRefObject<number>;
 }
 
 export function MediaContentTabs(props: MediaContentTabsProps) {
-  const { detail, onTagUpdate, onTagAdded, onDetailReload } = props;
+  const { detail, onTagUpdate, onTagAdded, onDetailReload, onSeekRequest, videoTimeRef } = props;
 
   const [tabValue, setTabValue] = useState(0);
-  const handleTabChange = (event: React.SyntheticEvent, newValue: number) =>
+  const handleTabChange = (_: React.SyntheticEvent, newValue: number) =>
     setTabValue(newValue);
   const { media, persons, orphans } = detail;
 
-  const renderTab = (label: string, icon: React.ReactNode) => (
-    <Tab
-      label={label}
-      icon={icon}
-      iconPosition="start"
-      sx={{ minHeight: "64px" }} // Taller tabs for a better look
-    />
-  );
-  const tabIndices = {
-    similar: 0,
-    people: config.ENABLE_PEOPLE ? 1 : -1, // -1 if not rendered
-    tags: config.ENABLE_PEOPLE ? 2 : 1,
-    exif: config.ENABLE_PEOPLE ? 3 : 2,
-    processors: config.ENABLE_PEOPLE ? 4 : 3,
-  };
+  const isVideo = typeof media?.duration === "number";
+
+  // Build tabs dynamically so indices stay correct regardless of feature flags
+  const tabs: { key: string; label: string; icon: React.ReactNode }[] = [];
+  if (isVideo) tabs.push({ key: "scenes", label: "Scenes", icon: <MovieIcon /> });
+  tabs.push({ key: "similar", label: "Similar", icon: <CollectionsIcon /> });
+  if (config.ENABLE_PEOPLE && persons)
+    tabs.push({
+      key: "people",
+      label: `People (${persons.length})`,
+      icon: <PeopleIcon />,
+    });
+  tabs.push({ key: "tags", label: "Tags", icon: <TagIcon /> });
+  tabs.push({ key: "exif", label: "Exif Data", icon: <DataObjectIcon /> });
+  tabs.push({ key: "processors", label: "Processors", icon: <ReplayIcon /> });
+
+  const tabIndex = (key: string) => tabs.findIndex((t) => t.key === key);
 
   return (
     <Box sx={{ width: "100%", mt: 4 }}>
@@ -70,25 +77,40 @@ export function MediaContentTabs(props: MediaContentTabsProps) {
           variant="scrollable"
           scrollButtons="auto"
         >
-          {renderTab("Similar", <CollectionsIcon />)}
-          {config.ENABLE_PEOPLE &&
-            persons &&
-            renderTab(`People (${persons.length})`, <PeopleIcon />)}
-          {renderTab("Tags", <TagIcon />)}
-          {renderTab("Exif Data", <DataObjectIcon />)}
-          {renderTab("Processors", <ReplayIcon />)}
+          {tabs.map((t) => (
+            <Tab
+              key={t.key}
+              label={t.label}
+              icon={t.icon}
+              iconPosition="start"
+              sx={{ minHeight: "64px" }}
+            />
+          ))}
         </Tabs>
       </Box>
+
       {media && (
         <>
-          <TabPanel value={tabValue} index={tabIndices.similar}>
+          {isVideo && (
+            <TabPanel value={tabValue} index={tabIndex("scenes")}>
+              <SceneManager
+                mediaId={media.id}
+                duration={media.duration!}
+                persons={persons ?? []}
+                onSeekRequest={onSeekRequest}
+                videoTimeRef={videoTimeRef}
+              />
+            </TabPanel>
+          )}
+
+          <TabPanel value={tabValue} index={tabIndex("similar")}>
             <Suspense fallback={<CircularProgress />}>
-              {media && <SimilarContent mediaId={media.id} />}
+              <SimilarContent mediaId={media.id} />
             </Suspense>
           </TabPanel>
+
           {config.ENABLE_PEOPLE && (
-            <TabPanel value={tabValue} index={tabIndices.people}>
-              {/* The People tab now uses its own smart component */}
+            <TabPanel value={tabValue} index={tabIndex("people")}>
               <PeopleTabContent
                 mediaId={media.id}
                 initialPersons={persons}
@@ -97,7 +119,8 @@ export function MediaContentTabs(props: MediaContentTabsProps) {
               />
             </TabPanel>
           )}
-          <TabPanel value={tabValue} index={tabIndices.tags}>
+
+          <TabPanel value={tabValue} index={tabIndex("tags")}>
             <TagsSection
               media={media}
               onTagAdded={onTagAdded}
@@ -105,10 +128,11 @@ export function MediaContentTabs(props: MediaContentTabsProps) {
             />
           </TabPanel>
 
-          <TabPanel value={tabValue} index={tabIndices.exif}>
+          <TabPanel value={tabValue} index={tabIndex("exif")}>
             <MediaExif mediaId={media.id} />
           </TabPanel>
-          <TabPanel value={tabValue} index={tabIndices.processors}>
+
+          <TabPanel value={tabValue} index={tabIndex("processors")}>
             <MediaProcessorsTab mediaId={media.id} />
           </TabPanel>
         </>

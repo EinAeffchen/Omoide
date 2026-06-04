@@ -91,6 +91,7 @@ export interface Face {
   thumbnail_path: string;
   similarity?: number;
   person?: Person;
+  timestamp?: number;
 }
 export interface PersonRelationshipNode {
   id: number;
@@ -144,7 +145,8 @@ export type TaskType =
   | "compute_blur_scores"
   | "run_processor"
   | "run_processor_for_media"
-  | "auto_tag_custom";
+  | "auto_tag_custom"
+  | "backfill_face_timestamps";
 export type TaskStatus = "pending" | "running" | "completed" | "cancelled";
 
 export interface Task {
@@ -227,12 +229,20 @@ export interface DuplicateStats {
   top_folders: DuplicateFolderStat[];
 }
 
+export interface PersonInScene {
+  id: number;
+  name: string | null;
+  profile_face_id: number | null;
+  profile_thumbnail: string | null;
+}
+
 export interface SceneRead {
   id: number;
   start_time: number;
   end_time: number;
-  thumbnail_path: string;
-  description: string;
+  thumbnail_path: string | null;
+  description: string | null;
+  persons: PersonInScene[];
 }
 
 export interface MediaLocation {

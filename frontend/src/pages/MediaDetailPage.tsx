@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useCallback } from "react";
+import React, { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import {
   Container,
@@ -89,6 +89,14 @@ export default function MediaDetailPage() {
   }>({ open: false, message: "", severity: "success" });
   const [tabValue, setTabValue] = useState(0);
   const [touchStartX, setTouchStartX] = useState<number | null>(null);
+  const [seekRequest, setSeekRequest] = useState<{ time: number; seq: number } | null>(null);
+  const handleSeekRequest = useCallback((time: number) => {
+    setSeekRequest((prev) => ({ time, seq: (prev?.seq ?? 0) + 1 }));
+  }, []);
+  const videoTimeRef = useRef(0);
+  const handleVideoProgress = useCallback((secs: number) => {
+    videoTimeRef.current = secs;
+  }, []);
   const [showSwipeHint, setShowSwipeHint] = useState(false);
   const [isBinary, setIsBinary] = useState<boolean>(false);
 
@@ -479,6 +487,8 @@ export default function MediaDetailPage() {
                     media={detail.media}
                     initialTime={sceneStartTime ?? undefined}
                     autoplay={shouldAutoplayVideo}
+                    seekRequest={seekRequest}
+                    onProgress={handleVideoProgress}
                   />
                 </Box>
                 {showSwipeHint && <SwipeHint />}
@@ -521,6 +531,8 @@ export default function MediaDetailPage() {
                   onTagAdded={handleTagAddedToMedia}
                   onDetailReload={fetchDetail}
                   onTagUpdate={handleMediaUpdate}
+                  onSeekRequest={handleSeekRequest}
+                  videoTimeRef={videoTimeRef}
                 />
               )}
               <Snackbar

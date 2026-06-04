@@ -37,6 +37,7 @@ import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import FaceIcon from "@mui/icons-material/Face";
+import AccessTimeIcon from "@mui/icons-material/AccessTime";
 import BubbleChartIcon from "@mui/icons-material/BubbleChart";
 import LabelIcon from "@mui/icons-material/Label";
 import BlurOnIcon from "@mui/icons-material/BlurOn";
@@ -53,6 +54,7 @@ const TASK_LABELS: TaskLabels = {
   run_processor: "Run Processor",
   run_processor_for_media: "Rerun Processors (Selection)",
   auto_tag_custom: "Apply New Custom Tags",
+  backfill_face_timestamps: "Backfill Face Timestamps",
 };
 
 const PROCESSOR_ACTIONS = [
@@ -81,7 +83,7 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
   const [failureDialogOpen, setFailureDialogOpen] = useState(false);
   const [failureTaskId, setFailureTaskId] = useState<string | null>(null);
   const [lastSeenScanTaskId, setLastSeenScanTaskId] = useState<string | null>(
-    null
+    () => sessionStorage.getItem("smol_lastSeenScanTaskId")
   );
   // Track when each task last made progress to enable an indeterminate fallback
   const lastProgressRef = useRef<
@@ -168,6 +170,7 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
       return;
     }
     setLastSeenScanTaskId(completedScan.id);
+    sessionStorage.setItem("smol_lastSeenScanTaskId", completedScan.id);
     loadFailures(completedScan.id, { notifyEmpty: false }).then((entries) => {
       if (!entries.length) {
         return;
@@ -530,6 +533,23 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
                 <ListItemText primary="Find Duplicates" />
               </ListItemButton>
             </ListItem>
+            {config.ENABLE_PEOPLE && (
+              <ListItem disablePadding>
+                <ListItemButton
+                  onClick={() => startTask("backfill_face_timestamps")}
+                  disabled={isTaskRunning("backfill_face_timestamps")}
+                >
+                  <ListItemIcon>
+                    <AccessTimeIcon />
+                  </ListItemIcon>
+                  <ListItemText
+                    primary="Backfill Face Timestamps"
+                    secondary="Update timestamps on existing video faces"
+                    secondaryTypographyProps={{ variant: "caption" }}
+                  />
+                </ListItemButton>
+              </ListItem>
+            )}
           </List>
 
           <Divider sx={{ my: 1 }} />

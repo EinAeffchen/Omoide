@@ -5,7 +5,7 @@ from pydantic import ConfigDict, BaseModel
 
 from app.schemas.face import FaceRead
 from app.schemas.person import PersonRead, PersonReadSimple
-from app.schemas.scene import SceneRead
+from app.schemas.scene import PersonInScene, SceneCreate, SceneRead
 from app.schemas.tag import TagSimple
 from app.models import Face, Person, Media
 

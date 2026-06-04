@@ -9,9 +9,11 @@ interface MediaDisplayProps {
   media: Media;
   initialTime?: number | null;
   autoplay?: boolean;
+  seekRequest?: { time: number; seq: number } | null;
+  onProgress?: (playedSeconds: number) => void;
 }
 
-export function MediaDisplay({ media, initialTime, autoplay }: MediaDisplayProps) {
+export function MediaDisplay({ media, initialTime, autoplay, seekRequest, onProgress }: MediaDisplayProps) {
   const mediaUrl = media ? `${API}/originals/${media.path}` : `${API}/static/brand/404.png`;
   const filename = media ? media.filename : "404 Not found";
   const isVideo = typeof media?.duration === "number";
@@ -36,6 +38,8 @@ export function MediaDisplay({ media, initialTime, autoplay }: MediaDisplayProps
             media={media}
             initialTime={initialTime ?? undefined}
             autoplay={autoplay}
+            seekRequest={seekRequest}
+            onProgress={onProgress}
           />
         ) : (
           <Box

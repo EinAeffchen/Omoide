@@ -33,12 +33,16 @@ interface VideoWithPreviewProps {
   media: Media;
   initialTime?: number;
   autoplay?: boolean;
+  seekRequest?: { time: number; seq: number } | null;
+  onProgress?: (playedSeconds: number) => void;
 }
 
 export function VideoWithPreview({
   media,
   initialTime = 0,
   autoplay = false,
+  seekRequest,
+  onProgress,
 }: VideoWithPreviewProps) {
   const [isLoading, setIsLoading] = useState(false);
   const mediaUrl = media
@@ -200,6 +204,12 @@ export function VideoWithPreview({
     }
   }, [isReady, initialTime, media.id]);
 
+  useEffect(() => {
+    if (!isReady || !playerRef.current || seekRequest == null) return;
+    playerRef.current.seekTo(seekRequest.time, "seconds");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isReady, seekRequest?.seq]);
+
   if (!media || !media.path) {
     return <Typography color="text.secondary">No video available</Typography>;
   }
@@ -244,6 +254,7 @@ export function VideoWithPreview({
         style={{ position: "absolute", top: 0, left: 0 }} // Disable pointer events on the player itself
         light={autoplay ? false : thumbnailUrl}
         onReady={handleReady}
+        onProgress={({ playedSeconds }) => onProgress?.(playedSeconds)}
         onError={() => setIsLoading(false)}
         // The config track is not needed for the manual implementation
       />

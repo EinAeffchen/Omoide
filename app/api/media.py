@@ -6,14 +6,14 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import and_, func, or_, text, tuple_, union_all
 from sqlalchemy.orm import aliased, selectinload
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from app.config import settings
-from app.database import get_session, safe_execute
+from app.database import get_session, safe_commit, safe_execute
 from app.logger import logger
 from app.models import ExifData, Face, Media, Person, PersonMediaLink, Scene, Tag
 from app.schemas.face import FaceRead
@@ -29,12 +29,15 @@ from app.schemas.media import (
     MediaNeighbors,
     MediaPreview,
     MediaRead,
+    PersonInScene,
+    SceneCreate,
     SceneRead,
 )
 from app.schemas.person import PersonRead
 from app.utils import (
     delete_file,
     delete_record,
+    extract_scene_frame_and_thumbnail,
     update_exif_gps,
 )
 
@@ -303,7 +306,7 @@ def list_media(
     limit: int = Query(100, ge=1, le=200),
     session: Session = Depends(get_session),
 ):
-    q = select(Media)
+    q = select(Media).where(col(Media.processing_error).is_(None))
     # select by tags
     if tags and len(tags) > 0:
         q = q.join(Media.tags).where(Tag.name.in_(tags))
@@ -540,7 +543,7 @@ def list_images(
         ),
     ),
 ):
-    stmt = select(Media).where(Media.duration.is_(None))  # images have no duration
+    stmt = select(Media).where(Media.duration.is_(None), col(Media.processing_error).is_(None))  # images have no duration
 
     if sort == "newest":
         sort_col = Media.created_at
@@ -590,7 +593,7 @@ def list_videos(
         ),
     ),
 ):
-    stmt = select(Media).where(Media.duration != None)  # videos have a duration
+    stmt = select(Media).where(Media.duration != None, col(Media.processing_error).is_(None))  # videos have a duration
     stmt = stmt.order_by(Media.inserted_at.desc())
     if cursor:
         before_id = int(cursor)
@@ -936,9 +939,139 @@ def get_similar_media(media_id: int, k: int = 8, session=Depends(get_session)):
 
 @router.get("/{media_id}/scenes", response_model=list[SceneRead])
 def get_scenes(media_id: int, session: Session = Depends(get_session)):
-    return session.exec(
+    scenes = session.exec(
         select(Scene).where(Scene.media_id == media_id).order_by(Scene.start_time)
     ).all()
+
+    # Gather faces with timestamps to map persons to scenes
+    faces_with_ts = session.exec(
+        select(Face).where(
+            Face.media_id == media_id,
+            Face.person_id.isnot(None),
+            Face.timestamp.isnot(None),
+        )
+    ).all()
+
+    persons_by_id: dict = {}
+    if faces_with_ts:
+        person_ids = {f.person_id for f in faces_with_ts}
+        persons = session.exec(
+            select(Person)
+            .options(selectinload(Person.profile_face))
+            .where(Person.id.in_(person_ids))
+        ).all()
+        persons_by_id = {p.id: p for p in persons}
+
+    result = []
+    for scene in scenes:
+        seen_ids: set = set()
+        scene_persons: list[PersonInScene] = []
+        for face in faces_with_ts:
+            if (
+                face.person_id not in seen_ids
+                and face.timestamp is not None
+                and face.timestamp >= scene.start_time
+                and face.timestamp < scene.end_time
+            ):
+                person = persons_by_id.get(face.person_id)
+                if person:
+                    scene_persons.append(
+                        PersonInScene(
+                            id=person.id,
+                            name=person.name,
+                            profile_face_id=person.profile_face_id,
+                            profile_thumbnail=(
+                                person.profile_face.thumbnail_path
+                                if person.profile_face
+                                else None
+                            ),
+                        )
+                    )
+                    seen_ids.add(face.person_id)
+        result.append(
+            SceneRead(
+                id=scene.id,
+                start_time=scene.start_time,
+                end_time=scene.end_time,
+                thumbnail_path=scene.thumbnail_path,
+                description=scene.description,
+                persons=scene_persons,
+            )
+        )
+    return result
+
+
+@router.post("/{media_id}/scenes", response_model=SceneRead, status_code=status.HTTP_201_CREATED)
+def create_scene(
+    media_id: int,
+    data: SceneCreate,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+):
+    if settings.general.presentation_mode:
+        raise HTTPException(403, "Not allowed in presentation mode")
+    media = session.get(Media, media_id)
+    if not media:
+        raise HTTPException(404, "Media not found")
+    if not media.duration:
+        raise HTTPException(400, "Not a video")
+    if data.start_time >= data.end_time:
+        raise HTTPException(400, "start_time must be less than end_time")
+    scene = Scene(
+        media_id=media_id,
+        start_time=data.start_time,
+        end_time=data.end_time,
+        description=data.description,
+    )
+    session.add(scene)
+    safe_commit(session)
+    session.refresh(scene)
+
+    thumb_relative, _ = extract_scene_frame_and_thumbnail(media, float(data.start_time))
+    if thumb_relative:
+        scene.thumbnail_path = thumb_relative
+        session.add(scene)
+
+    media.faces_extracted = False
+    media.embeddings_created = False
+    media.ran_auto_tagging = False
+    session.add(media)
+    safe_commit(session)
+
+    from app.tasks import create_and_run_task, run_media_processing_and_chain
+
+    create_and_run_task(
+        session=session,
+        background_tasks=background_tasks,
+        task_type="process_media",
+        callable_task=run_media_processing_and_chain,
+    )
+
+    return SceneRead(
+        id=scene.id,
+        start_time=scene.start_time,
+        end_time=scene.end_time,
+        thumbnail_path=scene.thumbnail_path,
+        description=scene.description,
+        persons=[],
+    )
+
+
+@router.delete("/{media_id}/scenes/{scene_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_scene(
+    media_id: int,
+    scene_id: int,
+    session: Session = Depends(get_session),
+):
+    if settings.general.presentation_mode:
+        raise HTTPException(403, "Not allowed in presentation mode")
+    scene = session.exec(
+        select(Scene).where(Scene.id == scene_id, Scene.media_id == media_id)
+    ).first()
+    if not scene:
+        raise HTTPException(404, "Scene not found")
+    session.delete(scene)
+    safe_commit(session)
 
 
 @router.patch("/{media_id}/geolocation", response_model=MediaRead)

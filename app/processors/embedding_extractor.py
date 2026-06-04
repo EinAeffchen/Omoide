@@ -101,10 +101,35 @@ class EmbeddingExtractor(MediaProcessor):
                     ).bindparams(sid=scene.id)
                 ).first()
                 if not row:
-                    logger.debug(
-                        "EmbeddingExtractor: no stored embedding for scene %s; skipping",
-                        scene.id,
-                    )
+                    # Scene has no stored embedding yet (e.g. manually created scene).
+                    # Compute from thumbnail if available.
+                    if scene.thumbnail_path and hasattr(self, "_clip_model"):
+                        try:
+                            thumb = settings.general.thumb_dir / scene.thumbnail_path
+                            img = Image.open(thumb).convert("RGB")
+                            result = self._get_embeddings_batch([img])
+                            embedding = result[0] if result else None
+                            if embedding is not None:
+                                embeddings.append(embedding)
+                                blob = vector_to_blob(embedding)
+                                if blob:
+                                    session.exec(
+                                        text(
+                                            "INSERT OR REPLACE INTO scene_embeddings"
+                                            "(scene_id, media_id, embedding)"
+                                            " VALUES (:sid, :mid, :emb)"
+                                        ).bindparams(sid=scene.id, mid=media.id, emb=blob)
+                                    )
+                        except Exception:
+                            logger.warning(
+                                "EmbeddingExtractor: failed to compute embedding for scene %s",
+                                scene.id,
+                            )
+                    else:
+                        logger.debug(
+                            "EmbeddingExtractor: no stored embedding for scene %s; skipping",
+                            scene.id,
+                        )
                     continue
                 vec = vector_from_stored(row[0])
                 if vec is None or vec.size == 0:
