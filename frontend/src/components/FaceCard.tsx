@@ -14,6 +14,7 @@ import {
 import { alpha } from "@mui/material/styles";
 import { useNavigate, useLocation } from "react-router-dom";
 import StarIcon from "@mui/icons-material/Star";
+import AccessTimeIcon from "@mui/icons-material/AccessTime";
 import { API } from "../config";
 import { Face } from "../types";
 
@@ -39,7 +40,13 @@ export default function FaceCard({
 
   const handleCardClick = () => {
     navigate(`/medium/${face.media_id}`, {
-      state: { backgroundLocation: location },
+      state: {
+        backgroundLocation: location,
+        ...(face.timestamp != null && {
+          sceneStart: face.timestamp,
+          autoplayVideo: true,
+        }),
+      },
     });
   };
 
@@ -127,6 +134,23 @@ export default function FaceCard({
             {`${face.similarity.toFixed(1)}%`}
           </Typography>
         </Box>
+      )}
+      {face.timestamp != null && (
+        <Tooltip title={`Detected at ${Math.floor(face.timestamp / 60)}:${String(Math.floor(face.timestamp % 60)).padStart(2, "0")} — click to jump`}>
+          <Box
+            sx={{
+              position: "absolute",
+              bottom: 4,
+              right: 4,
+              bgcolor: (theme) => alpha(theme.palette.common.black, 0.6),
+              borderRadius: "50%",
+              p: 0.25,
+              display: "flex",
+            }}
+          >
+            <AccessTimeIcon sx={{ fontSize: 14, color: "common.white" }} />
+          </Box>
+        </Tooltip>
       )}
     </Card>
   );

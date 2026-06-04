@@ -97,6 +97,7 @@ export default function DetectedFaces({
   const [newPersonName, setNewPersonName] = useState("");
 
   const canMutate = !config.PRESENTATION_MODE;
+  const groupByVideo = config.GROUP_FACES_BY_VIDEO;
   const isAnythingSelected = selectedFaceIds.length > 0;
 
   // Group faces by media_id; preserve iteration order
@@ -249,6 +250,85 @@ export default function DetectedFaces({
         "&::-webkit-scrollbar-thumb:hover": { background: theme.palette.text.secondary },
       }
     : {};
+
+  const faceItems: React.ReactNode[] = groupByVideo
+    ? groupedItems.flatMap((item, groupIndex) => {
+        const isLastGroup = groupIndex === groupedItems.length - 1;
+        if (item.faces.length > 1) {
+          const isExpanded = expandedGroupIds.has(item.mediaId);
+          return [
+            <div
+              key={`group-${item.mediaId}`}
+              ref={!disableInternalScroll && isLastGroup && !isExpanded ? lastCardRef : null}
+            >
+              <FaceMediaGroup
+                faces={item.faces}
+                selectedFaceIds={selectedFaceIds}
+                onToggleGroupSelect={handleToggleGroupSelect}
+                canMutate={canMutate}
+                onToggleExpand={() => toggleGroupExpand(item.mediaId)}
+              />
+            </div>,
+            isExpanded && (
+              <Box
+                key={`expanded-${item.mediaId}`}
+                ref={!disableInternalScroll && isLastGroup ? lastCardRef : null}
+                sx={{
+                  flexBasis: "100%",
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 1,
+                  p: 1,
+                  borderRadius: 1,
+                  bgcolor: "action.hover",
+                }}
+              >
+                {item.faces.map((face) => (
+                  <FaceCard
+                    key={face.id}
+                    face={face as any}
+                    isProfile={face.id === profileFaceId}
+                    onSetProfile={canMutate ? onSetProfile : undefined}
+                    selected={canMutate && selectedFaceIds.includes(face.id)}
+                    onToggleSelect={canMutate ? onToggleSelect : undefined}
+                  />
+                ))}
+              </Box>
+            ),
+          ].filter(Boolean) as React.ReactNode[];
+        }
+        return [
+          <div
+            key={item.faces[0].id}
+            ref={!disableInternalScroll && isLastGroup ? lastCardRef : null}
+          >
+            <FaceCard
+              face={item.faces[0] as any}
+              isProfile={item.faces[0].id === profileFaceId}
+              onSetProfile={canMutate ? onSetProfile : undefined}
+              selected={canMutate && selectedFaceIds.includes(item.faces[0].id)}
+              onToggleSelect={canMutate ? onToggleSelect : undefined}
+            />
+          </div>,
+        ];
+      })
+    : faces.map((face, index) => {
+        const isLast = index === faces.length - 1;
+        return (
+          <div
+            key={face.id}
+            ref={!disableInternalScroll && isLast ? lastCardRef : null}
+          >
+            <FaceCard
+              face={face as any}
+              isProfile={face.id === profileFaceId}
+              onSetProfile={canMutate ? onSetProfile : undefined}
+              selected={canMutate && selectedFaceIds.includes(face.id)}
+              onToggleSelect={canMutate ? onToggleSelect : undefined}
+            />
+          </div>
+        );
+      });
 
   return (
     <Paper variant="outlined" sx={{ p: 2, my: 4 }}>
@@ -453,68 +533,7 @@ export default function DetectedFaces({
           </Typography>
         ) : (
           <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1, alignItems: "flex-start" }}>
-            {groupedItems.flatMap((item, groupIndex) => {
-              const isLastGroup = groupIndex === groupedItems.length - 1;
-
-              if (item.faces.length > 1) {
-                const isExpanded = expandedGroupIds.has(item.mediaId);
-                return [
-                  <div
-                    key={`group-${item.mediaId}`}
-                    ref={!disableInternalScroll && isLastGroup && !isExpanded ? lastCardRef : null}
-                  >
-                    <FaceMediaGroup
-                      faces={item.faces}
-                      selectedFaceIds={selectedFaceIds}
-                      onToggleGroupSelect={handleToggleGroupSelect}
-                      canMutate={canMutate}
-                      onToggleExpand={() => toggleGroupExpand(item.mediaId)}
-                    />
-                  </div>,
-                  isExpanded && (
-                    <Box
-                      key={`expanded-${item.mediaId}`}
-                      ref={!disableInternalScroll && isLastGroup ? lastCardRef : null}
-                      sx={{
-                        flexBasis: "100%",
-                        display: "flex",
-                        flexWrap: "wrap",
-                        gap: 1,
-                        p: 1,
-                        borderRadius: 1,
-                        bgcolor: "action.hover",
-                      }}
-                    >
-                      {item.faces.map((face) => (
-                        <FaceCard
-                          key={face.id}
-                          face={face as any}
-                          isProfile={face.id === profileFaceId}
-                          onSetProfile={canMutate ? onSetProfile : undefined}
-                          selected={canMutate && selectedFaceIds.includes(face.id)}
-                          onToggleSelect={canMutate ? onToggleSelect : undefined}
-                        />
-                      ))}
-                    </Box>
-                  ),
-                ].filter(Boolean) as React.ReactNode[];
-              }
-
-              return [
-                <div
-                  key={item.faces[0].id}
-                  ref={!disableInternalScroll && isLastGroup ? lastCardRef : null}
-                >
-                  <FaceCard
-                    face={item.faces[0] as any}
-                    isProfile={item.faces[0].id === profileFaceId}
-                    onSetProfile={canMutate ? onSetProfile : undefined}
-                    selected={canMutate && selectedFaceIds.includes(item.faces[0].id)}
-                    onToggleSelect={canMutate ? onToggleSelect : undefined}
-                  />
-                </div>,
-              ];
-            })}
+            {faceItems}
           </Box>
         )}
         {isLoadingMore && (

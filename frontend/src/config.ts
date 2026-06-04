@@ -10,6 +10,10 @@ const getBooleanEnv = (envVar: string | undefined): boolean => {
   return envVar?.toLowerCase() === "true";
 };
 
+const getBooleanEnvDefaultTrue = (envVar: string | undefined): boolean => {
+  return envVar?.toLowerCase() !== "false";
+};
+
 export const API = API_BASE_URL;
 
 const config = {
@@ -54,6 +58,13 @@ const config = {
     const parsed = raw ? Number(raw) : NaN;
     return Number.isFinite(parsed) && parsed > 0 ? parsed : 100;
   },
+  get GROUP_FACES_BY_VIDEO(): boolean {
+    if (import.meta.env.DEV) {
+      return getBooleanEnvDefaultTrue(import.meta.env.VITE_GROUP_FACES_BY_VIDEO);
+    }
+    return getBooleanEnvDefaultTrue(window.runtimeConfig?.VITE_GROUP_FACES_BY_VIDEO);
+  },
+
   get APP_VERSION(): string {
     if (import.meta.env.DEV) {
       return import.meta.env.VITE_APP_VERSION ?? "dev";
@@ -68,5 +79,6 @@ if (import.meta.env.DEV) {
   console.log("[App Config] Read-Only Mode:", config.PRESENTATION_MODE);
   console.log("[App Config] People tracking enabled:", config.ENABLE_PEOPLE);
   console.log("[App Config] Meme mode:", config.MEME_MODE);
+  console.log("[App Config] Group faces by video:", config.GROUP_FACES_BY_VIDEO);
 }
 export default config;
