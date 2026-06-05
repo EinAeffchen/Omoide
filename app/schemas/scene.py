@@ -19,5 +19,5 @@ class SceneRead(SQLModel):
 
 class SceneCreate(SQLModel):
     start_time: float
-    end_time: float
+    end_time: float | None = None
     description: str | None = None

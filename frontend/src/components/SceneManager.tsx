@@ -111,25 +111,21 @@ export function SceneManager({
 
   const handleCreateScene = async () => {
     const startSecs = parseTimeInput(newStartTime);
-    const rawEnd = newEndTime.trim()
-      ? parseTimeInput(newEndTime)
-      : startSecs != null
-      ? Math.min(startSecs + 30, duration)
-      : null;
+    const rawEnd = newEndTime.trim() ? parseTimeInput(newEndTime) : null;
 
     if (startSecs == null) {
       setCreateError("Invalid start time. Use M:SS or seconds (e.g. 1:30 or 90).");
       return;
     }
-    if (rawEnd == null) {
+    if (newEndTime.trim() && rawEnd == null) {
       setCreateError("Invalid end time. Use M:SS or seconds.");
       return;
     }
-    if (startSecs >= rawEnd) {
+    if (rawEnd != null && startSecs >= rawEnd) {
       setCreateError("End time must be after start time.");
       return;
     }
-    if (rawEnd > duration) {
+    if (rawEnd != null && rawEnd > duration) {
       setCreateError(`End time exceeds video duration (${formatTime(duration)}).`);
       return;
     }
@@ -139,7 +135,7 @@ export function SceneManager({
     try {
       const scene = await createScene(mediaId, {
         start_time: startSecs,
-        end_time: rawEnd,
+        ...(rawEnd != null && { end_time: rawEnd }),
         description: newDescription.trim() || undefined,
       });
       setScenes((prev) =>
@@ -284,21 +280,12 @@ export function SceneManager({
           />
           <TextField
             label="End time (optional)"
-            placeholder={
-              newStartTime && parseTimeInput(newStartTime) != null
-                ? formatTime(
-                    Math.min(
-                      (parseTimeInput(newStartTime) ?? 0) + 30,
-                      duration
-                    )
-                  )
-                : "e.g. 2:00 or 120"
-            }
+            placeholder="e.g. 2:00 or 120"
             value={newEndTime}
             onChange={(e) => setNewEndTime(e.target.value)}
             fullWidth
             sx={{ mb: 2 }}
-            helperText={`Defaults to start + 30s. Video duration: ${formatTime(duration)}`}
+            helperText={`Leave blank to auto-detect from next scene or end of video. Duration: ${formatTime(duration)}`}
           />
           <TextField
             label="Description (optional)"

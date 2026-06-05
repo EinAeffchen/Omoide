@@ -1015,12 +1015,24 @@ def create_scene(
         raise HTTPException(404, "Media not found")
     if not media.duration:
         raise HTTPException(400, "Not a video")
-    if data.start_time >= data.end_time:
+
+    if data.end_time is None:
+        next_scene = session.exec(
+            select(Scene)
+            .where(Scene.media_id == media_id, Scene.start_time > data.start_time)
+            .order_by(col(Scene.start_time))
+            .limit(1)
+        ).first()
+        end_time = next_scene.start_time if next_scene else media.duration
+    else:
+        end_time = data.end_time
+
+    if data.start_time >= end_time:
         raise HTTPException(400, "start_time must be less than end_time")
     scene = Scene(
         media_id=media_id,
         start_time=data.start_time,
-        end_time=data.end_time,
+        end_time=end_time,
         description=data.description,
     )
     session.add(scene)
