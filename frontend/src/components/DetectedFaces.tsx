@@ -8,6 +8,7 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  IconButton,
   List,
   ListItemAvatar,
   ListItemButton,
@@ -15,9 +16,12 @@ import {
   Paper,
   Stack,
   TextField,
+  Tooltip,
   Typography,
   useTheme,
 } from "@mui/material";
+import VideoLibraryIcon from "@mui/icons-material/VideoLibrary";
+import ViewModuleIcon from "@mui/icons-material/ViewModule";
 import { FaceRead, Person } from "../types";
 import FaceCard from "./FaceCard";
 import FaceMediaGroup from "./FaceMediaGroup";
@@ -97,7 +101,7 @@ export default function DetectedFaces({
   const [newPersonName, setNewPersonName] = useState("");
 
   const canMutate = !config.PRESENTATION_MODE;
-  const groupByVideo = config.GROUP_FACES_BY_VIDEO;
+  const [groupByVideo, setGroupByVideo] = useState(config.GROUP_FACES_BY_VIDEO);
   const isAnythingSelected = selectedFaceIds.length > 0;
 
   // Group faces by media_id; preserve iteration order
@@ -333,9 +337,16 @@ export default function DetectedFaces({
   return (
     <Paper variant="outlined" sx={{ p: 2, my: 4 }}>
       <Box sx={{ mb: 1 }}>
-        <Typography variant="h6" sx={{ flexGrow: 1 }}>
-          {title}
-        </Typography>
+        <Stack direction="row" alignItems="center" sx={{ mb: 1 }}>
+          <Typography variant="h6" sx={{ flexGrow: 1 }}>
+            {title}
+          </Typography>
+          <Tooltip title={groupByVideo ? "Show as flat grid" : "Group by video"}>
+            <IconButton size="small" onClick={() => setGroupByVideo((v) => !v)}>
+              {groupByVideo ? <ViewModuleIcon fontSize="small" /> : <VideoLibraryIcon fontSize="small" />}
+            </IconButton>
+          </Tooltip>
+        </Stack>
         {isAnythingSelected && canMutate && (
           <Stack direction="row" spacing={1} alignItems="center">
             <Button size="small" onClick={onClearSelection}>

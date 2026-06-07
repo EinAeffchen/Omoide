@@ -198,12 +198,21 @@ def run_backfill_face_timestamps(task_id: str) -> None:
                         session.add(best_face)
                         updated_ids.add(best_face.id)
 
+            # Faces that could not be matched via re-detection get a sentinel of -1.0
+            # so they no longer appear as NULL in subsequent backfill runs without being
+            # incorrectly placed in any scene (all scene filters require timestamp >= 0).
+            still_unmatched = [f for _, f in null_face_bboxes if f.id not in updated_ids]
+            for face in still_unmatched:
+                face.timestamp = -1.0
+                session.add(face)
+
             safe_commit(session)
             logger.info(
-                "Media %d: updated %d/%d null-timestamp face(s).",
+                "Media %d: matched %d/%d null-timestamp face(s) (%d marked unresolvable).",
                 media_id,
                 len(updated_ids),
                 len(null_faces),
+                len(still_unmatched),
             )
 
             task.processed = idx + 1
