@@ -24,6 +24,7 @@ import DeleteIcon from "@mui/icons-material/Delete";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import { API } from "../config";
 import config from "../config";
+import { encodeFilePath } from "../urlUtils";
 import { Person, SceneRead } from "../types";
 import { createScene, deleteScene, getScenes } from "../services/scene";
 
@@ -183,7 +184,7 @@ export function SceneManager({
               p.profile_face?.thumbnail_path ? (
                 <Box
                   component="img"
-                  src={`${API}/thumbnails/${p.profile_face.thumbnail_path}`}
+                  src={`${API}/thumbnails/${encodeFilePath(p.profile_face.thumbnail_path)}`}
                   alt=""
                   sx={{
                     width: 20,
@@ -323,7 +324,7 @@ function SceneCard({
   onDelete?: () => void;
 }) {
   const thumbUrl = scene.thumbnail_path
-    ? `${API}/thumbnails/${scene.thumbnail_path}`
+    ? `${API}/thumbnails/${encodeFilePath(scene.thumbnail_path)}`
     : null;
 
   return (

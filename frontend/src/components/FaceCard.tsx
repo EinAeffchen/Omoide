@@ -17,6 +17,7 @@ import StarIcon from "@mui/icons-material/Star";
 import AccessTimeIcon from "@mui/icons-material/AccessTime";
 import { API } from "../config";
 import { Face } from "../types";
+import { encodeFilePath } from "../urlUtils";
 
 interface FaceCardProps {
   face: Face;
@@ -36,7 +37,7 @@ export default function FaceCard({
   const theme = useTheme();
   const navigate = useNavigate();
   const location = useLocation();
-  const thumbUrl = `${API}/thumbnails/${face.thumbnail_path}`;
+  const thumbUrl = `${API}/thumbnails/${encodeFilePath(face.thumbnail_path)}`;
 
   const handleCardClick = () => {
     navigate(`/medium/${face.media_id}`, {

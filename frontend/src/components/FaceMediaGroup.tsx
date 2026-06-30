@@ -5,6 +5,7 @@ import UnfoldMoreIcon from "@mui/icons-material/UnfoldMore";
 import { useNavigate, useLocation } from "react-router-dom";
 import { FaceRead } from "../types";
 import { API } from "../config";
+import { encodeFilePath } from "../urlUtils";
 
 interface FaceGroupCardProps {
   faces: FaceRead[];
@@ -74,7 +75,7 @@ export default function FaceGroupCard({
             <Box
               key={i}
               component="img"
-              src={`${API}/thumbnails/${face.thumbnail_path}`}
+              src={`${API}/thumbnails/${encodeFilePath(face.thumbnail_path)}`}
               sx={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
             />
           );

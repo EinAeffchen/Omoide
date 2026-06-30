@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useInView } from "react-intersection-observer";
 import {
   Typography,
@@ -6,6 +6,10 @@ import {
   CircularProgress,
   Alert,
   Paper,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
 } from "@mui/material";
 import Grid from "@mui/material/Grid";
 import { useListStore, defaultListState } from "../stores/useListStore";
@@ -15,7 +19,15 @@ import { DuplicateStats } from "../types";
 import { useTaskCompletionVersion, useTaskEvents } from "../TaskEventsContext";
 
 const DuplicatesPage: React.FC = () => {
-  const listKey = "duplicate-groups";
+  const [sortBy, setSortBy] = useState<"count" | "size">("count");
+  const [mediaType, setMediaType] = useState<"" | "image" | "video">("");
+  const [minCount, setMinCount] = useState<number>(2);
+
+  const listKey = useMemo(
+    () => `duplicate-groups-${sortBy}-${mediaType}-${minCount}`,
+    [sortBy, mediaType, minCount]
+  );
+
   const {
     items: duplicateGroups,
     hasMore,
@@ -37,22 +49,24 @@ const DuplicatesPage: React.FC = () => {
   const [isLoadingStats, setIsLoadingStats] = useState(false);
   const [statsError, setStatsError] = useState<string | null>(null);
 
+  const mt = mediaType || undefined;
+
   useEffect(() => {
     clearList(listKey);
-    fetchInitial(listKey, () => getDuplicates(null));
-  }, [fetchInitial, listKey, clearList, refreshKey]);
+    fetchInitial(listKey, () => getDuplicates(null, sortBy, mt, 10, minCount));
+  }, [fetchInitial, listKey, clearList, refreshKey, sortBy, mt, minCount]);
 
   useEffect(() => {
     if (inView && hasMore && !isLoading) {
-      loadMore(listKey, (cursor) => getDuplicates(cursor));
+      loadMore(listKey, (cursor) => getDuplicates(cursor, sortBy, mt, 10, minCount));
     }
-  }, [inView, hasMore, isLoading, loadMore, listKey]);
+  }, [inView, hasMore, isLoading, loadMore, listKey, sortBy, mt, minCount]);
 
   useEffect(() => {
     if (!isLoading && hasMore && duplicateGroups.length === 0) {
-      loadMore(listKey, (cursor) => getDuplicates(cursor));
+      loadMore(listKey, (cursor) => getDuplicates(cursor, sortBy, mt, 10, minCount));
     }
-  }, [duplicateGroups.length, hasMore, isLoading, loadMore, listKey]);
+  }, [duplicateGroups.length, hasMore, isLoading, loadMore, listKey, sortBy, mt, minCount]);
 
   useEffect(() => {
     let isActive = true;
@@ -278,6 +292,45 @@ const DuplicatesPage: React.FC = () => {
           )}
         </Box>
       )}
+
+      <Box sx={{ display: "flex", gap: 2, mb: 2, flexWrap: "wrap", alignItems: "center" }}>
+        <FormControl size="small" sx={{ minWidth: 140 }}>
+          <InputLabel>Media Type</InputLabel>
+          <Select
+            value={mediaType}
+            label="Media Type"
+            onChange={(e) => setMediaType(e.target.value as "" | "image" | "video")}
+          >
+            <MenuItem value="">All</MenuItem>
+            <MenuItem value="image">Images</MenuItem>
+            <MenuItem value="video">Videos</MenuItem>
+          </Select>
+        </FormControl>
+        <FormControl size="small" sx={{ minWidth: 160 }}>
+          <InputLabel>Sort By</InputLabel>
+          <Select
+            value={sortBy}
+            label="Sort By"
+            onChange={(e) => setSortBy(e.target.value as "count" | "size")}
+          >
+            <MenuItem value="count">Most Files</MenuItem>
+            <MenuItem value="size">Largest Size</MenuItem>
+          </Select>
+        </FormControl>
+        <FormControl size="small" sx={{ minWidth: 160 }}>
+          <InputLabel>Min. Copies</InputLabel>
+          <Select
+            value={minCount}
+            label="Min. Copies"
+            onChange={(e) => setMinCount(Number(e.target.value))}
+          >
+            <MenuItem value={2}>Any (2+)</MenuItem>
+            <MenuItem value={3}>3 or more</MenuItem>
+            <MenuItem value={4}>4 or more</MenuItem>
+            <MenuItem value={5}>5 or more</MenuItem>
+          </Select>
+        </FormControl>
+      </Box>
 
       {isLoading && duplicateGroups.length === 0 ? (
         <Box sx={{ display: "flex", justifyContent: "center", my: 4 }}>

@@ -3,13 +3,17 @@ import { DuplicatePage, Task, DuplicateStats } from "../types";
 
 export const getDuplicates = async (
   cursor: string | null = null,
-  limit: number = 10
+  sortBy: "count" | "size" = "count",
+  mediaType?: "image" | "video",
+  limit: number = 10,
+  minCount: number = 2
 ): Promise<DuplicatePage> => {
   const params = new URLSearchParams();
-  if (cursor) {
-    params.append("cursor", cursor);
-  }
+  if (cursor) params.append("cursor", cursor);
   params.append("limit", limit.toString());
+  if (sortBy !== "count") params.append("sort_by", sortBy);
+  if (mediaType) params.append("media_type", mediaType);
+  if (minCount > 2) params.append("min_count", minCount.toString());
 
   const response = await fetch(`${API}/api/duplicates?${params.toString()}`);
   if (!response.ok) {

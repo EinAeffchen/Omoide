@@ -5,6 +5,7 @@ import PersonSearchIcon from "@mui/icons-material/PersonSearch";
 import PhotoLibraryIcon from "@mui/icons-material/PhotoLibrary";
 import { MediaPreview } from "../types";
 import { API } from "../config";
+import { encodeFilePath } from "../urlUtils";
 
 interface MediaItemGroupProps {
   mediaItems: MediaPreview[];
@@ -49,7 +50,7 @@ export const MediaItemGroup: React.FC<MediaItemGroupProps> = ({
           >
             <Box
               component="img"
-              src={`${API}/thumbnails/${media.thumbnail_path || `${media.id}.jpg`}`}
+              src={`${API}/thumbnails/${media.thumbnail_path ? encodeFilePath(media.thumbnail_path) : `${media.id}.jpg`}`}
               onClick={onViewAll}
               sx={{
                 height: "100px",

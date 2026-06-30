@@ -12,6 +12,7 @@ import {
 } from "@mui/material";
 import { MediaPreview } from "../types";
 import appConfig, { API } from "../config";
+import { encodeFilePath } from "../urlUtils";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import PlayCircleOutlineIcon from "@mui/icons-material/PlayCircleOutline";
 import { useSelection } from "../context/SelectionContext";
@@ -94,11 +95,11 @@ export default function MediaCard({
       : false;
   const useOriginalGif = memeModeEnabled && isGif;
 
-  const isVideo = media ? typeof media.duration === "number" : false;
+  const isVideo = media ? typeof media.duration === "number" && !isGif : false;
   const isDraggable = !!media && !isVideo;
 
   const mediaUrl = media
-    ? `${API}/originals/${media.path}`
+    ? `${API}/originals/${encodeFilePath(media.path)}`
     : `${API}/static/brand/404.png`;
   const filename = media ? media.filename : "404 Not found";
   const mediaId = media ? media.id : null;
@@ -108,7 +109,7 @@ export default function MediaCard({
     if (useOriginalGif) {
       thumbUrl = mediaUrl;
     } else if (media.thumbnail_path) {
-      thumbUrl = `${API}/thumbnails/${media.thumbnail_path}`;
+      thumbUrl = `${API}/thumbnails/${encodeFilePath(media.thumbnail_path)}`;
     } else {
       thumbUrl = `${API}/thumbnails/${media.id}.jpg`;
     }

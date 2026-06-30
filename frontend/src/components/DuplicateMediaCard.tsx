@@ -13,6 +13,7 @@ import {
 } from "@mui/material";
 import { MediaDuplicate } from "../types";
 import { API } from "../config";
+import { encodeFilePath } from "../urlUtils";
 
 interface DuplicateMediaCardProps {
   media: MediaDuplicate;
@@ -30,7 +31,7 @@ export const DuplicateMediaCard: React.FC<DuplicateMediaCardProps> = ({
 
   const filename = media ? media.filename : "404 Not found";
   const thumbUrl = media.thumbnail_path
-    ? `${API}/thumbnails/${media.thumbnail_path}`
+    ? `${API}/thumbnails/${encodeFilePath(media.thumbnail_path)}`
     : `${API}/thumbnails/${media.id}.jpg`;
 
   return (

@@ -9,6 +9,7 @@ import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import { Tag } from "../types";
 import { deleteTag } from "../services/tagActions";
 import { API } from "../config";
+import { encodeFilePath } from "../urlUtils";
 interface TagCardProps {
   tag: Tag;
   onTagDeleted: (tagId: number) => void;
@@ -40,23 +41,20 @@ export default function TagCard({ tag, onTagDeleted }: TagCardProps) {
     }
   };
 
-  // Normalize thumbnail paths for the StaticFiles mount (expects forward slashes)
-  const normThumb = (p?: string | null) => (p ?? "").replace(/\\/g, "/");
-
   // --- Logic to create a mixed list of media and person thumbnails ---
   const mediaPreviews = tag.media.slice(0, 4).map((m) => ({
     type: "media",
     id: m.id,
-    url: `${API}/thumbnails/${normThumb(m.thumbnail_path || `${m.id}.jpg`)}`,
+    url: `${API}/thumbnails/${m.thumbnail_path ? encodeFilePath(m.thumbnail_path) : `${m.id}.jpg`}`,
   }));
 
   const personPreviews = tag.persons
-    .filter((p) => p.profile_face?.thumbnail_path) // Ensure person has a profile face
+    .filter((p) => p.profile_face?.thumbnail_path)
     .slice(0, 4)
     .map((p) => ({
       type: "person",
       id: p.id,
-      url: `${API}/thumbnails/${normThumb(p.profile_face!.thumbnail_path)}`,
+      url: `${API}/thumbnails/${encodeFilePath(p.profile_face!.thumbnail_path!)}`,
     }));
 
   // Combine and slice to ensure we have a max of 4 total previews for the collage

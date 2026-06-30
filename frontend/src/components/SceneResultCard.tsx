@@ -5,6 +5,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 
 import { API } from "../config";
 import { SceneSearchResult } from "../types";
+import { encodeFilePath } from "../urlUtils";
 
 function formatTimestamp(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
@@ -30,9 +31,9 @@ export function SceneResultCard({ scene, listKey }: SceneResultCardProps) {
   const location = useLocation();
 
   const sceneThumb = scene.scene_thumbnail_path
-    ? `${API}/thumbnails/${scene.scene_thumbnail_path}`
+    ? `${API}/thumbnails/${encodeFilePath(scene.scene_thumbnail_path)}`
     : scene.media_thumbnail_path
-    ? `${API}/thumbnails/${scene.media_thumbnail_path}`
+    ? `${API}/thumbnails/${encodeFilePath(scene.media_thumbnail_path)}`
     : `${API}/thumbnails/${scene.media_id}.jpg`;
 
   const handleClick = () => {

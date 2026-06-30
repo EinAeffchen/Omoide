@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef } from "react";
-import { Box, CircularProgress, Typography } from "@mui/material";
+import { Box, Button, CircularProgress, Typography } from "@mui/material";
+import DownloadIcon from "@mui/icons-material/Download";
 import ReactPlayer from "react-player";
 import { Media } from "../types";
 import { API } from "../config";
+import { encodeFilePath } from "../urlUtils";
 
 const VOLUME_STORAGE_KEY = "smol.video.volume";
 const DEFAULT_VOLUME = 1;
@@ -45,13 +47,14 @@ export function VideoWithPreview({
   onProgress,
 }: VideoWithPreviewProps) {
   const [isLoading, setIsLoading] = useState(false);
+  const [playbackError, setPlaybackError] = useState(false);
   const mediaUrl = media
-    ? `${API}/originals/${media.path}`
+    ? `${API}/originals/${encodeFilePath(media.path)}`
     : `${API}/static/brand/404.png`;
 
   const scenesUrl = `${API}/api/media/${media.id}/scenes.vtt`;
   const thumbnailUrl = media.thumbnail_path
-    ? `${API}/thumbnails/${media.thumbnail_path}`
+    ? `${API}/thumbnails/${encodeFilePath(media.thumbnail_path)}`
     : `${API}/thumbnails/${media.id}.jpg`;
 
   const [hasAudio, setHasAudio] = useState(true); //Used to calculate timeline width offset
@@ -243,6 +246,39 @@ export function VideoWithPreview({
         </Box>
       )}
 
+      {playbackError && (
+        <Box
+          sx={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 2,
+            zIndex: 3,
+            bgcolor: "rgba(0,0,0,0.85)",
+            color: "common.white",
+            p: 2,
+          }}
+        >
+          <Typography variant="body1" align="center">
+            This format cannot be played in the browser.
+          </Typography>
+          <Button
+            variant="outlined"
+            color="inherit"
+            size="small"
+            startIcon={<DownloadIcon />}
+            component="a"
+            href={mediaUrl}
+            download={media.filename}
+          >
+            Download to play
+          </Button>
+        </Box>
+      )}
+
       <ReactPlayer
         ref={playerRef}
         url={mediaUrl}
@@ -255,7 +291,7 @@ export function VideoWithPreview({
         light={autoplay ? false : thumbnailUrl}
         onReady={handleReady}
         onProgress={({ playedSeconds }) => onProgress?.(playedSeconds)}
-        onError={() => setIsLoading(false)}
+        onError={() => { setIsLoading(false); setPlaybackError(true); }}
         // The config track is not needed for the manual implementation
       />
 

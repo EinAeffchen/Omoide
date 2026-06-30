@@ -31,6 +31,7 @@ import {
   TimelineDisplayItem,
 } from "../types";
 import { API } from "../config";
+import { encodeFilePath } from "../urlUtils";
 
 interface TimelineTabProps {
   person: Person;
@@ -224,7 +225,7 @@ export const TimelineTab: React.FC<TimelineTabProps> = ({ person, onDetachMedia,
               {dayToView.map((media) => (
                 <ImageListItem key={media.id}>
                   <img
-                    src={`${API}/thumbnails/${media.thumbnail_path || `${media.id}.jpg`}`}
+                    src={`${API}/thumbnails/${media.thumbnail_path ? encodeFilePath(media.thumbnail_path) : `${media.id}.jpg`}`}
                     alt={media.filename}
                     style={{ height: 180, objectFit: "cover", width: "100%" }}
                   />

@@ -4,6 +4,7 @@ import { VideoWithPreview } from "./VideoPlayer";
 import { ImageLightbox } from "./ImageLightbox";
 import { Media } from "../types";
 import { API } from "../config";
+import { encodeFilePath } from "../urlUtils";
 
 interface MediaDisplayProps {
   media: Media;
@@ -14,9 +15,10 @@ interface MediaDisplayProps {
 }
 
 export function MediaDisplay({ media, initialTime, autoplay, seekRequest, onProgress }: MediaDisplayProps) {
-  const mediaUrl = media ? `${API}/originals/${media.path}` : `${API}/static/brand/404.png`;
+  const mediaUrl = media ? `${API}/originals/${encodeFilePath(media.path)}` : `${API}/static/brand/404.png`;
   const filename = media ? media.filename : "404 Not found";
-  const isVideo = typeof media?.duration === "number";
+  const isGif = media?.filename?.toLowerCase().endsWith(".gif") || media?.path?.toLowerCase().endsWith(".gif");
+  const isVideo = typeof media?.duration === "number" && !isGif;
   const [lightboxOpen, setLightboxOpen] = useState(false);
 
   return (
