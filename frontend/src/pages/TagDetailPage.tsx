@@ -12,6 +12,7 @@ import MediaCard from "../components/MediaCard";
 import PersonCard from "../components/PersonCard";
 import { Tag, Media, Person } from "../types";
 import { getTag } from "../services/tag";
+import { useListStore, defaultListState } from "../stores/useListStore";
 
 const BG_SECTION = "background.default";
 const TEXT_PRIMARY = "text.primary";
@@ -24,20 +25,29 @@ export default function TagDetailPage() {
   const [tag, setTag] = useState<Tag | null>(null);
   const [mediaFilter, setMediaFilter] = useState<MediaFilter>("all");
 
+  const listKey = useMemo(() => `tag-${id}-media`, [id]);
+  const { items: mediaItems } = useListStore(
+    (state) => state.lists[listKey] || defaultListState
+  );
+  const { fetchInitial, clearList } = useListStore();
+
   useEffect(() => {
     if (!id) return;
-    getTag(id)
-      .then(setTag)
-      .catch(console.error);
-  }, [id]);
+    clearList(listKey);
+    fetchInitial(listKey, async () => {
+      const tagData = await getTag(id);
+      setTag(tagData);
+      return { items: tagData.media ?? [], next_cursor: null };
+    });
+  }, [id, listKey, fetchInitial, clearList]);
 
-  const mediaItems = useMemo(() => tag?.media ?? [], [tag?.media]);
   const filteredMediaItems = useMemo(() => {
-    if (mediaFilter === "all") return mediaItems;
+    const items = mediaItems as Media[];
+    if (mediaFilter === "all") return items;
     if (mediaFilter === "video") {
-      return mediaItems.filter((item) => typeof item.duration === "number");
+      return items.filter((item) => typeof item.duration === "number");
     }
-    return mediaItems.filter((item) => typeof item.duration !== "number");
+    return items.filter((item) => typeof item.duration !== "number");
   }, [mediaFilter, mediaItems]);
   const mediaIds = useMemo(
     () => filteredMediaItems.map((m) => m.id),
@@ -92,7 +102,7 @@ export default function TagDetailPage() {
         <Grid container spacing={2}>
           {filteredMediaItems.map((m: Media) => (
             <Grid key={m.id} size={{ xs: 12, sm: 6, md: 4, lg: 3 }}>
-              <MediaCard media={m} navigationContext={{ ids: mediaIds }} />
+              <MediaCard media={m} mediaListKey={listKey} navigationContext={{ ids: mediaIds }} />
             </Grid>
           ))}
         </Grid>

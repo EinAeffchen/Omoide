@@ -4,6 +4,7 @@ import { Box, Button, Checkbox, Typography, useTheme } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import { SimilarPerson } from "../types";
 import { API } from "../config";
+import { encodeFilePath } from "../urlUtils";
 
 const getInitials = (name = "") => {
   const parts = name.split(" ");
@@ -31,7 +32,7 @@ export default function SimilarPersonCard({
   const theme = useTheme();
 
   const thumbUrl = thumbnail
-    ? `${API}/thumbnails/${encodeURIComponent(thumbnail)}`
+    ? `${API}/thumbnails/${encodeFilePath(thumbnail)}`
     : undefined;
 
   const handleToggle = () => {

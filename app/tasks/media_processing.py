@@ -118,12 +118,26 @@ def _get_or_extract_scenes(
         delete_record(media.id, session)
         return []
     except UnidentifiedImageError:
+        if media.extracted_scenes:
+            logger.warning(
+                "Transient PIL error re-opening previously-processed image %s; skipping without marking broken.",
+                media_path_obj,
+            )
+            return []
         logger.warning("Skipping broken image file: %s.", media_path_obj)
         media.extracted_scenes = True
         media.processing_error = "Unrecognized image format: PIL could not identify this file."
         session.add(media)
         return []
     except Exception as exc:
+        if media.extracted_scenes:
+            logger.warning(
+                "Transient error re-opening previously-processed image %s; skipping without marking broken. %s: %s",
+                media_path_obj,
+                type(exc).__name__,
+                exc,
+            )
+            return []
         logger.exception("Failed to extract frames for %s.", media.path)
         media.extracted_scenes = True
         media.processing_error = (
@@ -231,6 +245,23 @@ def run_media_processing_and_chain(task_id: str) -> None:
 
 
 def run_media_processing(task_id: str) -> None:
+    try:
+        _run_media_processing(task_id)
+    except Exception:
+        logger.exception("Unhandled error in run_media_processing (task %s)", task_id)
+        try:
+            with Session(db.engine) as s:
+                task = s.get(ProcessingTask, task_id)
+                if task and task.status == "running":
+                    task.status = "failed"
+                    task.finished_at = datetime.now(timezone.utc)
+                    s.add(task)
+                    safe_commit(s)
+        except Exception:
+            logger.exception("Failed to mark task %s as failed", task_id)
+
+
+def _run_media_processing(task_id: str) -> None:
     configured_batch_size = getattr(
         settings.processors, "media_batch_size", None
     )

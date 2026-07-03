@@ -29,6 +29,7 @@ import ClearAllIcon from "@mui/icons-material/ClearAll";
 
 import { MissingMediaItem, MissingSummaryEntry } from "../types";
 import { API } from "../config";
+import { encodeFilePath } from "../urlUtils";
 import {
   confirmMissing,
   getMissingMedia,
@@ -66,7 +67,7 @@ const formatDuration = (iso: string | null) => {
 
 const buildThumbUrl = (item: MissingMediaItem) => {
   const thumb = item.thumbnail_path
-    ? encodeURIComponent(item.thumbnail_path)
+    ? encodeFilePath(item.thumbnail_path)
     : `${item.id}.jpg`;
   return `${API}/thumbnails/${thumb}`;
 };

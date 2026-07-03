@@ -409,9 +409,9 @@ def _apply_thumbnail_orientation(
         return img
     try:
         return ImageOps.exif_transpose(img)
-    except OSError:
+    except Exception:
         logger.warning(
-            "Image: %s is truncated, using un-rotated decode for thumbnail.",
+            "Image: %s has unreadable EXIF orientation data, using un-rotated decode for thumbnail.",
             source_path,
         )
         return img
@@ -546,12 +546,8 @@ def generate_perceptual_hash(
             return str(imagehash.phash(img))
         if type == "video":
             return _generate_video_perceptual_hash(media)
-    except UnidentifiedImageError:
-        logger.warning("Skipping %s, not an image!", media.path)
-    except OSError:
-        logger.warning(
-            "Media %s is truncated and can't be processed:", media.path
-        )
+    except Exception:
+        logger.warning("Failed to generate perceptual hash for %s", media.path)
 
 
 def generate_thumbnail(media: Media) -> tuple[str | None, str | None]:

@@ -33,6 +33,7 @@ import {
 import type { BaseEdgeStyleProps, BaseNodeStyleProps } from "@antv/g6";
 import useResizeObserver from "use-resize-observer";
 import { API } from "../config";
+import { encodeFilePath } from "../urlUtils";
 import { PersonRelationshipGraph as PersonRelationshipGraphData } from "../types";
 interface PersonRelationshipGraphProps {
   graph: PersonRelationshipGraphData | null;
@@ -988,7 +989,7 @@ const PersonRelationshipGraph: React.FC<PersonRelationshipGraphProps> = ({
         const id = String(node.id);
         const totalWeight = nodeWeightMap.get(id) ?? 0;
         const image = node.profile_thumbnail
-          ? `${API}/thumbnails/${encodeURIComponent(node.profile_thumbnail)}`
+          ? `${API}/thumbnails/${encodeFilePath(node.profile_thumbnail)}`
           : null;
       const baseSize = 32;
       const sizeBoost = Math.min(28, Math.sqrt(totalWeight || 1) * 4.2);

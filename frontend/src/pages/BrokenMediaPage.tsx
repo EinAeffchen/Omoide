@@ -23,10 +23,12 @@ import DeleteForeverIcon from "@mui/icons-material/DeleteForever";
 import BlockIcon from "@mui/icons-material/Block";
 import SelectAllIcon from "@mui/icons-material/SelectAll";
 import ClearAllIcon from "@mui/icons-material/ClearAll";
+import ReplayIcon from "@mui/icons-material/Replay";
 
 import { BrokenMediaItem } from "../types";
 import { API } from "../config";
-import { getBrokenMedia, resolveBroken } from "../services/broken";
+import { encodeFilePath } from "../urlUtils";
+import { getBrokenMedia, resolveBroken, retryBroken } from "../services/broken";
 
 const formatBytes = (bytes: number) => {
   if (!bytes) return "0 B";
@@ -41,7 +43,7 @@ const formatBytes = (bytes: number) => {
 };
 
 const buildThumbUrl = (item: BrokenMediaItem) =>
-  `${API}/thumbnails/${item.thumbnail_path ? encodeURIComponent(item.thumbnail_path) : `${item.id}.jpg`}`;
+  `${API}/thumbnails/${item.thumbnail_path ? encodeFilePath(item.thumbnail_path) : `${item.id}.jpg`}`;
 
 const BrokenMediaPage: React.FC = () => {
   const [items, setItems] = useState<BrokenMediaItem[]>([]);
@@ -123,6 +125,33 @@ const BrokenMediaPage: React.FC = () => {
       setSnackbar({
         open: true,
         message: err instanceof Error ? err.message : "Action failed",
+        severity: "error",
+      });
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  const handleRetry = async (selectAll = false) => {
+    const count = selectAll ? total : selectedIds.size;
+    if (count === 0) return;
+
+    setIsActionLoading(true);
+    try {
+      const payload = selectAll
+        ? { select_all: true }
+        : { media_ids: Array.from(selectedIds) };
+      const result = await retryBroken(payload);
+      setSnackbar({
+        open: true,
+        message: `Retried ${result.retried} item(s): ${result.cleared} recovered, ${result.still_broken} still broken`,
+        severity: result.cleared > 0 ? "success" : "error",
+      });
+      await fetchBroken(null, false);
+    } catch (err) {
+      setSnackbar({
+        open: true,
+        message: err instanceof Error ? err.message : "Retry failed",
         severity: "error",
       });
     } finally {
@@ -222,6 +251,19 @@ const BrokenMediaPage: React.FC = () => {
                 </Button>
               </span>
             </Tooltip>
+            <Tooltip title="Re-attempt thumbnail generation; clears the error and requeues for processing if successful">
+              <span>
+                <Button
+                  variant="outlined"
+                  color="primary"
+                  startIcon={<ReplayIcon />}
+                  onClick={() => handleRetry()}
+                  disabled={selectedCount === 0 || isActionLoading}
+                >
+                  Retry
+                </Button>
+              </span>
+            </Tooltip>
             {total > 0 && (
               <>
                 <Divider flexItem orientation="vertical" sx={{ display: { xs: "none", sm: "block" } }} />
@@ -233,6 +275,15 @@ const BrokenMediaPage: React.FC = () => {
                   disabled={isActionLoading}
                 >
                   Blacklist all
+                </Button>
+                <Button
+                  variant="text"
+                  color="primary"
+                  startIcon={<ReplayIcon />}
+                  onClick={() => handleRetry(true)}
+                  disabled={isActionLoading}
+                >
+                  Retry all
                 </Button>
               </>
             )}

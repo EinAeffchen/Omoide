@@ -18,6 +18,7 @@ import { PersonContentTabs } from "../components/PersonContentTabs";
 import { PersonHero } from "../components/PersonHero";
 import { usePersonDetailPage } from "../hooks/usePersonDetailPage";
 import { API } from "../config";
+import { encodeFilePath } from "../urlUtils";
 
 const getInitials = (name?: string) => {
   if (!name) return "?";
@@ -246,7 +247,7 @@ export default function PersonDetailPage() {
                   <Avatar
                     src={
                       candidate.profile_face?.thumbnail_path
-                        ? `${API}/thumbnails/${encodeURIComponent(
+                        ? `${API}/thumbnails/${encodeFilePath(
                             candidate.profile_face.thumbnail_path
                           )}`
                         : undefined

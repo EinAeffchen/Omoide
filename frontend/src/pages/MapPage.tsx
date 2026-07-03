@@ -17,6 +17,7 @@ import {
   useLocation,
 } from "react-router-dom";
 import { API } from "../config";
+import { encodeFilePath } from "../urlUtils";
 
 import { ClusterMarker } from "../components/ClusterMarker";
 import { useGridClustering } from "../hooks/useGridClustering";
@@ -152,7 +153,7 @@ export default function MapPage() {
                 >
                   <Box
                     component="img"
-                    src={`${API}/thumbnails/${point.thumbnail}`}
+                    src={`${API}/thumbnails/${encodeFilePath(point.thumbnail)}`}
                     alt=""
                     sx={{
                       width: 96,

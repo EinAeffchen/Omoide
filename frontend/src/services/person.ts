@@ -15,6 +15,7 @@ export const getPeople = async (
     params.append("cursor", cursor);
   }
   const response = await fetch(`${API}/api/person/?${params.toString()}`);
+  if (!response.ok) throw new Error("Failed to fetch people");
   const data = await response.json();
   return { items: data.items, next_cursor: data.next_cursor };
 };
@@ -24,6 +25,7 @@ export const getPerson = async (
   signal?: AbortSignal
 ): Promise<Person> => {
   const response = await fetch(`${API}/api/person/${id}`, { signal });
+  if (!response.ok) throw new Error(`Failed to load person (${response.status})`);
   return response.json();
 };
 
@@ -31,6 +33,7 @@ export const getSimilarPeople = async (
   id: string
 ): Promise<SimilarPersonWithDetails[]> => {
   const response = await fetch(`${API}/api/person/similar/${id}`);
+  if (!response.ok) throw new Error("Failed to fetch similar people");
   return response.json();
 };
 
@@ -49,5 +52,6 @@ export const getPersonMediaAppearances = async (
   const response = await fetch(
     `${API}/api/person/${personId}/media-appearances?${params.toString()}`
   );
+  if (!response.ok) throw new Error("Failed to fetch media appearances");
   return response.json();
 };

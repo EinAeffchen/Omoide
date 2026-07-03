@@ -14,6 +14,7 @@ import Grid from "@mui/material/Grid";
 import { Person } from "../types";
 import { PersonEditForm } from "./PersonEditForm";
 import config, { API } from "../config";
+import { encodeFilePath } from "../urlUtils";
 
 interface PersonHeroProps {
   person: Person;
@@ -38,7 +39,7 @@ export function PersonHero({
 }: PersonHeroProps) {
   const theme = useTheme();
   const thumbUrl = person.profile_face?.thumbnail_path
-    ? `${API}/thumbnails/${encodeURIComponent(
+    ? `${API}/thumbnails/${encodeFilePath(
         person.profile_face.thumbnail_path
       )}`
     : undefined;

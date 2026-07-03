@@ -19,6 +19,7 @@ export const createPersonFromFaces = async (
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ face_ids: faceIds, name: name }),
   });
+  if (!res.ok) throw new Error(`Create person failed: ${res.status}`);
   const json = await res.json();
   return (json as any).person ?? (json as any);
 };
@@ -26,13 +27,17 @@ export const createPersonFromFaces = async (
 export const deleteFace = async (faceIds: number[]) => {
   const params = new URLSearchParams();
   faceIds.forEach((id) => params.append("face_ids", id.toString()));
-  await fetch(`${API}/api/faces/?${params.toString()}`, { method: "DELETE" });
+  const res = await fetch(`${API}/api/faces/?${params.toString()}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
 };
 
 export const detachFace = async (faceIds: number[]) => {
-  await fetch(`${API}/api/faces/detach`, {
+  const res = await fetch(`${API}/api/faces/detach`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ face_ids: faceIds }),
   });
+  if (!res.ok) throw new Error(`Detach failed: ${res.status}`);
 };

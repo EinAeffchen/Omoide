@@ -28,6 +28,7 @@ import { Link, useLocation } from "react-router-dom";
 
 import { NoExifDateItem } from "../types";
 import { API } from "../config";
+import { encodeFilePath } from "../urlUtils";
 import { NoExifDateResolveAction, getNoExifDateMedia, resolveNoExifDate } from "../services/noexifdate";
 
 const formatBytes = (bytes: number) => {
@@ -118,7 +119,7 @@ const NoExifDatePage: React.FC = () => {
   };
 
   const thumbUrl = (item: NoExifDateItem) => {
-    const thumb = item.thumbnail_path ? encodeURIComponent(item.thumbnail_path) : `${item.id}.jpg`;
+    const thumb = item.thumbnail_path ? encodeFilePath(item.thumbnail_path) : `${item.id}.jpg`;
     return `${API}/thumbnails/${thumb}`;
   };
 

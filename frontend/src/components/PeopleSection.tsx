@@ -17,6 +17,7 @@ import {
 import { Person, Face } from "../types";
 import PersonCard from "./PersonCard";
 import config, { API } from "../config";
+import { encodeFilePath } from "../urlUtils";
 import {
   AddMediaAppearanceResult,
   searchPersonsByName,
@@ -209,7 +210,7 @@ export function PeopleSection({
             renderOption={(props, option) => {
               const thumbPath = option.profile_face?.thumbnail_path;
               const thumbUrl = thumbPath
-                ? `${API}/thumbnails/${encodeURIComponent(thumbPath)}`
+                ? `${API}/thumbnails/${encodeFilePath(thumbPath)}`
                 : undefined;
               const initials =
                 (option.name || `P${option.id}`)

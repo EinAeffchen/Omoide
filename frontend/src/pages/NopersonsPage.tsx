@@ -31,6 +31,7 @@ import { useTaskCompletionVersion } from "../TaskEventsContext";
 
 import { NoPersonsMediaItem } from "../types";
 import { API } from "../config";
+import { encodeFilePath } from "../urlUtils";
 import {
   NoPersonsResolveAction,
   getNoPersonsMedia,
@@ -130,7 +131,7 @@ const NopersonsPage: React.FC = () => {
   };
 
   const thumbUrl = (item: NoPersonsMediaItem) => {
-    const thumb = item.thumbnail_path ? encodeURIComponent(item.thumbnail_path) : `${item.id}.jpg`;
+    const thumb = item.thumbnail_path ? encodeFilePath(item.thumbnail_path) : `${item.id}.jpg`;
     return `${API}/thumbnails/${thumb}`;
   };
 

@@ -27,3 +27,19 @@ export const resolveBroken = async (
   }
   return res.json();
 };
+
+export const retryBroken = async (payload: {
+  media_ids?: number[];
+  select_all?: boolean;
+}): Promise<{ retried: number; cleared: number; still_broken: number }> => {
+  const res = await fetch(`${API}/api/broken/retry`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const msg = await res.text().catch(() => "Failed to retry broken media");
+    throw new Error(msg || "Failed to retry broken media");
+  }
+  return res.json();
+};

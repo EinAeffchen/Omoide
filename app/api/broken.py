@@ -12,8 +12,10 @@ from app.schemas.broken import (
     BrokenMediaPage,
     BrokenResolveRequest,
     BrokenResolveResponse,
+    BrokenRetryRequest,
+    BrokenRetryResponse,
 )
-from app.utils import delete_file, delete_record
+from app.utils import delete_file, delete_record, generate_thumbnail
 
 router = APIRouter()
 
@@ -99,3 +101,59 @@ def resolve_broken(
 
     session.commit()
     return BrokenResolveResponse(removed=removed)
+
+
+@router.post("/retry", response_model=BrokenRetryResponse)
+def retry_broken(
+    request: BrokenRetryRequest,
+    session: Session = Depends(get_session),
+):
+    """Retry thumbnail generation for broken media. Clears the error for items that succeed."""
+    if settings.general.presentation_mode:
+        raise HTTPException(
+            status_code=403,
+            detail="Not allowed in presentation mode.",
+        )
+
+    if request.select_all:
+        media_list = session.exec(
+            select(Media).where(col(Media.processing_error).isnot(None))
+        ).all()
+    else:
+        if not request.media_ids:
+            raise HTTPException(status_code=400, detail="No media IDs provided.")
+        media_list = session.exec(
+            select(Media).where(
+                Media.id.in_(request.media_ids),
+                col(Media.processing_error).isnot(None),
+            )
+        ).all()
+
+    if not media_list:
+        raise HTTPException(status_code=404, detail="No matching broken media found.")
+
+    cleared = 0
+    still_broken = 0
+    for media in media_list:
+        thumb, thumb_error = generate_thumbnail(media)
+        if thumb:
+            media.thumbnail_path = thumb
+            media.processing_error = None
+            media.extracted_scenes = False
+            media.faces_extracted = False
+            media.ran_auto_tagging = False
+            media.embeddings_created = False
+            media.laplacian_score = None
+            session.add(media)
+            cleared += 1
+        else:
+            media.processing_error = thumb_error or media.processing_error
+            session.add(media)
+            still_broken += 1
+
+    session.commit()
+    return BrokenRetryResponse(
+        retried=len(media_list),
+        cleared=cleared,
+        still_broken=still_broken,
+    )

@@ -191,18 +191,6 @@ wheels = [
 ]
 
 [[package]]
-name = "chinese-whispers"
-version = "0.9.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "networkx" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/45/d3/b8d1d6623e6e5042d2b8ed0eb7e4721eacf7d02c195c9680e88601637a2e/chinese_whispers-0.9.0.tar.gz", hash = "sha256:ed63521dec01210c6f0c3e8a6e234aa2dfd6b1fac47872b1ef285bd1b1723704", size = 10282, upload-time = "2024-07-28T17:49:02.914Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/75/5f/7a730a71c7845eccab86968e3860f2575b539e278e632dd5e64d437faae3/chinese_whispers-0.9.0-py3-none-any.whl", hash = "sha256:da5a4842f991229e4799d7bfa117d3bb320732a08361e1a41b5c29254a80212f", size = 9595, upload-time = "2024-07-28T17:49:01.592Z" },
-]
-
-[[package]]
 name = "click"
 version = "8.4.2"
 source = { registry = "https://pypi.org/simple" }
@@ -874,19 +862,17 @@ wheels = [
 
 [[package]]
 name = "omoide"
-version = "0.6.9"
+version = "0.6.10"
 source = { virtual = "." }
 dependencies = [
     { name = "alembic" },
     { name = "apscheduler" },
-    { name = "chinese-whispers" },
     { name = "cmake" },
     { name = "fastapi" },
     { name = "ffmpeg-python" },
     { name = "hdbscan" },
     { name = "imagehash" },
     { name = "insightface" },
-    { name = "joblib" },
     { name = "onnxruntime" },
     { name = "open-clip-torch" },
     { name = "opencv-python" },
@@ -899,12 +885,9 @@ dependencies = [
     { name = "python-multipart" },
     { name = "pywebview" },
     { name = "qtpy" },
-    { name = "requests" },
     { name = "scenedetect" },
-    { name = "sqlalchemy-vectorstores" },
     { name = "sqlite-vec" },
     { name = "sqlmodel" },
-    { name = "starlette" },
     { name = "torch", version = "2.12.1", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'darwin'" },
     { name = "torch", version = "2.12.1+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform != 'darwin'" },
     { name = "torchvision", version = "0.27.1", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'darwin'" },
@@ -912,7 +895,6 @@ dependencies = [
     { name = "transformers" },
     { name = "umap-learn" },
     { name = "uvicorn" },
-    { name = "watchdog" },
 ]
 
 [package.optional-dependencies]
@@ -929,16 +911,14 @@ dev = [
 requires-dist = [
     { name = "alembic", specifier = "==1.18.5" },
     { name = "apscheduler", specifier = "==3.11.0" },
-    { name = "chinese-whispers", specifier = ">=0.9.0" },
     { name = "cmake", specifier = ">=3.27" },
     { name = "fastapi", specifier = ">0.128.0" },
     { name = "ffmpeg-python", specifier = "==0.2.0" },
     { name = "hdbscan", specifier = "==0.8.41" },
     { name = "imagehash", specifier = "==4.3.2" },
     { name = "insightface", specifier = ">=0.7.3" },
-    { name = "joblib", specifier = ">=1.5.3" },
     { name = "onnxruntime", specifier = "==1.27.0" },
-    { name = "open-clip-torch", specifier = "==2.32.0" },
+    { name = "open-clip-torch", specifier = "==3.3.0" },
     { name = "opencv-python", specifier = "==4.11.0.86" },
     { name = "piexif", specifier = "==1.1.3" },
     { name = "pillow", specifier = ">=12.1.1" },
@@ -950,18 +930,14 @@ requires-dist = [
     { name = "python-multipart", specifier = "==0.0.32" },
     { name = "pywebview", specifier = ">=6.0" },
     { name = "qtpy", specifier = ">=2.4.1" },
-    { name = "requests", specifier = ">=2.32.5" },
     { name = "scenedetect", specifier = "==0.6.6" },
-    { name = "sqlalchemy-vectorstores", specifier = "==0.1.3.post1" },
     { name = "sqlite-vec", specifier = "==0.1.9" },
     { name = "sqlmodel", specifier = "==0.0.24" },
-    { name = "starlette", specifier = "==1.3.1" },
     { name = "torch", specifier = ">=2.8.0", index = "https://download.pytorch.org/whl/cpu" },
-    { name = "torchvision", specifier = ">=0.23.0", index = "https://download.pytorch.org/whl/cpu" },
+    { name = "torchvision", specifier = "==0.27.1", index = "https://download.pytorch.org/whl/cpu" },
     { name = "transformers", specifier = "==5.12.1" },
     { name = "umap-learn", specifier = ">=0.5.11" },
     { name = "uvicorn", specifier = "==0.34.2" },
-    { name = "watchdog", specifier = "==6.0.0" },
 ]
 provides-extras = ["build"]
 
@@ -1028,7 +1004,7 @@ wheels = [
 
 [[package]]
 name = "open-clip-torch"
-version = "2.32.0"
+version = "3.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ftfy" },
@@ -1042,9 +1018,9 @@ dependencies = [
     { name = "torchvision", version = "0.27.1+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform != 'darwin'" },
     { name = "tqdm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6d/7b/fd38dfd522968135dce71d0b543c2ae776f9c8e27df6ad46b63bab09eef7/open_clip_torch-2.32.0.tar.gz", hash = "sha256:0220bc111162527eb738c1fe20dbfd6ea45dfe44726b54a4de18d3945d8f2f00", size = 1491248, upload-time = "2025-04-05T21:55:24.51Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4a/1f/2bc9795047fa2c1ad2567ef78ce6dfc9a7b763fa534acee09a94da2a5b8f/open_clip_torch-3.3.0.tar.gz", hash = "sha256:904b1a9f909df8281bb3de60ab95491cd2994a509177ea4f9d6292a84fe24d6d", size = 1503380, upload-time = "2026-02-27T00:32:46.74Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/32/f9/0458745c1d299411161ee3b6c32228a3de0be1d8497d779fd7f17a8e96aa/open_clip_torch-2.32.0-py3-none-any.whl", hash = "sha256:80b35b43e37afc2b6173aa5ab0ad68744ab3a3211e624f72dfe743a162707637", size = 1528783, upload-time = "2025-04-05T21:55:22.967Z" },
+    { url = "https://files.pythonhosted.org/packages/37/b5/41c315ccd94ca332ead3e832e83eee343ab245005c3e43d9d3e75eae34eb/open_clip_torch-3.3.0-py3-none-any.whl", hash = "sha256:c549ad5ed6bfc119cc11105033c0a2b9d7a2a4afeb40a58a09aab3da1a0043ce", size = 1547268, upload-time = "2026-02-27T00:32:44.902Z" },
 ]
 
 [[package]]
@@ -2069,30 +2045,6 @@ wheels = [
 ]
 
 [[package]]
-name = "sqlalchemy-utils"
-version = "0.41.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "sqlalchemy" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/4d/bf/abfd5474cdd89ddd36dbbde9c6efba16bfa7f5448913eba946fed14729da/SQLAlchemy-Utils-0.41.2.tar.gz", hash = "sha256:bc599c8c3b3319e53ce6c5c3c471120bd325d0071fb6f38a10e924e3d07b9990", size = 138017, upload-time = "2024-03-24T15:17:28.196Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d5/f0/dc4757b83ac1ab853cf222df8535ed73973e0c203d983982ba7b8bc60508/SQLAlchemy_Utils-0.41.2-py3-none-any.whl", hash = "sha256:85cf3842da2bf060760f955f8467b87983fb2e30f1764fd0e24a48307dc8ec6e", size = 93083, upload-time = "2024-03-24T15:17:24.533Z" },
-]
-
-[[package]]
-name = "sqlalchemy-vectorstores"
-version = "0.1.3.post1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "sqlalchemy" },
-    { name = "sqlalchemy-utils" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/e4/97/d34d64f15dbac22cd7a60c962583b8cf77b00ce1544fe1a3f42d47485f32/sqlalchemy_vectorstores-0.1.3.post1-py3-none-any.whl", hash = "sha256:449de80d563d564ceb8b7fd9250744a2c9f840ec5576079edea7c41a3f81066a", size = 29056, upload-time = "2024-11-25T23:42:48.241Z" },
-]
-
-[[package]]
 name = "sqlite-vec"
 version = "0.1.9"
 source = { registry = "https://pypi.org/simple" }
@@ -2445,30 +2397,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/a6/ae/9bbb19b9e1c450cf9ecaef06463e40234d98d95bf572fab11b4f19ae5ded/uvicorn-0.34.2.tar.gz", hash = "sha256:0e929828f6186353a80b58ea719861d2629d766293b6d19baf086ba31d4f3328", size = 76815, upload-time = "2025-04-19T06:02:50.101Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b1/4b/4cef6ce21a2aaca9d852a6e84ef4f135d99fcd74fa75105e2fc0c8308acd/uvicorn-0.34.2-py3-none-any.whl", hash = "sha256:deb49af569084536d269fe0a6d67e3754f104cf03aba7c11c40f01aadf33c403", size = 62483, upload-time = "2025-04-19T06:02:48.42Z" },
-]
-
-[[package]]
-name = "watchdog"
-version = "6.0.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/db/7d/7f3d619e951c88ed75c6037b246ddcf2d322812ee8ea189be89511721d54/watchdog-6.0.0.tar.gz", hash = "sha256:9ddf7c82fda3ae8e24decda1338ede66e1c99883db93711d8fb941eaa2d8c282", size = 131220, upload-time = "2024-11-01T14:07:13.037Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/39/ea/3930d07dafc9e286ed356a679aa02d777c06e9bfd1164fa7c19c288a5483/watchdog-6.0.0-cp312-cp312-macosx_10_13_universal2.whl", hash = "sha256:bdd4e6f14b8b18c334febb9c4425a878a2ac20efd1e0b231978e7b150f92a948", size = 96471, upload-time = "2024-11-01T14:06:37.745Z" },
-    { url = "https://files.pythonhosted.org/packages/12/87/48361531f70b1f87928b045df868a9fd4e253d9ae087fa4cf3f7113be363/watchdog-6.0.0-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:c7c15dda13c4eb00d6fb6fc508b3c0ed88b9d5d374056b239c4ad1611125c860", size = 88449, upload-time = "2024-11-01T14:06:39.748Z" },
-    { url = "https://files.pythonhosted.org/packages/5b/7e/8f322f5e600812e6f9a31b75d242631068ca8f4ef0582dd3ae6e72daecc8/watchdog-6.0.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:6f10cb2d5902447c7d0da897e2c6768bca89174d0c6e1e30abec5421af97a5b0", size = 89054, upload-time = "2024-11-01T14:06:41.009Z" },
-    { url = "https://files.pythonhosted.org/packages/68/98/b0345cabdce2041a01293ba483333582891a3bd5769b08eceb0d406056ef/watchdog-6.0.0-cp313-cp313-macosx_10_13_universal2.whl", hash = "sha256:490ab2ef84f11129844c23fb14ecf30ef3d8a6abafd3754a6f75ca1e6654136c", size = 96480, upload-time = "2024-11-01T14:06:42.952Z" },
-    { url = "https://files.pythonhosted.org/packages/85/83/cdf13902c626b28eedef7ec4f10745c52aad8a8fe7eb04ed7b1f111ca20e/watchdog-6.0.0-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:76aae96b00ae814b181bb25b1b98076d5fc84e8a53cd8885a318b42b6d3a5134", size = 88451, upload-time = "2024-11-01T14:06:45.084Z" },
-    { url = "https://files.pythonhosted.org/packages/fe/c4/225c87bae08c8b9ec99030cd48ae9c4eca050a59bf5c2255853e18c87b50/watchdog-6.0.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:a175f755fc2279e0b7312c0035d52e27211a5bc39719dd529625b1930917345b", size = 89057, upload-time = "2024-11-01T14:06:47.324Z" },
-    { url = "https://files.pythonhosted.org/packages/a9/c7/ca4bf3e518cb57a686b2feb4f55a1892fd9a3dd13f470fca14e00f80ea36/watchdog-6.0.0-py3-none-manylinux2014_aarch64.whl", hash = "sha256:7607498efa04a3542ae3e05e64da8202e58159aa1fa4acddf7678d34a35d4f13", size = 79079, upload-time = "2024-11-01T14:06:59.472Z" },
-    { url = "https://files.pythonhosted.org/packages/5c/51/d46dc9332f9a647593c947b4b88e2381c8dfc0942d15b8edc0310fa4abb1/watchdog-6.0.0-py3-none-manylinux2014_armv7l.whl", hash = "sha256:9041567ee8953024c83343288ccc458fd0a2d811d6a0fd68c4c22609e3490379", size = 79078, upload-time = "2024-11-01T14:07:01.431Z" },
-    { url = "https://files.pythonhosted.org/packages/d4/57/04edbf5e169cd318d5f07b4766fee38e825d64b6913ca157ca32d1a42267/watchdog-6.0.0-py3-none-manylinux2014_i686.whl", hash = "sha256:82dc3e3143c7e38ec49d61af98d6558288c415eac98486a5c581726e0737c00e", size = 79076, upload-time = "2024-11-01T14:07:02.568Z" },
-    { url = "https://files.pythonhosted.org/packages/ab/cc/da8422b300e13cb187d2203f20b9253e91058aaf7db65b74142013478e66/watchdog-6.0.0-py3-none-manylinux2014_ppc64.whl", hash = "sha256:212ac9b8bf1161dc91bd09c048048a95ca3a4c4f5e5d4a7d1b1a7d5752a7f96f", size = 79077, upload-time = "2024-11-01T14:07:03.893Z" },
-    { url = "https://files.pythonhosted.org/packages/2c/3b/b8964e04ae1a025c44ba8e4291f86e97fac443bca31de8bd98d3263d2fcf/watchdog-6.0.0-py3-none-manylinux2014_ppc64le.whl", hash = "sha256:e3df4cbb9a450c6d49318f6d14f4bbc80d763fa587ba46ec86f99f9e6876bb26", size = 79078, upload-time = "2024-11-01T14:07:05.189Z" },
-    { url = "https://files.pythonhosted.org/packages/62/ae/a696eb424bedff7407801c257d4b1afda455fe40821a2be430e173660e81/watchdog-6.0.0-py3-none-manylinux2014_s390x.whl", hash = "sha256:2cce7cfc2008eb51feb6aab51251fd79b85d9894e98ba847408f662b3395ca3c", size = 79077, upload-time = "2024-11-01T14:07:06.376Z" },
-    { url = "https://files.pythonhosted.org/packages/b5/e8/dbf020b4d98251a9860752a094d09a65e1b436ad181faf929983f697048f/watchdog-6.0.0-py3-none-manylinux2014_x86_64.whl", hash = "sha256:20ffe5b202af80ab4266dcd3e91aae72bf2da48c0d33bdb15c66658e685e94e2", size = 79078, upload-time = "2024-11-01T14:07:07.547Z" },
-    { url = "https://files.pythonhosted.org/packages/07/f6/d0e5b343768e8bcb4cda79f0f2f55051bf26177ecd5651f84c07567461cf/watchdog-6.0.0-py3-none-win32.whl", hash = "sha256:07df1fdd701c5d4c8e55ef6cf55b8f0120fe1aef7ef39a1c6fc6bc2e606d517a", size = 79065, upload-time = "2024-11-01T14:07:09.525Z" },
-    { url = "https://files.pythonhosted.org/packages/db/d9/c495884c6e548fce18a8f40568ff120bc3a4b7b99813081c8ac0c936fa64/watchdog-6.0.0-py3-none-win_amd64.whl", hash = "sha256:cbafb470cf848d93b5d013e2ecb245d4aa1c8fd0504e863ccefa32445359d680", size = 79070, upload-time = "2024-11-01T14:07:10.686Z" },
-    { url = "https://files.pythonhosted.org/packages/33/e8/e40370e6d74ddba47f002a32919d91310d6074130fe4e17dabcafc15cbf1/watchdog-6.0.0-py3-none-win_ia64.whl", hash = "sha256:a1914259fa9e1454315171103c6a30961236f508b9b623eae470268bbcc6a22f", size = 79067, upload-time = "2024-11-01T14:07:11.845Z" },
 ]
 
 [[package]]

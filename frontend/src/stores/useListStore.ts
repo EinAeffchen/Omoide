@@ -7,6 +7,7 @@ export interface ListState<T> {
   nextCursor: string | null;
   hasMore: boolean;
   isLoading: boolean;
+  error: string | null;
 }
 
 // The state for the entire store, holding multiple lists
@@ -37,6 +38,7 @@ export const defaultListState: ListState<any> = {
   nextCursor: null,
   hasMore: true,
   isLoading: false,
+  error: null,
 };
 
 export const useListStore = create<ListStoreState>((set, get) => ({
@@ -73,6 +75,7 @@ export const useListStore = create<ListStoreState>((set, get) => ({
             nextCursor: response.next_cursor,
             hasMore: response.next_cursor !== null,
             isLoading: false,
+            error: null,
           },
         },
       }));
@@ -81,7 +84,12 @@ export const useListStore = create<ListStoreState>((set, get) => ({
       set((state) => ({
         lists: {
           ...state.lists,
-          [listKey]: { ...defaultListState, isLoading: false, hasMore: false },
+          [listKey]: {
+            ...defaultListState,
+            isLoading: false,
+            hasMore: false,
+            error: error instanceof Error ? error.message : String(error),
+          },
         },
       }));
     }
@@ -100,26 +108,42 @@ export const useListStore = create<ListStoreState>((set, get) => ({
 
     try {
       const response = await fetcher(currentList.nextCursor);
-      set((state) => ({
-        lists: {
-          ...state.lists,
-          [listKey]: {
-            ...currentList,
-            items: [...currentList.items, ...response.items],
-            nextCursor: response.next_cursor,
-            hasMore: response.next_cursor !== null,
-            isLoading: false,
+      // Merge from the latest state, not the pre-await snapshot: items removed
+      // (or lists cleared) while the page was in flight must stay removed.
+      set((state) => {
+        const latest = state.lists[listKey];
+        if (!latest) return state;
+        return {
+          lists: {
+            ...state.lists,
+            [listKey]: {
+              ...latest,
+              items: [...latest.items, ...response.items],
+              nextCursor: response.next_cursor,
+              hasMore: response.next_cursor !== null,
+              isLoading: false,
+              error: null,
+            },
           },
-        },
-      }));
+        };
+      });
     } catch (error) {
       console.error(`Failed to load more data for ${listKey}:`, error);
-      set((state) => ({
-        lists: {
-          ...state.lists,
-          [listKey]: { ...currentList, isLoading: false, hasMore: false },
-        },
-      }));
+      set((state) => {
+        const latest = state.lists[listKey];
+        if (!latest) return state;
+        return {
+          lists: {
+            ...state.lists,
+            [listKey]: {
+              ...latest,
+              isLoading: false,
+              hasMore: false,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          },
+        };
+      });
     }
   },
   removeItem: (listKey: string, itemId: number | string) => {

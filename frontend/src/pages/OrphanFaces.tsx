@@ -28,6 +28,7 @@ import { searchPersonsByName } from "../services/personActions";
 import { Person } from "../types";
 import { FaceGrid } from "../components/FaceGrid"; // Import our DUMB grid component
 import { API } from "../config";
+import { encodeFilePath } from "../urlUtils";
 
 export default function OrphanFacesPage() {
   const navigate = useNavigate();
@@ -288,7 +289,7 @@ export default function OrphanFacesPage() {
             renderOption={(props, option) => {
               const thumbPath = option.profile_face?.thumbnail_path;
               const thumbUrl = thumbPath
-                ? `${API}/thumbnails/${encodeURIComponent(thumbPath)}`
+                ? `${API}/thumbnails/${encodeFilePath(thumbPath)}`
                 : undefined;
               const initials = (option.name || "?")
                 .trim()

@@ -6,8 +6,12 @@ import {
   MediaFolderListing,
   MediaLocation,
 } from "../types";
-export const getMedia = async (id: string): Promise<MediaDetail> => {
-  const response = await fetch(`${API}/api/media/${id}`);
+export const getMedia = async (
+  id: string,
+  signal?: AbortSignal
+): Promise<MediaDetail> => {
+  const response = await fetch(`${API}/api/media/${id}`, { signal });
+  if (!response.ok) throw new Error(`Failed to load media (${response.status})`);
   return response.json();
 };
 
@@ -19,6 +23,7 @@ export const getImages = async (
   if (cursor) params.append("cursor", cursor);
   params.append("sort", sortOrder);
   const response = await fetch(`${API}/api/media/images?${params.toString()}`);
+  if (!response.ok) throw new Error("Failed to fetch images");
   return response.json();
 };
 
@@ -30,11 +35,13 @@ export const getVideos = async (
   if (cursor) params.append("cursor", cursor);
   params.append("sort", sortOrder);
   const response = await fetch(`${API}/api/media/videos?${params.toString()}`);
+  if (!response.ok) throw new Error("Failed to fetch videos");
   return response.json();
 };
 
 export const getMapMedia = async (): Promise<MediaLocation[]> => {
   const response = await fetch(`${API}/api/media/map`);
+  if (!response.ok) throw new Error("Failed to fetch map media");
   return response.json();
 };
 
@@ -97,8 +104,13 @@ export const getMediaFolders = async (
   return response.json();
 };
 
-export const getSimilarMedia = async (mediaId: number): Promise<Media[]> => {
-  const response = await fetch(`${API}/api/media/${mediaId}/get-similar`);
+export const getSimilarMedia = async (
+  mediaId: number,
+  signal?: AbortSignal
+): Promise<Media[]> => {
+  const response = await fetch(`${API}/api/media/${mediaId}/get-similar`, {
+    signal,
+  });
   if (!response.ok) throw new Error("Failed to load similar media");
   return response.json();
 };

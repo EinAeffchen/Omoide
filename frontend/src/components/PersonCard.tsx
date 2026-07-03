@@ -4,6 +4,7 @@ import { Box, Checkbox, Typography, useTheme } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import type { PersonReadSimple } from "../types";
 import { API } from "../config";
+import { encodeFilePath } from "../urlUtils";
 
 type PersonCardPerson = PersonReadSimple & { appearance_count?: number };
 
@@ -34,7 +35,7 @@ export default function PersonCard({
   const fallbackName = person.name || "Unknown";
 
   const thumbUrl = person.profile_face?.thumbnail_path
-    ? `${API}/thumbnails/${encodeURIComponent(
+    ? `${API}/thumbnails/${encodeFilePath(
         person.profile_face.thumbnail_path
       )}`
     : undefined;

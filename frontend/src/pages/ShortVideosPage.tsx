@@ -25,6 +25,7 @@ import { Link, useLocation } from "react-router-dom";
 
 import { ShortVideoItem } from "../types";
 import { API } from "../config";
+import { encodeFilePath } from "../urlUtils";
 import {
   ShortVideoResolveAction,
   getShortVideos,
@@ -129,7 +130,7 @@ const ShortVideosPage: React.FC = () => {
   };
 
   const thumbUrl = (item: ShortVideoItem) => {
-    const thumb = item.thumbnail_path ? encodeURIComponent(item.thumbnail_path) : `${item.id}.jpg`;
+    const thumb = item.thumbnail_path ? encodeFilePath(item.thumbnail_path) : `${item.id}.jpg`;
     return `${API}/thumbnails/${thumb}`;
   };
 

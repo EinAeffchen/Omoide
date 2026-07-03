@@ -29,6 +29,7 @@ import { useInView } from "react-intersection-observer";
 
 import { BlurMediaItem } from "../types";
 import { API } from "../config";
+import { encodeFilePath } from "../urlUtils";
 import {
   BlurResolveAction,
   getBlurryMedia,
@@ -158,7 +159,7 @@ const BlurryPage: React.FC = () => {
   const selectedCount = selectedIds.size;
 
   const thumbUrl = (item: BlurMediaItem) => {
-    const thumb = item.thumbnail_path ? encodeURIComponent(item.thumbnail_path) : `${item.id}.jpg`;
+    const thumb = item.thumbnail_path ? encodeFilePath(item.thumbnail_path) : `${item.id}.jpg`;
     return `${API}/thumbnails/${thumb}`;
   };
 

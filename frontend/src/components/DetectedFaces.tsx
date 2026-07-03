@@ -28,6 +28,7 @@ import FaceMediaGroup from "./FaceMediaGroup";
 import { useFaceSelection } from "../hooks/useFaceSelection";
 import { searchPersonsByName } from "../services/personActions";
 import config, { API } from "../config";
+import { encodeFilePath } from "../urlUtils";
 
 interface DetectedFacesProps {
   isProcessing: boolean;
@@ -135,7 +136,7 @@ export default function DetectedFaces({
   const resolveProfileThumb = useCallback((person: Person) => {
     const thumbPath = person.profile_face?.thumbnail_path;
     if (!thumbPath) return undefined;
-    return `${API}/thumbnails/${encodeURIComponent(thumbPath)}`;
+    return `${API}/thumbnails/${encodeFilePath(thumbPath)}`;
   }, []);
 
   const getInitials = useCallback((name = "") => {

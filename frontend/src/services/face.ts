@@ -9,5 +9,6 @@ export const getOrphanFaces = async (
     params.append("cursor", cursor);
   }
   const response = await fetch(`${API}/api/faces/orphans?${params.toString()}`);
+  if (!response.ok) throw new Error("Failed to fetch orphan faces");
   return response.json();
 };

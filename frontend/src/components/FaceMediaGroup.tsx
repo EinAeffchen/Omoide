@@ -75,6 +75,7 @@ export default function FaceGroupCard({
             <Box
               key={i}
               component="img"
+              loading="lazy"
               src={`${API}/thumbnails/${encodeFilePath(face.thumbnail_path)}`}
               sx={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
             />

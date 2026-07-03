@@ -20,8 +20,8 @@ export function PersonEditForm({
   const [form, setForm] = useState(initialPersonData);
 
   useEffect(() => {
-    setForm(initialPersonData);
-  }, [initialPersonData]);
+    setForm({ name: initialPersonData.name });
+  }, [initialPersonData.name]);
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | { name?: string; value: unknown }>

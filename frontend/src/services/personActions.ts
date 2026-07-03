@@ -81,9 +81,13 @@ export const autoMergeSimilarPersons = async (
   return res.json();
 };
 
-export const searchPersonsByName = async (name: string): Promise<Person[]> => {
+export const searchPersonsByName = async (
+  name: string,
+  signal?: AbortSignal
+): Promise<Person[]> => {
   const res = await fetch(
-    `${API}/api/person/?name=${encodeURIComponent(name)}`
+    `${API}/api/person/?name=${encodeURIComponent(name)}`,
+    { signal }
   );
   if (!res.ok) throw new Error("Failed to search persons");
   const data = await res.json();

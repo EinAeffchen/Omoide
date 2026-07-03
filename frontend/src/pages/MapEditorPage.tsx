@@ -31,6 +31,7 @@ import CancelIcon from "@mui/icons-material/Cancel";
 import L from "leaflet";
 import { useListStore, defaultListState } from "../stores/useListStore";
 import { API } from "../config";
+import { encodeFilePath } from "../urlUtils";
 
 function MapClickHandler({
   selected,
@@ -256,7 +257,7 @@ export default function MapEditorPage() {
             {orphans.map((m) => {
               // FIX: Determine the correct thumbnail URL
               const thumbUrl = m.thumbnail_path
-                ? `${API}/thumbnails/${m.thumbnail_path}`
+                ? `${API}/thumbnails/${encodeFilePath(m.thumbnail_path)}`
                 : `${API}/thumbnails/${m.id}.jpg`;
 
               return (
@@ -331,7 +332,7 @@ export default function MapEditorPage() {
                     component="img"
                     src={
                       selectedMedia.thumbnail_path
-                        ? `${API}/thumbnails/${selectedMedia.thumbnail_path}`
+                        ? `${API}/thumbnails/${encodeFilePath(selectedMedia.thumbnail_path)}`
                         : `${API}/thumbnails/${selectedMedia.id}.jpg`
                     }
                     sx={{

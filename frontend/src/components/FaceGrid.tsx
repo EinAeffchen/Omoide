@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { Box } from "@mui/material";
 import FaceCard from "./FaceCard";
 import { FaceRead } from "../types";
@@ -14,6 +14,10 @@ export const FaceGrid: React.FC<FaceGridProps> = ({
   selectedFaceIds,
   onToggleSelect,
 }) => {
+  const selectedIdSet = useMemo(
+    () => new Set(selectedFaceIds),
+    [selectedFaceIds]
+  );
   return (
     <Box
       sx={{
@@ -28,7 +32,7 @@ export const FaceGrid: React.FC<FaceGridProps> = ({
           key={face.id}
           face={face}
           isProfile={false} // Orphans can't be profile pics
-          selected={selectedFaceIds.includes(face.id)}
+          selected={selectedIdSet.has(face.id)}
           onToggleSelect={onToggleSelect}
         />
       ))}

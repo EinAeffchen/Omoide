@@ -28,6 +28,7 @@ import { Link, useLocation } from "react-router-dom";
 
 import { UntaggedMediaItem } from "../types";
 import { API } from "../config";
+import { encodeFilePath } from "../urlUtils";
 import {
   UntaggedResolveAction,
   getUntaggedMedia,
@@ -122,7 +123,7 @@ const UntaggedPage: React.FC = () => {
   };
 
   const thumbUrl = (item: UntaggedMediaItem) => {
-    const thumb = item.thumbnail_path ? encodeURIComponent(item.thumbnail_path) : `${item.id}.jpg`;
+    const thumb = item.thumbnail_path ? encodeFilePath(item.thumbnail_path) : `${item.id}.jpg`;
     return `${API}/thumbnails/${thumb}`;
   };
 

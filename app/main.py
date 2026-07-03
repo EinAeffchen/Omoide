@@ -95,7 +95,7 @@ from app.api import (
     untagged,
 )
 from app.api.processors import router as proc_router
-from app.config import settings
+from app.config import settings, get_clip_bundle
 from app.database import ensure_vec_tables
 from app.ffmpeg import ensure_ffmpeg_available
 from app.logger import configure_file_logging, logger
@@ -244,9 +244,24 @@ def _cleanup_tasks_on_shutdown():
 
 
 @asynccontextmanager
+def _prewarm_clip() -> None:
+    """Load the CLIP bundle in a background thread at startup.
+
+    Torch's first import on Windows takes 10+ seconds due to DLL scanning.
+    Starting this early means the bundle is ready before the user triggers a task.
+    """
+    try:
+        get_clip_bundle()
+        logger.info("OpenCLIP bundle pre-loaded")
+    except Exception as exc:
+        logger.warning("OpenCLIP pre-warm failed (will retry on first use): %s", exc)
+
+
 async def lifespan(app: FastAPI):
     # Load the ML model
     load_processors()
+    if settings.processors.image_embedding_processor_active:
+        threading.Thread(target=_prewarm_clip, daemon=True, name="clip-prewarm").start()
     # Apply database migrations on startup (idempotent)
     try:
         _apply_migrations_once()

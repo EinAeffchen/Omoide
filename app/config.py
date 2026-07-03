@@ -875,7 +875,6 @@ def get_model(settings: AppSettings):
         pretrained=settings.ai.clip_model_pretrained,
         device=device,
     )
-
     tokenizer = open_clip.get_tokenizer(settings.ai.clip_model.model_name)
     return model, preprocess, tokenizer
 

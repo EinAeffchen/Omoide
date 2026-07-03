@@ -47,3 +47,14 @@ class BrokenResolveRequest(BaseModel):
 
 class BrokenResolveResponse(BaseModel):
     removed: int
+
+
+class BrokenRetryRequest(BaseModel):
+    media_ids: list[int] = []
+    select_all: bool = False
+
+
+class BrokenRetryResponse(BaseModel):
+    retried: int
+    cleared: int
+    still_broken: int

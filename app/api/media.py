@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import quote
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from fastapi.responses import PlainTextResponse
@@ -847,9 +848,10 @@ def scenes_vtt(
         start = format_timestamp(s.start_time)
         end_time = s.end_time or (s.start_time + 0.1)
         end = format_timestamp(end_time)
+        thumb = quote(s.thumbnail_path, safe="/") if s.thumbnail_path else ""
         lines += [
             f"{start} --> {end}",
-            f"/thumbnails/{s.thumbnail_path}",
+            f"/thumbnails/{thumb}",
             "",
         ]
 

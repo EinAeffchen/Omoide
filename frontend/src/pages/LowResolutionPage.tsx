@@ -29,6 +29,7 @@ import { Link, useLocation } from "react-router-dom";
 
 import { LowResMediaItem } from "../types";
 import { API } from "../config";
+import { encodeFilePath } from "../urlUtils";
 import { LowResResolveAction, getLowResMedia, resolveLowRes } from "../services/lowresolution";
 
 const DEFAULT_MAX_MP = 1.0;
@@ -136,7 +137,7 @@ const LowResolutionPage: React.FC = () => {
   };
 
   const thumbUrl = (item: LowResMediaItem) => {
-    const thumb = item.thumbnail_path ? encodeURIComponent(item.thumbnail_path) : `${item.id}.jpg`;
+    const thumb = item.thumbnail_path ? encodeFilePath(item.thumbnail_path) : `${item.id}.jpg`;
     return `${API}/thumbnails/${thumb}`;
   };
 

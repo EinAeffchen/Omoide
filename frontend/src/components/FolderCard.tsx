@@ -10,6 +10,7 @@ import {
 import FolderIcon from "@mui/icons-material/Folder";
 import { alpha } from "@mui/material/styles";
 import { API } from "../config";
+import { encodeFilePath } from "../urlUtils";
 import { MediaFolderEntry } from "../types";
 
 interface FolderCardProps {
@@ -27,7 +28,7 @@ const formatCount = (count: number, singular: string, plural: string) => {
 
 const buildPreviewUrl = (id: number, thumbnailPath?: string | null) => {
   if (thumbnailPath) {
-    return `${API}/thumbnails/${encodeURIComponent(thumbnailPath)}`;
+    return `${API}/thumbnails/${encodeFilePath(thumbnailPath)}`;
   }
   return `${API}/thumbnails/${id}.jpg`;
 };
