@@ -14,6 +14,8 @@ import {
   Paper,
   Autocomplete,
   Avatar,
+  Alert,
+  Snackbar,
 } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import { useInView } from "react-intersection-observer";
@@ -27,6 +29,7 @@ import {
 import { searchPersonsByName } from "../services/personActions";
 import { Person } from "../types";
 import { FaceGrid } from "../components/FaceGrid"; // Import our DUMB grid component
+import ConfirmDialog from "../components/ConfirmDialog";
 import { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
 
@@ -39,6 +42,7 @@ export default function OrphanFacesPage() {
     items: orphans,
     hasMore,
     isLoading,
+    error,
   } = useListStore((state) => state.lists[listKey] || defaultListState);
   const { fetchInitial, loadMore, removeItems, clearList } = useListStore();
 
@@ -49,9 +53,22 @@ export default function OrphanFacesPage() {
   // State for dialogs
   const [assignDialogOpen, setAssignDialogOpen] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [newPersonName, setNewPersonName] = useState("");
   const [personOptions, setPersonOptions] = useState<Person[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
+  const [snackbar, setSnackbar] = useState<{
+    open: boolean;
+    message: string;
+    severity: "success" | "error";
+  }>({ open: false, message: "", severity: "success" });
+
+  const showMessage = (
+    message: string,
+    severity: "success" | "error" = "success"
+  ) => {
+    setSnackbar({ open: true, message, severity });
+  };
 
   // --- Infinite Scroll ---
   // The 'skip' option is a crucial fix: it disables the observer while data is loading.
@@ -74,48 +91,42 @@ export default function OrphanFacesPage() {
 
   // --- Action Handlers ---
   const handleBulkDelete = async () => {
-    if (
-      !window.confirm(
-        `Are you sure you want to delete ${selectedFaceIds.length} faces?`
-      )
-    )
-      return;
+    const faceIds = [...selectedFaceIds];
     setIsProcessing(true);
     try {
-      await deleteFace(selectedFaceIds);
-      removeItems(listKey, selectedFaceIds);
+      await deleteFace(faceIds);
+      removeItems(listKey, faceIds);
+      setSelectedFaceIds([]);
+      showMessage(
+        `Deleted ${faceIds.length} face${faceIds.length === 1 ? "" : "s"}.`
+      );
+    } catch (err) {
+      console.error("Failed to delete faces:", err);
+      showMessage("Failed to delete faces.", "error");
     } finally {
       setIsProcessing(false);
+      setConfirmDeleteOpen(false);
     }
   };
 
   const handleBulkCreate = async () => {
     if (!newPersonName.trim()) return;
+    const faceIds = [...selectedFaceIds];
     setIsProcessing(true);
     try {
-      const newPerson = await createPersonFromFaces(
-        selectedFaceIds,
-        newPersonName
-      );
+      const newPerson = await createPersonFromFaces(faceIds, newPersonName);
       if (!newPerson?.id) {
         throw new Error("Failed to get ID for newly created person.");
       }
-      removeItems(listKey, selectedFaceIds);
-
-      const newPersonMediaListKey = `person-${newPerson.id}-media-appearances`;
-      const newPersonFacesListKey = `/api/person/${newPerson.id}/faces`; // The key used on PersonDetailPage
-
-      clearList(newPersonMediaListKey);
-      clearList(newPersonFacesListKey);
-
+      removeItems(listKey, faceIds);
+      setSelectedFaceIds([]);
       setCreateDialogOpen(false);
-      if (newPerson?.id) navigate(`/person/${newPerson.id}`);
-    } catch (error) {
-      console.error("Failed to create and navigate to new person:", error);
-      alert("Failed to create new person.");
+      navigate(`/person/${newPerson.id}`, { state: { forceRefresh: true } });
+    } catch (err) {
+      console.error("Failed to create and navigate to new person:", err);
+      showMessage("Failed to create new person.", "error");
     } finally {
       setIsProcessing(false);
-      setSelectedFaceIds([]);
     }
   };
 
@@ -154,17 +165,31 @@ export default function OrphanFacesPage() {
 
   const handleConfirmAssign = async (person: Person | null) => {
     if (!person) return;
+    const faceIds = [...selectedFaceIds];
     setIsProcessing(true);
     try {
-      await assignFace(selectedFaceIds, person.id);
-      removeItems(listKey, selectedFaceIds);
+      await assignFace(faceIds, person.id);
+      removeItems(listKey, faceIds);
+      setSelectedFaceIds([]);
       setAssignDialogOpen(false);
       setSearchTerm("");
       setPersonOptions([]);
+      showMessage(
+        `Assigned ${faceIds.length} face${faceIds.length === 1 ? "" : "s"} to ${
+          person.name || `Person ${person.id}`
+        }.`
+      );
+    } catch (err) {
+      console.error("Failed to assign faces:", err);
+      showMessage("Failed to assign faces.", "error");
     } finally {
       setIsProcessing(false);
-      setSelectedFaceIds([]);
     }
+  };
+
+  const handleRetry = () => {
+    clearList(listKey);
+    fetchInitial(listKey, () => getOrphanFaces(null));
   };
 
   const handleToggleSelect = useCallback((faceId: number) => {
@@ -242,7 +267,7 @@ export default function OrphanFacesPage() {
               color="error"
               size="small"
               disabled={isProcessing}
-              onClick={handleBulkDelete}
+              onClick={() => setConfirmDeleteOpen(true)}
             >
               Delete
             </Button>
@@ -251,10 +276,26 @@ export default function OrphanFacesPage() {
         </Paper>
       )}
 
+      {error && (
+        <Alert
+          severity="error"
+          sx={{ mb: 2 }}
+          action={
+            <Button color="inherit" size="small" onClick={handleRetry}>
+              Retry
+            </Button>
+          }
+        >
+          Failed to load unassigned faces: {error}
+        </Alert>
+      )}
+
       {orphans.length === 0 && !isLoading ? (
-        <Typography align="center" sx={{ py: 4 }}>
-          No unassigned faces found.
-        </Typography>
+        !error && (
+          <Typography align="center" sx={{ py: 4 }}>
+            No unassigned faces found.
+          </Typography>
+        )
       ) : (
         <FaceGrid
           faces={orphans}
@@ -368,6 +409,31 @@ export default function OrphanFacesPage() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      <ConfirmDialog
+        open={confirmDeleteOpen}
+        title="Delete Faces"
+        message={`Are you sure you want to delete ${selectedFaceIds.length} face${selectedFaceIds.length === 1 ? "" : "s"}? This cannot be undone.`}
+        confirmLabel="Delete"
+        loading={isProcessing}
+        onConfirm={handleBulkDelete}
+        onClose={() => setConfirmDeleteOpen(false)}
+      />
+
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={4000}
+        onClose={() => setSnackbar((prev) => ({ ...prev, open: false }))}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        <Alert
+          severity={snackbar.severity}
+          onClose={() => setSnackbar((prev) => ({ ...prev, open: false }))}
+          sx={{ width: "100%" }}
+        >
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </Container>
   );
 }

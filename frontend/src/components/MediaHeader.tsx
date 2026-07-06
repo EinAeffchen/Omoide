@@ -12,8 +12,6 @@ const ERROR_COLOR = "error.main";
 
 interface MediaHeaderProps {
   media: Media;
-  showExif: boolean;
-  onToggleExif: () => void;
   onOpenDialog: (type: "convert" | "deleteRecord" | "deleteFile") => void;
   isBinary?: boolean;
   onOpenFolder?: (mediaId: number) => void;

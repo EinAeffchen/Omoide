@@ -4,23 +4,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import and_, func
 from sqlmodel import Session, select
 
+from app.api._resolve import resolve_media_action
 from app.database import get_session
-from app.models import Blacklist, Face, Media
+from app.models import Face, Media
 from app.schemas.nopersons import NoPersonsMediaItem, NoPersonsPage, NoPersonsResolveRequest
-from app.utils import delete_file, delete_record
 
 router = APIRouter()
 
 
-@router.get("", response_model=NoPersonsPage)
-def get_no_persons_media(
-    session: Session = Depends(get_session),
-    cursor: str | None = Query(None),
-    limit: int = Query(50, ge=1, le=200),
-    media_type: str | None = Query(None, description="'image', 'video', or omit for all"),
-    scope: str = Query("processed", description="'processed' (faces_extracted=true only) or 'all'"),
-):
-    """Paginated list of media where face detection ran but found no faces."""
+def _base_filter(media_type: str | None, scope: str):
     has_any_face = select(Face.media_id)
 
     if scope == "processed":
@@ -35,6 +27,19 @@ def get_no_persons_media(
         base_filter = and_(base_filter, Media.duration.is_(None))
     elif media_type == "video":
         base_filter = and_(base_filter, Media.duration.isnot(None))
+    return base_filter
+
+
+@router.get("", response_model=NoPersonsPage)
+def get_no_persons_media(
+    session: Session = Depends(get_session),
+    cursor: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    media_type: str | None = Query(None, description="'image', 'video', or omit for all"),
+    scope: str = Query("processed", description="'processed' (faces_extracted=true only) or 'all'"),
+):
+    """Paginated list of media where face detection ran but found no faces."""
+    base_filter = _base_filter(media_type, scope)
 
     total = session.exec(select(func.count(Media.id)).where(base_filter)).first() or 0
 
@@ -77,26 +82,11 @@ def resolve_no_persons(
     request: NoPersonsResolveRequest,
     session: Session = Depends(get_session),
 ):
-    if not request.media_ids:
-        raise HTTPException(status_code=400, detail="No media IDs provided.")
-
-    media_list = session.exec(
-        select(Media).where(Media.id.in_(request.media_ids))
-    ).all()
-
-    if not media_list:
-        raise HTTPException(status_code=404, detail="No matching media found.")
-
-    for media in media_list:
-        if request.action == "DELETE_FILES":
-            delete_file(session, media.id)
-        elif request.action == "DELETE_RECORDS":
-            delete_record(media.id, session)
-        elif request.action == "BLACKLIST_RECORDS":
-            session.add(Blacklist(path=media.path))
-            delete_record(media.id, session)
-        else:
-            raise HTTPException(status_code=400, detail=f"Unknown action: {request.action}")
-
-    session.commit()
-    return {"removed": len(media_list)}
+    removed = resolve_media_action(
+        session,
+        action=request.action,
+        media_ids=request.media_ids,
+        select_all=request.select_all,
+        base_filter=_base_filter(request.media_type, request.scope),
+    )
+    return {"removed": removed}

@@ -73,7 +73,6 @@ const config = {
   },
 };
 
-console.log(import.meta.env);
 if (import.meta.env.DEV) {
   console.log("[App Config] API Base URL:", API);
   console.log("[App Config] Read-Only Mode:", config.PRESENTATION_MODE);

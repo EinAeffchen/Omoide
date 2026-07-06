@@ -14,6 +14,7 @@ import {
 import { MediaDuplicate } from "../types";
 import { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
+import { formatBytes } from "../formatUtils";
 
 interface DuplicateMediaCardProps {
   media: MediaDuplicate;
@@ -82,7 +83,7 @@ export const DuplicateMediaCard: React.FC<DuplicateMediaCardProps> = ({
             {media.width}x{media.height}
           </Typography>
           <Typography variant="caption" color="text.secondary" display="block">
-            {(media.size / 1024 / 1024).toFixed(2)} MB
+            {formatBytes(media.size)}
           </Typography>
         </CardContent>
       </Card>

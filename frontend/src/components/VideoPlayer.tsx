@@ -69,6 +69,7 @@ export function VideoWithPreview({
 
   const playerWrapperRef = useRef<any>(null);
   const playerRef = useRef<any>(null);
+  const hoverRafRef = useRef<number | null>(null);
   const [isReady, setIsReady] = useState(false);
 
   const PROGRESS_BAR_LEFT_OFFSET = 48;
@@ -76,14 +77,27 @@ export function VideoWithPreview({
 
   useEffect(() => {
     if (!scenesUrl) return;
-    fetch(scenesUrl)
+    const controller = new AbortController();
+    fetch(scenesUrl, { signal: controller.signal })
       .then((res) => res.text())
       .then((text) => {
+        if (controller.signal.aborted) return;
         const parsedCues = parseVTT(text);
         setCues(parsedCues);
       })
-      .catch(console.error);
+      .catch((err) => {
+        if (err?.name !== "AbortError") console.error(err);
+      });
+    return () => controller.abort();
   }, [scenesUrl]);
+
+  useEffect(() => {
+    return () => {
+      if (hoverRafRef.current !== null) {
+        window.cancelAnimationFrame(hoverRafRef.current);
+      }
+    };
+  }, []);
 
   const parseVTT = (data) => {
     const pattern =
@@ -105,6 +119,16 @@ export function VideoWithPreview({
   };
 
   const handleMouseMove = (e) => {
+    // Throttle hover updates to one per animation frame.
+    if (hoverRafRef.current !== null) return;
+    const clientX = e.clientX;
+    hoverRafRef.current = window.requestAnimationFrame(() => {
+      hoverRafRef.current = null;
+      updateHoverPreview(clientX);
+    });
+  };
+
+  const updateHoverPreview = (clientX: number) => {
     const wrapper = playerWrapperRef.current;
     const player = playerRef.current;
     if (!wrapper || !player || !cues.length) return;
@@ -120,7 +144,7 @@ export function VideoWithPreview({
     }
     const progressBarWidth = progressBarEnd - progressBarStart;
 
-    const mouseX = e.clientX - rect.left;
+    const mouseX = clientX - rect.left;
 
     if (mouseX < progressBarStart || mouseX > progressBarEnd) {
       if (hoverData.visible) handleMouseLeave(); // Hide preview if visible
@@ -156,12 +180,24 @@ export function VideoWithPreview({
     setHoverData({ ...hoverData, visible: false });
   };
 
+  const detectHasAudio = (el: any): boolean => {
+    if (!el) return true;
+    if (el.audioTracks && typeof el.audioTracks.length === "number") {
+      return el.audioTracks.length > 0;
+    }
+    if (typeof el.webkitAudioDecodedByteCount === "number") {
+      return el.webkitAudioDecodedByteCount > 0;
+    }
+    if (typeof el.mozHasAudio === "boolean") {
+      return el.mozHasAudio;
+    }
+    return true;
+  };
+
   const handleReady = () => {
     setIsLoading(false);
     const internalPlayer = playerRef.current?.getInternalPlayer();
-    if (internalPlayer) {
-      setHasAudio(internalPlayer.mozHasAudio);
-    }
+    setHasAudio(detectHasAudio(internalPlayer));
     setIsReady(true);
   };
 
@@ -320,6 +356,3 @@ export function VideoWithPreview({
     </Box>
   );
 }
-// useEffect(() => {
-//   setIsReady(false);
-// }, [media.id]);

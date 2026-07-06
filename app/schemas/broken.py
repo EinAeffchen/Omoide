@@ -58,3 +58,4 @@ class BrokenRetryResponse(BaseModel):
     retried: int
     cleared: int
     still_broken: int
+    remaining: int = 0

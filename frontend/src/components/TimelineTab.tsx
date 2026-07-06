@@ -12,6 +12,7 @@ import { Box, Button, CircularProgress, Typography } from "@mui/material";
 import React, { useEffect, useMemo, useState } from "react";
 import { useInView } from "react-intersection-observer";
 import { EventFormDialog } from "../components/EventFormDialog";
+import ConfirmDialog from "./ConfirmDialog";
 import { EventCard } from "./EventCard";
 import { MediaItemGroup } from "./MediaItemGroup";
 import LinkOffIcon from "@mui/icons-material/LinkOff";
@@ -53,6 +54,8 @@ export const TimelineTab: React.FC<TimelineTabProps> = ({ person, onDetachMedia,
 
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [eventToEdit, setEventToEdit] = useState<TimelineEvent | null>(null);
+  const [eventToDelete, setEventToDelete] = useState<TimelineEvent | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -82,15 +85,22 @@ export const TimelineTab: React.FC<TimelineTabProps> = ({ person, onDetachMedia,
     setEventToEdit(null);
   };
 
-  const handleDeleteEvent = async (event: TimelineEvent) => {
-    if (
-      window.confirm(
-        `Are you sure you want to delete the event "${event.title}"?`
-      )
-    ) {
-      await deleteTimelineEvent(person.id, event.id);
+  const handleDeleteEvent = (event: TimelineEvent) => {
+    setEventToDelete(event);
+  };
+
+  const handleConfirmDeleteEvent = async () => {
+    if (!eventToDelete) return;
+    setIsDeleting(true);
+    try {
+      await deleteTimelineEvent(person.id, eventToDelete.id);
       clearList(listKey);
       fetchInitial(listKey, () => getPersonTimeline(person.id, null));
+      setEventToDelete(null);
+    } catch (error) {
+      console.error("Failed to delete timeline event:", error);
+    } finally {
+      setIsDeleting(false);
     }
   };
   const handleSubmitEvent = async (eventData: TimelineEventCreate) => {
@@ -205,6 +215,15 @@ export const TimelineTab: React.FC<TimelineTabProps> = ({ person, onDetachMedia,
         onSubmit={handleSubmitEvent}
         isSubmitting={isSubmitting}
         initialData={eventToEdit}
+      />
+      <ConfirmDialog
+        open={!!eventToDelete}
+        title="Delete event?"
+        message={`Are you sure you want to delete the event "${eventToDelete?.title ?? ""}"? This cannot be undone.`}
+        confirmLabel="Delete"
+        loading={isDeleting}
+        onConfirm={handleConfirmDeleteEvent}
+        onClose={() => setEventToDelete(null)}
       />
       {/* Day-view dialog with per-item remove */}
       <Dialog

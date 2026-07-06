@@ -102,6 +102,13 @@ if Path('app/GPU_BUILD').exists():
 if Path('webview2runtime').exists():
     datas.append(('webview2runtime', 'webview2runtime'))
 datas += collect_data_files('open_clip', include_py_files=True)
+# Offline reverse-geocoding dataset (~8 MB rg_cities1000.csv). Without it the
+# geocode_places task silently tries to download from geonames.org at runtime
+# (no timeout, no console output) and appears to hang forever.
+try:
+    datas += collect_data_files('reverse_geocoder')
+except Exception:
+    pass
 
 # Collect all submodules of our in-repo `app` package to ensure they are bundled.
 try:
@@ -262,6 +269,13 @@ except Exception:
 # Ensure optional sqlite_vec helper is included for fallback loading.
 try:
     hiddenimports_list += ['sqlite_vec']
+except Exception:
+    pass
+
+# reverse_geocoder is imported lazily inside the geocode task; make sure the
+# module (incl. its multiprocessing helper) is bundled alongside its dataset.
+try:
+    hiddenimports_list += ['reverse_geocoder', 'reverse_geocoder.cKDTree_MP']
 except Exception:
     pass
 

@@ -4,14 +4,22 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import and_, func, or_
 from sqlmodel import Session, select
 
+from app.api._resolve import resolve_media_action
 from app.database import get_session
-from app.models import Blacklist, Media
+from app.models import Media
 from app.schemas.shortvideos import ShortVideoItem, ShortVideoPage, ShortVideoResolveRequest
-from app.utils import delete_file, delete_record
 
 router = APIRouter()
 
 _DEFAULT_MAX_DURATION = 10.0
+
+
+def _base_filter(max_duration: float):
+    return and_(
+        Media.duration.isnot(None),
+        Media.duration >= 0,
+        Media.duration < max_duration,
+    )
 
 
 @router.get("", response_model=ShortVideoPage)
@@ -22,11 +30,7 @@ def get_short_videos(
     limit: int = Query(50, ge=1, le=200),
 ):
     """Paginated list of videos shorter than max_duration seconds, ordered shortest-first."""
-    base_filter = and_(
-        Media.duration.isnot(None),
-        Media.duration >= 0,
-        Media.duration < max_duration,
-    )
+    base_filter = _base_filter(max_duration)
 
     total = session.exec(select(func.count(Media.id)).where(base_filter)).first() or 0
 
@@ -81,26 +85,11 @@ def resolve_short_videos(
     request: ShortVideoResolveRequest,
     session: Session = Depends(get_session),
 ):
-    if not request.media_ids:
-        raise HTTPException(status_code=400, detail="No media IDs provided.")
-
-    media_list = session.exec(
-        select(Media).where(Media.id.in_(request.media_ids))
-    ).all()
-
-    if not media_list:
-        raise HTTPException(status_code=404, detail="No matching media found.")
-
-    for media in media_list:
-        if request.action == "DELETE_FILES":
-            delete_file(session, media.id)
-        elif request.action == "DELETE_RECORDS":
-            delete_record(media.id, session)
-        elif request.action == "BLACKLIST_RECORDS":
-            session.add(Blacklist(path=media.path))
-            delete_record(media.id, session)
-        else:
-            raise HTTPException(status_code=400, detail=f"Unknown action: {request.action}")
-
-    session.commit()
-    return {"removed": len(media_list)}
+    removed = resolve_media_action(
+        session,
+        action=request.action,
+        media_ids=request.media_ids,
+        select_all=request.select_all,
+        base_filter=_base_filter(request.max_duration),
+    )
+    return {"removed": removed}

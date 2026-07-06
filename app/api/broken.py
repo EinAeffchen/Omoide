@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func
-from sqlmodel import Session, col, select
+from sqlalchemy import func, text
+from sqlmodel import Session, col, delete, select
 
+from app.api._resolve import resolve_media_action
 from app.config import settings
 from app.database import get_session
-from app.models import Blacklist, Media
+from app.models import Media, Scene
 from app.schemas.broken import (
     BrokenMediaItem,
     BrokenMediaPage,
@@ -15,9 +16,27 @@ from app.schemas.broken import (
     BrokenRetryRequest,
     BrokenRetryResponse,
 )
-from app.utils import delete_file, delete_record, generate_thumbnail
+from app.utils import generate_thumbnail
 
 router = APIRouter()
+
+_RETRY_BATCH_LIMIT = 25
+
+
+def _broken_filter():
+    return col(Media.processing_error).isnot(None)
+
+
+def _delete_scenes(session: Session, media_id: int) -> None:
+    session.exec(
+        text(
+            """
+            DELETE FROM scene_embeddings
+            WHERE media_id = :m_id
+            """
+        ).bindparams(m_id=media_id)
+    )
+    session.exec(delete(Scene).where(Scene.media_id == media_id))
 
 
 @router.get("", response_model=BrokenMediaPage)
@@ -27,7 +46,7 @@ def list_broken_media(
     limit: int = Query(50, ge=1, le=200),
 ):
     """Paginated list of media that could not be processed, ordered newest-first."""
-    base_filter = col(Media.processing_error).isnot(None)
+    base_filter = _broken_filter()
 
     total = (
         session.exec(select(func.count(Media.id)).where(base_filter)).first() or 0
@@ -57,49 +76,15 @@ def resolve_broken(
     request: BrokenResolveRequest,
     session: Session = Depends(get_session),
 ):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in presentation mode.",
-        )
-
-    if request.select_all:
-        media_list = session.exec(
-            select(Media).where(col(Media.processing_error).isnot(None))
-        ).all()
-    else:
-        if not request.media_ids:
-            raise HTTPException(status_code=400, detail="No media IDs provided.")
-        media_list = session.exec(
-            select(Media).where(
-                Media.id.in_(request.media_ids),
-                col(Media.processing_error).isnot(None),
-            )
-        ).all()
-
-    if not media_list:
-        raise HTTPException(status_code=404, detail="No matching broken media found.")
-
-    removed = 0
-    for media in media_list:
-        if request.action == "DELETE_FILES":
-            delete_file(session, media.id)
-        elif request.action == "DELETE_RECORDS":
-            delete_record(media.id, session)
-        elif request.action == "BLACKLIST_RECORDS":
-            try:
-                session.add(Blacklist(path=media.path))
-                session.flush()
-            except Exception:
-                pass  # already blacklisted
-            delete_record(media.id, session)
-        else:
-            raise HTTPException(
-                status_code=400, detail=f"Unknown action: {request.action}"
-            )
-        removed += 1
-
-    session.commit()
+    removed = resolve_media_action(
+        session,
+        action=request.action,
+        media_ids=request.media_ids,
+        select_all=request.select_all,
+        base_filter=_broken_filter(),
+        filter_ids=True,
+        not_found_detail="No matching broken media found.",
+    )
     return BrokenResolveResponse(removed=removed)
 
 
@@ -108,26 +93,33 @@ def retry_broken(
     request: BrokenRetryRequest,
     session: Session = Depends(get_session),
 ):
-    """Retry thumbnail generation for broken media. Clears the error for items that succeed."""
+    """Retry thumbnail generation for broken media. Clears the error for items that succeed.
+
+    Processes at most a fixed batch per call; `remaining` reports how many
+    matching items were not attempted so clients can call again.
+    """
     if settings.general.presentation_mode:
         raise HTTPException(
             status_code=403,
             detail="Not allowed in presentation mode.",
         )
 
+    base_filter = _broken_filter()
     if request.select_all:
-        media_list = session.exec(
-            select(Media).where(col(Media.processing_error).isnot(None))
-        ).all()
+        count_query = select(func.count(Media.id)).where(base_filter)
+        query = select(Media).where(base_filter)
     else:
         if not request.media_ids:
             raise HTTPException(status_code=400, detail="No media IDs provided.")
-        media_list = session.exec(
-            select(Media).where(
-                Media.id.in_(request.media_ids),
-                col(Media.processing_error).isnot(None),
-            )
-        ).all()
+        count_query = select(func.count(Media.id)).where(
+            Media.id.in_(request.media_ids), base_filter
+        )
+        query = select(Media).where(Media.id.in_(request.media_ids), base_filter)
+
+    total = session.exec(count_query).first() or 0
+    media_list = session.exec(
+        query.order_by(Media.id.asc()).limit(_RETRY_BATCH_LIMIT)
+    ).all()
 
     if not media_list:
         raise HTTPException(status_code=404, detail="No matching broken media found.")
@@ -144,16 +136,18 @@ def retry_broken(
             media.ran_auto_tagging = False
             media.embeddings_created = False
             media.laplacian_score = None
+            _delete_scenes(session, media.id)
             session.add(media)
             cleared += 1
         else:
             media.processing_error = thumb_error or media.processing_error
             session.add(media)
             still_broken += 1
+        session.commit()
 
-    session.commit()
     return BrokenRetryResponse(
         retried=len(media_list),
         cleared=cleared,
         still_broken=still_broken,
+        remaining=max(int(total) - len(media_list), 0),
     )

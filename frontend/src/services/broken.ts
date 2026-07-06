@@ -22,8 +22,8 @@ export const resolveBroken = async (
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
-    const msg = await res.text().catch(() => "Failed to resolve broken media");
-    throw new Error(msg || "Failed to resolve broken media");
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Failed to resolve broken media");
   }
   return res.json();
 };
@@ -31,15 +31,20 @@ export const resolveBroken = async (
 export const retryBroken = async (payload: {
   media_ids?: number[];
   select_all?: boolean;
-}): Promise<{ retried: number; cleared: number; still_broken: number }> => {
+}): Promise<{
+  retried: number;
+  cleared: number;
+  still_broken: number;
+  remaining?: number;
+}> => {
   const res = await fetch(`${API}/api/broken/retry`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
-    const msg = await res.text().catch(() => "Failed to retry broken media");
-    throw new Error(msg || "Failed to retry broken media");
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Failed to retry broken media");
   }
   return res.json();
 };

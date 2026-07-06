@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 import hdbscan
 import networkx as nx
 import numpy as np
-import umap
+from sklearn.decomposition import PCA
 from sklearn.neighbors import NearestNeighbors
 from sqlalchemy import func, text, update
 from sqlmodel import Session, select
@@ -46,21 +46,56 @@ __all__ = [
 ]
 
 
-def _fetch_faces_and_embeddings(
-    session: Session, limit: int = 10000, last_id: int = 0
-) -> tuple[list[int], np.ndarray]:
-    sql = text(
+def _quality_seed_filter() -> tuple[str, dict[str, float]]:
+    """
+    SQL fragment (aliased on ``f``) excluding low-confidence and hard-profile
+    faces from seeding new clusters: their embeddings are unreliable and tend
+    to agglomerate into junk "people". They stay unassigned and are picked up
+    by the leftover matching pass instead. Faces without quality data (NULL,
+    extracted before the quality columns existed) are kept.
+    """
+    return (
         """
+           AND (f.det_score IS NULL OR f.det_score >= :min_det_score)
+           AND (f.frontality IS NULL OR f.frontality >= :min_frontality)
+        """,
+        {
+            "min_det_score": float(
+                settings.face_recognition.cluster_seed_min_det_score
+            ),
+            "min_frontality": float(
+                settings.face_recognition.cluster_seed_min_frontality
+            ),
+        },
+    )
+
+
+def _fetch_faces_and_embeddings(
+    session: Session,
+    limit: int = 10000,
+    last_id: int = 0,
+    *,
+    quality_seed_only: bool = False,
+) -> tuple[list[int], np.ndarray]:
+    quality_filter = ""
+    params: dict[str, float | int] = {"last_id": last_id, "limit": limit}
+    if quality_seed_only:
+        quality_filter, quality_params = _quality_seed_filter()
+        params.update(quality_params)
+
+    sql = text(
+        f"""
         SELECT f.id, fe.embedding
           FROM face            AS f
           JOIN face_embeddings AS fe
                ON fe.face_id = f.id
          WHERE f.person_id IS NULL
            AND f.id > :last_id
+           {quality_filter}
          ORDER BY f.id
          LIMIT :limit
         """
-    ).bindparams(last_id=last_id, limit=limit)
+    ).bindparams(**params)
 
     logger.info("Getting faces!")
     rows = session.exec(sql).all()
@@ -119,6 +154,55 @@ def _cluster_embeddings(
     )
 
 
+def _trim_clusters_by_centroid_similarity(
+    labels: np.ndarray,
+    embeddings: np.ndarray,
+    min_similarity: float,
+    max_iterations: int = 3,
+) -> tuple[np.ndarray, int]:
+    """
+    Demote cluster members whose cosine similarity to their cluster centroid
+    falls below ``min_similarity`` to noise (-1).
+
+    Graph label propagation (Chinese Whispers) merges transitively: A-B and
+    B-C edges pull A and C together even when A and C are dissimilar. This
+    pass enforces a compactness guarantee per cluster; trimmed faces stay
+    unassigned and can still be attached to a person by the leftover
+    matching pass. Recomputes the centroid after each trim since dropping
+    outliers shifts it.
+    """
+    if labels.size == 0 or min_similarity <= 0.0:
+        return labels, 0
+
+    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+    norms[norms == 0.0] = 1.0
+    normed = embeddings / norms
+
+    labels = labels.copy()
+    dropped_total = 0
+    for cluster_id in np.unique(labels):
+        if cluster_id < 0:
+            continue
+        member_idx = np.flatnonzero(labels == cluster_id)
+        for _ in range(max_iterations):
+            if member_idx.size < 2:
+                break
+            centroid = normed[member_idx].mean(axis=0)
+            centroid_norm = float(np.linalg.norm(centroid))
+            if centroid_norm <= 0.0 or not np.isfinite(centroid_norm):
+                break
+            centroid /= centroid_norm
+            sims = normed[member_idx] @ centroid
+            keep = sims >= min_similarity
+            if keep.all():
+                break
+            drop_idx = member_idx[~keep]
+            labels[drop_idx] = -1
+            dropped_total += int(drop_idx.size)
+            member_idx = member_idx[keep]
+    return labels, dropped_total
+
+
 def _cluster_embeddings_chinese_whispers(
     face_ids: list[int],
     embeddings: np.ndarray,
@@ -156,6 +240,10 @@ def _cluster_embeddings_chinese_whispers(
 
     for i in range(num_faces):
         for neighbor_idx, dist in zip(indices[i][1:], distances[i][1:]):
+            # with duplicate embeddings the self match is not guaranteed to
+            # be at position 0, so guard explicitly
+            if neighbor_idx == i:
+                continue
             if mutual_nn and i not in neighbor_sets[neighbor_idx]:
                 continue
 
@@ -168,9 +256,12 @@ def _cluster_embeddings_chinese_whispers(
     logger.info(f"Similarity graph built with {edge_count} edges")
 
     # 3. Chinese Whispers Iterations
+    # Seeded RNG so repeated runs over the same faces give the same clusters
+    # (makes threshold tuning reproducible).
+    rng = np.random.default_rng(42)
     nodes = list(G.nodes())
     for iteration in range(iterations):
-        np.random.shuffle(nodes)
+        rng.shuffle(nodes)
         changed = False
 
         for node in nodes:
@@ -202,6 +293,19 @@ def _cluster_embeddings_chinese_whispers(
 
     logger.info(f"Found {len(unique_labels)} clusters using Chinese Whispers")
 
+    # 5. Purity pass: enforce per-cluster compactness that label propagation
+    # cannot guarantee (breaks up "assimilation" clusters built from chains).
+    min_member_similarity = float(
+        getattr(settings.face_recognition, "cw_min_member_similarity", 0.0)
+    )
+    cluster_labels, dropped = _trim_clusters_by_centroid_similarity(
+        cluster_labels, embeddings, min_member_similarity
+    )
+    if dropped:
+        logger.info(
+            "CW purity pass demoted %d chain-merged faces to noise", dropped
+        )
+
     return cluster_labels
 
 
@@ -212,14 +316,24 @@ def _cluster_embeddings_hdbscan(
     if embeddings.size == 0:
         return np.array([], dtype=int)
 
-    reducer = umap.UMAP(
-        n_neighbors=15,
-        n_components=10,  # Drastic reduction works best for HDBSCAN
-        metric="cosine",
-        random_state=42,
-    )
-    embeddings_reduced = reducer.fit_transform(embeddings)
-    embeddings_reduced = embeddings_reduced.astype("float64")
+    # L2-normalize so euclidean distance is monotonic with cosine similarity
+    # (embeddings are stored normalized, but older rows may not be).
+    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+    norms[norms == 0.0] = 1.0
+    embeddings_normed = embeddings / norms
+
+    # Reduce with PCA instead of UMAP: PCA is a rotation + truncation, so it
+    # approximately preserves distances. UMAP manufactures density (its job is
+    # visualization-style manifold compression), which turned loose groups of
+    # side profiles/statues into tight blobs HDBSCAN then confidently merged.
+    n_components = min(64, embeddings_normed.shape[0], embeddings_normed.shape[1])
+    if embeddings_normed.shape[1] > n_components:
+        embeddings_reduced = PCA(
+            n_components=n_components, random_state=42
+        ).fit_transform(embeddings_normed)
+    else:
+        embeddings_reduced = embeddings_normed
+    embeddings_reduced = np.ascontiguousarray(embeddings_reduced, dtype=np.float64)
     min_faces_required = max(2, int(settings.face_recognition.person_min_face_count))
     sample_count = embeddings.shape[0]
 
@@ -261,21 +375,53 @@ def _cluster_embeddings_hdbscan(
             cluster_selection_method=settings.face_recognition.hdbscan_cluster_selection_method,
             cluster_selection_epsilon=settings.face_recognition.hdbscan_cluster_selection_epsilon,
             algorithm="best",
-            gen_min_span_tree=False,
+            # needed for relative_validity_ (DBCV) scoring below
+            gen_min_span_tree=True,
         )
         labels = clusterer.fit_predict(embeddings_reduced)
 
+        # Demote weakly attached members to noise; they can still be matched
+        # to the resulting persons in the leftover pass.
+        min_membership = float(
+            getattr(
+                settings.face_recognition,
+                "hdbscan_min_membership_probability",
+                0.0,
+            )
+        )
+        if min_membership > 0.0 and len(labels) > 0:
+            weak = (labels >= 0) & (clusterer.probabilities_ < min_membership)
+            if np.any(weak):
+                labels = labels.copy()
+                labels[weak] = -1
+                logger.debug(
+                    "HDBSCAN demoted %d weak members to noise", int(np.sum(weak))
+                )
+
+        # Score attempts with DBCV (density-based cluster validity). The old
+        # np.mean(probabilities_) counted noise points as 0, which rewarded
+        # cramming everything into clusters — i.e. exactly the over-merging
+        # we are trying to avoid.
         if len(labels) > 0:
-            current_score = float(np.mean(clusterer.probabilities_))
+            try:
+                current_score = float(clusterer.relative_validity_)
+            except Exception:
+                non_noise = labels >= 0
+                if np.any(non_noise):
+                    current_score = float(
+                        np.mean(clusterer.probabilities_[non_noise])
+                    ) - float(np.mean(labels == -1))
+                else:
+                    current_score = -1.0
         else:
-            current_score = -1
+            current_score = -1.0
 
         non_noise_mask = labels >= 0
         cluster_count = int(np.unique(labels[non_noise_mask]).size)
         noise_ratio = float(np.mean(labels == -1))
 
         logger.debug(
-            "HDBSCAN attempt clusters=%d noise=%.2f FinalScore=%d",
+            "HDBSCAN attempt clusters=%d noise=%.2f score=%.3f",
             cluster_count,
             noise_ratio,
             current_score,
@@ -568,18 +714,14 @@ def merge_similar_persons(
             merge_processed = 0
             merge_started = time.monotonic()
             last_merge_log = merge_started
-            last_saved_progress: tuple[int, int] = (-1, -1)
 
-            with Session(db.engine) as session:
-                task = session.get(ProcessingTask, task_id)
-                if task:
-                    task.processed = 0
-                    task.total = len(candidate_ids)
-                    session.add(task)
-                    safe_commit(session)
-
-            def update_progress(force: bool = False) -> None:
-                nonlocal last_saved_progress, last_merge_log
+            # Progress for this phase is published only via the merge_*
+            # fields of set_task_progress. Deliberately do NOT overwrite the
+            # task's DB processed/total: those carry the clustering-phase
+            # numbers, and clobbering them with merge counts corrupted the
+            # progress display for the rest of the run.
+            def update_progress() -> None:
+                nonlocal last_merge_log
                 pending_count = len(candidate_ids)
                 total_work = merge_processed + pending_count
                 if total_work <= 0:
@@ -610,21 +752,8 @@ def merge_similar_persons(
                     )
                     last_merge_log = now
 
-                progress_tuple = (merge_processed, total_work)
-                if not force and progress_tuple == last_saved_progress:
-                    return
-
-                with Session(db.engine) as progress_session:
-                    task = progress_session.get(ProcessingTask, task_id)
-                    if task:
-                        task.processed = merge_processed
-                        task.total = total_work
-                        progress_session.add(task)
-                        safe_commit(progress_session)
-                        last_saved_progress = progress_tuple
-
             if candidate_ids:
-                update_progress(force=True)
+                update_progress()
             while candidate_ids:
                 person_id = candidate_ids.popleft()
                 merge_processed += 1
@@ -744,26 +873,52 @@ def _assign_faces_to_clusters(
 ) -> tuple[int, list[int]]:
     created = 0
     new_person_ids: list[int] = []
+    min_face_count = int(settings.face_recognition.person_min_face_count)
+    max_radius = float(settings.face_recognition.person_cluster_max_l2_radius)
     for face_ids, embeddings in tqdm(clusters.values()):
-        if len(face_ids) < settings.face_recognition.person_min_face_count:
+        if len(face_ids) < min_face_count:
             continue
 
+        # Trim outliers instead of discarding the whole cluster: one bad face
+        # used to poison an otherwise-good cluster of dozens, sending all of
+        # them back to manual assignment. Iterate because dropping outliers
+        # shifts the centroid. Trimmed faces stay unassigned and get another
+        # chance in the leftover matching pass. Note this check cannot catch
+        # junk-hub clusters (they are compact); those are handled by the
+        # quality gate at seeding time.
+        face_ids_arr = np.asarray(face_ids)
         embeddings_arr = np.array(embeddings)
-        centroid = embeddings_arr.mean(axis=0)
-        similarities = embeddings_arr @ centroid
-
-        best_face_id = face_ids[np.argmax(similarities)]
-
-        diffs = embeddings_arr - centroid
-        l2_radii = np.linalg.norm(diffs, axis=1)
-        if np.max(l2_radii) > settings.face_recognition.person_cluster_max_l2_radius:
+        trimmed = 0
+        for _ in range(5):
+            centroid = embeddings_arr.mean(axis=0)
+            l2_radii = np.linalg.norm(embeddings_arr - centroid, axis=1)
+            keep = l2_radii <= max_radius
+            if keep.all():
+                break
+            trimmed += int(np.sum(~keep))
+            face_ids_arr = face_ids_arr[keep]
+            embeddings_arr = embeddings_arr[keep]
+            if len(face_ids_arr) < min_face_count:
+                break
+        if len(face_ids_arr) < min_face_count:
             logger.info(
-                "Skipping loose cluster (max radius=%.3f > %.3f) with %d faces",
-                float(np.max(l2_radii)),
-                settings.face_recognition.person_cluster_max_l2_radius,
+                "Skipping loose cluster (%d of %d faces left after radius trim)",
+                len(face_ids_arr),
                 len(face_ids),
             )
             continue
+        if trimmed:
+            logger.info(
+                "Trimmed %d outlier faces (radius > %.3f) from cluster of %d",
+                trimmed,
+                max_radius,
+                len(face_ids),
+            )
+        face_ids = [int(fid) for fid in face_ids_arr]
+
+        centroid = embeddings_arr.mean(axis=0)
+        similarities = embeddings_arr @ centroid
+        best_face_id = face_ids[int(np.argmax(similarities))]
 
         with Session(db.engine) as session:
             task = session.get(ProcessingTask, task_id)
@@ -836,15 +991,22 @@ def _assign_faces_to_clusters(
     return created, new_person_ids
 
 
-def _get_face_total(session: Session) -> int:
+def _get_face_total(session: Session, *, quality_seed_only: bool = False) -> int:
+    quality_filter = ""
+    params: dict[str, float] = {}
+    if quality_seed_only:
+        quality_filter, params = _quality_seed_filter()
     sql = text(
-        """
+        f"""
         SELECT COUNT(*)
           FROM face            AS f
           JOIN face_embeddings AS fe ON fe.face_id = f.id
          WHERE f.person_id IS NULL
+           {quality_filter}
         """
     )
+    if params:
+        sql = sql.bindparams(**params)
     row = session.exec(sql).first()
     return int(row[0]) if row else 0
 
@@ -883,23 +1045,77 @@ def _build_in_clause_params(
     return ", ".join(placeholders), params
 
 
-def _load_person_embedding_matrix(
+def _compute_person_prototypes(vectors: np.ndarray, k: int) -> np.ndarray:
+    """
+    Reduce a person's face embeddings (L2-normalized, shape (n, d)) to up to
+    ``k`` prototype vectors via farthest-point seeding + a few spherical
+    k-means iterations. Multiple prototypes capture pose modes (frontal,
+    left/right profile) that a single centroid — dominated by frontal shots —
+    washes out.
+    """
+
+    def _norm_rows(matrix: np.ndarray) -> np.ndarray:
+        norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+        norms[norms == 0.0] = 1.0
+        return matrix / norms
+
+    centroid = _norm_rows(vectors.mean(axis=0, keepdims=True))
+    if k <= 1 or vectors.shape[0] <= 1:
+        return centroid.astype(np.float32, copy=False)
+
+    centers = [centroid[0]]
+    for _ in range(k - 1):
+        sims = vectors @ np.vstack(centers).T
+        best_sim = sims.max(axis=1)
+        centers.append(vectors[int(np.argmin(best_sim))])
+    centers_arr = np.vstack(centers)
+
+    for _ in range(4):
+        assignment = np.argmax(vectors @ centers_arr.T, axis=1)
+        for j in range(centers_arr.shape[0]):
+            members = vectors[assignment == j]
+            if members.shape[0]:
+                centers_arr[j] = members.mean(axis=0)
+        centers_arr = _norm_rows(centers_arr)
+
+    return centers_arr.astype(np.float32, copy=False)
+
+
+def _load_person_prototype_matrix(
     session: Session,
+    *,
+    per_person_cap: int = 64,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Build the matching matrix from per-person prototypes computed over the
+    persons' face embeddings (instead of the single stored centroid). Returns
+    (person_ids, matrix) where person_ids has one entry per prototype row and
+    may contain the same person several times.
+    """
+    max_prototypes = max(
+        1,
+        int(
+            getattr(settings.face_recognition, "person_matching_max_prototypes", 3)
+        ),
+    )
     rows = session.exec(
         text(
             """
             SELECT person_id, embedding
-              FROM person_embeddings
+              FROM face_embeddings
+             WHERE person_id IS NOT NULL
+               AND person_id > 0
             """
         )
     ).all()
-    if not rows:
-        return np.array([], dtype=np.int64), np.empty((0, 0), dtype=np.float32)
 
-    person_ids: list[int] = []
-    vectors: list[np.ndarray] = []
+    grouped: dict[int, list[np.ndarray]] = {}
     for person_id, raw_embedding in rows:
+        if person_id is None:
+            continue
+        vecs = grouped.setdefault(int(person_id), [])
+        if len(vecs) >= per_person_cap:
+            continue
         vec = vector_from_stored(raw_embedding)
         if vec is None or vec.size == 0:
             continue
@@ -908,15 +1124,27 @@ def _load_person_embedding_matrix(
         norm = float(np.linalg.norm(vec))
         if not np.isfinite(norm) or norm == 0.0:
             continue
-        person_ids.append(int(person_id))
-        vectors.append((vec / norm).astype(np.float32, copy=False))
+        vecs.append((vec / norm).astype(np.float32, copy=False))
 
-    if not person_ids:
+    proto_person_ids: list[int] = []
+    proto_vectors: list[np.ndarray] = []
+    for person_id, vecs in grouped.items():
+        if not vecs:
+            continue
+        arr = np.vstack(vecs)
+        # only spend extra prototypes on persons with enough faces to
+        # actually exhibit distinct pose modes (~4 faces per prototype)
+        k = min(max_prototypes, max(1, arr.shape[0] // 4))
+        for proto in _compute_person_prototypes(arr, k):
+            proto_person_ids.append(person_id)
+            proto_vectors.append(proto)
+
+    if not proto_person_ids:
         return np.array([], dtype=np.int64), np.empty((0, 0), dtype=np.float32)
 
-    return np.array(person_ids, dtype=np.int64), np.vstack(vectors).astype(
-        np.float32, copy=False
-    )
+    return np.array(proto_person_ids, dtype=np.int64), np.vstack(
+        proto_vectors
+    ).astype(np.float32, copy=False)
 
 
 def _bulk_assign_faces_to_persons(
@@ -948,16 +1176,24 @@ def _bulk_assign_faces_to_persons(
 
 
 def _match_unassigned_to_existing(
-    session: Session, face_ids: list[int], embeddings: np.ndarray, task_id: str
+    session: Session,
+    face_ids: list[int],
+    embeddings: np.ndarray,
+    task_id: str,
+    prototypes: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> list[int]:
     """
-    Attempts to assign faces to existing persons via vector search.
-    Returns a list of face_ids that were NOT assigned and still need clustering.
+    Attempts to assign faces to existing persons by comparing against
+    per-person pose prototypes. Returns a list of face_ids that were NOT
+    assigned and still need clustering. ``prototypes`` allows callers that
+    loop over batches to load the (person_ids, matrix) pair once.
     """
     if not face_ids:
         return []
 
-    person_ids, person_matrix = _load_person_embedding_matrix(session)
+    if prototypes is None:
+        prototypes = _load_person_prototype_matrix(session)
+    person_ids, person_matrix = prototypes
     if person_matrix.size == 0:
         logger.info("No existing persons found, skipping to clustering!")
         return face_ids
@@ -1031,23 +1267,24 @@ def _match_unassigned_to_existing(
 
             best_indices = np.argmax(similarities, axis=1)
             best_scores = similarities[np.arange(similarities.shape[0]), best_indices]
+            best_persons = person_ids[best_indices]
 
-            if similarities.shape[1] > 1:
-                top2 = np.partition(similarities, -2, axis=1)[:, -2:]
-                second_scores = np.minimum(top2[:, 0], top2[:, 1])
-            else:
-                second_scores = np.full(
-                    best_scores.shape,
-                    -1.0,
-                    dtype=np.float32,
-                )
+            # The margin must be against the best *other* person — several
+            # prototype rows can belong to the winning person, so mask all of
+            # its rows out before taking the runner-up score.
+            same_person_mask = person_ids[None, :] == best_persons[:, None]
+            other_similarities = np.where(same_person_mask, -np.inf, similarities)
+            second_scores = np.max(other_similarities, axis=1)
+            second_scores = np.where(
+                np.isfinite(second_scores), second_scores, -1.0
+            )
 
             accept_mask = (best_scores >= threshold_cosine) & (
                 (best_scores - second_scores) >= min_margin
             )
             accepted_global_indices = valid_indices[accept_mask]
-            assigned_person_for_chunk[accepted_global_indices] = person_ids[
-                best_indices[accept_mask]
+            assigned_person_for_chunk[accepted_global_indices] = best_persons[
+                accept_mask
             ]
 
         for local_idx, face_id in enumerate(chunk_face_ids):
@@ -1088,6 +1325,19 @@ def _match_remaining_single_faces(
         current_step="matching_known_persons",
         current_item="starting leftover single-face pass",
     )
+    # Load per-person prototypes once for the whole pass instead of once per
+    # batch (persons do not change during matching). Also repoint the task's
+    # processed/total at this phase — the merge phase left them at its own
+    # counts, which made the progress bar meaningless for the rest of the run.
+    with Session(db.engine) as session:
+        prototypes = _load_person_prototype_matrix(session)
+        remaining_total = _get_face_total(session)
+        task = session.get(ProcessingTask, task_id)
+        if task and task.status != "cancelled":
+            task.processed = 0
+            task.total = remaining_total
+            session.add(task)
+            safe_commit(session)
     while True:
         with Session(db.engine) as session:
             face_ids, embeddings = _fetch_faces_and_embeddings(
@@ -1102,6 +1352,7 @@ def _match_remaining_single_faces(
                 face_ids,
                 embeddings,
                 task_id,
+                prototypes=prototypes,
             )
             if _is_task_cancelled(session, task_id):
                 cancelled = True
@@ -1118,6 +1369,12 @@ def _match_remaining_single_faces(
                 f"leftover pass scanned={total_scanned} matched={total_matched}"
             ),
         )
+        with Session(db.engine) as progress_session:
+            task = progress_session.get(ProcessingTask, task_id)
+            if task and task.status != "cancelled":
+                task.processed = total_scanned
+                progress_session.add(task)
+                safe_commit(progress_session)
 
         if cancelled:
             logger.info(
@@ -1140,7 +1397,10 @@ def run_person_clustering(task_id: str) -> None:
 
         task.status = "running"
         task.started_at = datetime.now(timezone.utc)
-        task.total = _get_face_total(session)
+        # count only faces eligible to seed clusters so the progress bar
+        # matches what the batch loop actually processes; the quality-excluded
+        # remainder is accounted for separately in the matching phase
+        task.total = _get_face_total(session, quality_seed_only=True)
         logger.info(
             "Got %s faces to cluster! batch_size=%d",
             task.total,
@@ -1188,6 +1448,9 @@ def run_person_clustering(task_id: str) -> None:
                     session,
                     last_id=last_id,
                     limit=settings.face_recognition.cluster_batch_size,
+                    # only quality faces may seed new persons; low-quality
+                    # faces are attached in the leftover matching pass below
+                    quality_seed_only=True,
                 )
                 if not batch_face_ids:
                     break

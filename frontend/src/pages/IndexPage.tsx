@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useInView } from "react-intersection-observer";
+import { useSearchParams } from "react-router-dom";
 import {
   Alert,
   Box,
   Breadcrumbs,
   Button,
+  Chip,
   CircularProgress,
   Container,
   Link as MuiLink,
@@ -20,16 +22,21 @@ import Masonry from "react-masonry-css";
 import SortIcon from "@mui/icons-material/Sort";
 import GridViewIcon from "@mui/icons-material/GridView";
 import KeyboardArrowUpIcon from "@mui/icons-material/KeyboardArrowUp";
+import RefreshIcon from "@mui/icons-material/Refresh";
 import FolderIcon from "@mui/icons-material/Folder";
 import SearchOffIcon from "@mui/icons-material/SearchOff";
+import CameraAltIcon from "@mui/icons-material/CameraAlt";
 import { useListStore, defaultListState } from "../stores/useListStore";
 import MediaCard from "../components/MediaCard";
 import FolderCard from "../components/FolderCard";
 import { MediaSkeleton } from "../components/MediaSkeleton";
 import { EmptyState } from "../components/EmptyState";
+import { MemoriesRail } from "../components/MemoriesRail";
+import { MEDIA_SORT_LABELS } from "../components/MediaListPage";
 import { getMediaFolders, getMediaList } from "../services/media";
+import { getCameras } from "../services/features";
 import { useTaskCompletionVersion } from "../TaskEventsContext";
-import { MediaFolderListing } from "../types";
+import { CameraCount, MediaFolderListing } from "../types";
 
 const breakpointColumnsObj = {
   default: 5,
@@ -42,18 +49,47 @@ const breakpointColumnsObj = {
 export default function IndexPage() {
   const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
   const [tags] = useState<string[]>([]);
-  const [sortOrder, setSortOrder] = useState<"newest" | "latest">("newest");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const sortOrder: "newest" | "latest" =
+    searchParams.get("sort") === "latest" ? "latest" : "newest";
+  const viewMode: "grid" | "folders" =
+    searchParams.get("view") === "folders" ? "folders" : "grid";
+  const currentFolder = searchParams.get("folder");
+  const cameraMake = searchParams.get("cam_make");
+  const cameraModel = searchParams.get("cam_model");
+  const camera = useMemo(
+    () =>
+      cameraMake || cameraModel
+        ? { make: cameraMake, model: cameraModel }
+        : null,
+    [cameraMake, cameraModel]
+  );
+  const [cameras, setCameras] = useState<CameraCount[]>([]);
+  const [cameraMenuAnchorEl, setCameraMenuAnchorEl] =
+    useState<null | HTMLElement>(null);
   const [sortMenuAnchorEl, setSortMenuAnchorEl] = useState<null | HTMLElement>(
     null
   );
   const [showScrollTop, setShowScrollTop] = useState(false);
-  const [viewMode, setViewMode] = useState<"grid" | "folders">("grid");
-  const [currentFolder, setCurrentFolder] = useState<string | null>(null);
   const [folderListing, setFolderListing] = useState<MediaFolderListing | null>(
     null
   );
   const [isFolderLoading, setIsFolderLoading] = useState(false);
   const [folderError, setFolderError] = useState<string | null>(null);
+
+  const updateParams = useCallback(
+    (updates: Record<string, string | null>) => {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        Object.entries(updates).forEach(([key, value]) => {
+          if (value === null) next.delete(key);
+          else next.set(key, value);
+        });
+        return next;
+      });
+    },
+    [setSearchParams]
+  );
 
   useEffect(() => {
     const handleScroll = () => {
@@ -75,55 +111,58 @@ export default function IndexPage() {
     const tagString = [...tags].sort().join(",");
     const folderKey =
       viewMode === "folders" ? `folder:${currentFolder ?? ""}` : "all";
-    return `media-${viewMode}-${sortOrder}-${folderKey}-${tagString}`;
-  }, [sortOrder, tags, viewMode, currentFolder]);
+    const cameraKey = camera ? `${camera.make ?? ""}|${camera.model ?? ""}` : "";
+    return `media-${viewMode}-${sortOrder}-${folderKey}-${tagString}-${cameraKey}`;
+  }, [sortOrder, tags, viewMode, currentFolder, camera]);
 
   const listState = useListStore((state) => state.lists[mediaListKey]);
   const items = listState?.items ?? [];
   const hasMore = listState?.hasMore ?? defaultListState.hasMore;
   const isLoading = listState?.isLoading ?? defaultListState.isLoading;
-  const { fetchInitial, loadMore, clearList } = useListStore();
+  const listError = listState?.error ?? defaultListState.error;
+  const { fetchInitial, loadMore, clearList, clearListsByPrefix } =
+    useListStore();
   const refreshKey = useTaskCompletionVersion(["scan", "process_media"]);
+  const [seenRefreshKey, setSeenRefreshKey] = useState(refreshKey);
+  const hasNewItems = refreshKey !== seenRefreshKey;
 
   const folderParam = viewMode === "folders" ? currentFolder ?? "" : null;
   const recursive = viewMode !== "folders";
 
+  // fetchInitial skips lists that already have content, so back-navigation
+  // restores the cached list (and scroll position) instantly.
   useEffect(() => {
-    const controller = new AbortController();
-    clearList(mediaListKey);
     fetchInitial(mediaListKey, () =>
-      getMediaList(null, sortOrder, tags, folderParam, recursive)
+      getMediaList(null, sortOrder, tags, folderParam, recursive, camera)
     );
-    return () => controller.abort();
   }, [
     mediaListKey,
     fetchInitial,
     sortOrder,
     tags,
-    clearList,
     folderParam,
     recursive,
-    refreshKey,
+    camera,
   ]);
 
   useEffect(() => {
-    const controller = new AbortController();
-    if (inView && hasMore && !isLoading) {
+    if (inView && hasMore && !isLoading && !listError) {
       loadMore(mediaListKey, (cursor) =>
-        getMediaList(cursor, sortOrder, tags, folderParam, recursive)
+        getMediaList(cursor, sortOrder, tags, folderParam, recursive, camera)
       ).catch(console.error);
     }
-    return () => controller.abort();
   }, [
     inView,
     hasMore,
     isLoading,
+    listError,
     loadMore,
     mediaListKey,
     sortOrder,
     tags,
     folderParam,
     recursive,
+    camera,
   ]);
 
   const loadFolders = useCallback(async () => {
@@ -142,11 +181,49 @@ export default function IndexPage() {
     } finally {
       setIsFolderLoading(false);
     }
-  }, [viewMode, currentFolder, refreshKey]);
+  }, [viewMode, currentFolder]);
 
   useEffect(() => {
     void loadFolders();
   }, [loadFolders]);
+
+  const refetchList = useCallback(() => {
+    clearList(mediaListKey);
+    fetchInitial(mediaListKey, () =>
+      getMediaList(null, sortOrder, tags, folderParam, recursive, camera)
+    );
+  }, [
+    clearList,
+    fetchInitial,
+    mediaListKey,
+    sortOrder,
+    tags,
+    folderParam,
+    recursive,
+    camera,
+  ]);
+
+  const handleRefresh = useCallback(() => {
+    setSeenRefreshKey(refreshKey);
+    // Clear every cached media list (both sort orders, folder views), not
+    // just the visible one, so switching sort later doesn't show stale data.
+    clearListsByPrefix("media-");
+    fetchInitial(mediaListKey, () =>
+      getMediaList(null, sortOrder, tags, folderParam, recursive, camera)
+    );
+    void loadFolders();
+  }, [
+    refreshKey,
+    clearListsByPrefix,
+    fetchInitial,
+    mediaListKey,
+    sortOrder,
+    tags,
+    folderParam,
+    recursive,
+    camera,
+    loadFolders,
+  ]);
 
   const handleSortMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
     setSortMenuAnchorEl(event.currentTarget);
@@ -154,8 +231,24 @@ export default function IndexPage() {
   const handleSortMenuClose = () => {
     setSortMenuAnchorEl(null);
   };
+
+  const handleCameraMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
+    setCameraMenuAnchorEl(event.currentTarget);
+    if (cameras.length === 0) {
+      getCameras()
+        .then(setCameras)
+        .catch((err) => console.warn("Failed to load cameras:", err));
+    }
+  };
+  const handleCameraSelect = (selected: CameraCount | null) => {
+    updateParams({
+      cam_make: selected?.make ?? null,
+      cam_model: selected?.model ?? null,
+    });
+    setCameraMenuAnchorEl(null);
+  };
   const handleSortChange = (newSortOrder: "newest" | "latest") => {
-    setSortOrder(newSortOrder);
+    updateParams({ sort: newSortOrder === "newest" ? null : newSortOrder });
     handleSortMenuClose();
   };
 
@@ -164,21 +257,30 @@ export default function IndexPage() {
     nextMode: "grid" | "folders" | null
   ) => {
     if (!nextMode) return;
-    setViewMode(nextMode);
+    updateParams({
+      view: nextMode === "grid" ? null : nextMode,
+      folder: nextMode === "grid" ? null : currentFolder,
+    });
     if (nextMode === "folders") {
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
   };
 
-  const handleFolderOpen = useCallback((path: string) => {
-    setCurrentFolder(path);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }, []);
+  const handleFolderOpen = useCallback(
+    (path: string) => {
+      updateParams({ folder: path });
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    },
+    [updateParams]
+  );
 
-  const handleBreadcrumbNavigate = useCallback((path: string | null) => {
-    setCurrentFolder(path);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }, []);
+  const handleBreadcrumbNavigate = useCallback(
+    (path: string | null) => {
+      updateParams({ folder: path });
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    },
+    [updateParams]
+  );
 
   const handleGoUp = useCallback(() => {
     if (!folderListing) return;
@@ -191,12 +293,13 @@ export default function IndexPage() {
   return (
     <Container
       maxWidth="xl"
-      sx={{ 
-        minHeight: "100vh", 
+      sx={{
+        minHeight: "100vh",
         py: 4,
         px: { xs: 2, sm: 3, md: 4 },
       }}
     >
+      <MemoriesRail />
       <Box
         display="flex"
         justifyContent="space-between"
@@ -256,21 +359,69 @@ export default function IndexPage() {
         </ToggleButtonGroup>
 
         <Box display="flex" alignItems="center" gap={1}>
-          <Typography variant="body2" color="text.secondary" sx={{ mr: 1, display: { xs: 'none', sm: 'block' } }}>
-             Sort by:
-          </Typography>
+          {hasNewItems && (
+            <Chip
+              color="primary"
+              variant="outlined"
+              icon={<RefreshIcon />}
+              label="New items — Refresh"
+              onClick={handleRefresh}
+            />
+          )}
+          <Button
+            onClick={handleCameraMenuOpen}
+            color="inherit"
+            startIcon={<CameraAltIcon />}
+            sx={{
+                bgcolor: camera ? 'action.selected' : 'action.hover',
+                borderRadius: 2,
+                px: 2,
+                color: camera ? 'primary.main' : 'text.primary'
+            }}
+          >
+            {camera ? camera.model || camera.make : "Camera"}
+          </Button>
+          <Menu
+            anchorEl={cameraMenuAnchorEl}
+            open={Boolean(cameraMenuAnchorEl)}
+            onClose={() => setCameraMenuAnchorEl(null)}
+            PaperProps={{
+                elevation: 2,
+                sx: { borderRadius: 2, mt: 1, minWidth: 220, maxHeight: 420 }
+            }}
+          >
+            <MenuItem
+              onClick={() => handleCameraSelect(null)}
+              selected={!camera}
+              sx={{ borderRadius: 1, mx: 1 }}
+            >
+              All cameras
+            </MenuItem>
+            {cameras.map((cam) => (
+              <MenuItem
+                key={`${cam.make}-${cam.model}`}
+                onClick={() => handleCameraSelect(cam)}
+                selected={
+                  camera?.make === cam.make && camera?.model === cam.model
+                }
+                sx={{ borderRadius: 1, mx: 1 }}
+              >
+                {[cam.make, cam.model].filter(Boolean).join(" ")} ({cam.count})
+              </MenuItem>
+            ))}
+          </Menu>
           <Button
             onClick={handleSortMenuOpen}
             color="inherit"
             startIcon={<SortIcon />}
-            sx={{ 
+            sx={{
                 bgcolor: 'action.hover',
                 borderRadius: 2,
                 px: 2,
                 color: 'text.primary'
             }}
           >
-            Sort by: {sortOrder === "newest" ? "Newest" : "Oldest"}
+            Sort by: {MEDIA_SORT_LABELS[sortOrder]}
           </Button>
         </Box>
         <Menu
@@ -287,14 +438,14 @@ export default function IndexPage() {
             selected={sortOrder === "newest"}
             sx={{ borderRadius: 1, mx: 1 }}
           >
-            Sort by Created At
+            {MEDIA_SORT_LABELS.newest}
           </MenuItem>
           <MenuItem
             onClick={() => handleSortChange("latest")}
             selected={sortOrder === "latest"}
             sx={{ borderRadius: 1, mx: 1 }}
           >
-            Sort by Inserted At
+            {MEDIA_SORT_LABELS.latest}
           </MenuItem>
         </Menu>
       </Box>
@@ -421,6 +572,20 @@ export default function IndexPage() {
         </>
       )}
 
+      {listError && (
+        <Alert
+          severity="error"
+          sx={{ mb: 2 }}
+          action={
+            <Button color="inherit" size="small" onClick={refetchList}>
+              Retry
+            </Button>
+          }
+        >
+          {listError}
+        </Alert>
+      )}
+
       {/* Loading Skeletons */}
       {items.length === 0 && isLoading && (
         <Box
@@ -445,7 +610,7 @@ export default function IndexPage() {
       )}
 
       {/* Empty State */}
-      {items.length === 0 && !isLoading && (
+      {items.length === 0 && !isLoading && !listError && (
         <EmptyState
           icon={<SearchOffIcon />}
           title="No media found"
@@ -474,7 +639,7 @@ export default function IndexPage() {
           <CircularProgress />
         </Box>
       )}
-      {hasMore && <Box ref={loaderRef} sx={{ height: "10px" }} />}
+      {hasMore && !listError && <Box ref={loaderRef} sx={{ height: "10px" }} />}
       {/* Scroll to Top FAB */}
       <Fade in={showScrollTop}>
         <Box

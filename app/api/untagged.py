@@ -4,12 +4,23 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import and_, func
 from sqlmodel import Session, select
 
+from app.api._resolve import resolve_media_action
 from app.database import get_session
-from app.models import Blacklist, Media, MediaTagLink
+from app.models import Media, MediaTagLink
 from app.schemas.untagged import UntaggedMediaItem, UntaggedPage, UntaggedResolveRequest
-from app.utils import delete_file, delete_record
 
 router = APIRouter()
+
+
+def _base_filter(media_type: str | None):
+    has_tag = select(MediaTagLink.media_id)
+    base_filter = Media.id.not_in(has_tag)
+
+    if media_type == "image":
+        base_filter = and_(base_filter, Media.duration.is_(None))
+    elif media_type == "video":
+        base_filter = and_(base_filter, Media.duration.isnot(None))
+    return base_filter
 
 
 @router.get("", response_model=UntaggedPage)
@@ -20,13 +31,7 @@ def get_untagged_media(
     media_type: str | None = Query(None, description="'image', 'video', or omit for all"),
 ):
     """Paginated list of media with no tags assigned, ordered newest-first."""
-    has_tag = select(MediaTagLink.media_id)
-    base_filter = Media.id.not_in(has_tag)
-
-    if media_type == "image":
-        base_filter = and_(base_filter, Media.duration.is_(None))
-    elif media_type == "video":
-        base_filter = and_(base_filter, Media.duration.isnot(None))
+    base_filter = _base_filter(media_type)
 
     total = session.exec(select(func.count(Media.id)).where(base_filter)).first() or 0
 
@@ -68,26 +73,11 @@ def resolve_untagged(
     request: UntaggedResolveRequest,
     session: Session = Depends(get_session),
 ):
-    if not request.media_ids:
-        raise HTTPException(status_code=400, detail="No media IDs provided.")
-
-    media_list = session.exec(
-        select(Media).where(Media.id.in_(request.media_ids))
-    ).all()
-
-    if not media_list:
-        raise HTTPException(status_code=404, detail="No matching media found.")
-
-    for media in media_list:
-        if request.action == "DELETE_FILES":
-            delete_file(session, media.id)
-        elif request.action == "DELETE_RECORDS":
-            delete_record(media.id, session)
-        elif request.action == "BLACKLIST_RECORDS":
-            session.add(Blacklist(path=media.path))
-            delete_record(media.id, session)
-        else:
-            raise HTTPException(status_code=400, detail=f"Unknown action: {request.action}")
-
-    session.commit()
-    return {"removed": len(media_list)}
+    removed = resolve_media_action(
+        session,
+        action=request.action,
+        media_ids=request.media_ids,
+        select_all=request.select_all,
+        base_filter=_base_filter(request.media_type),
+    )
+    return {"removed": removed}

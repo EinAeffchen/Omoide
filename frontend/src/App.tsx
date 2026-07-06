@@ -7,6 +7,7 @@ import { LocalizationProvider } from "@mui/x-date-pickers";
 import { AdapterDateFns } from "@mui/x-date-pickers/AdapterDateFns";
 import { TaskEventsProvider } from "./TaskEventsContext";
 import { SelectionProvider } from "./context/SelectionContext";
+import { ScrollToTop } from "./components/ScrollToTop";
 import { AppRoutes } from "./routes";
 
 export default function App() {
@@ -20,6 +21,7 @@ export default function App() {
           <CssBaseline />
           <SelectionProvider>
             <Router>
+              <ScrollToTop />
               <AppRoutes />
             </Router>
           </SelectionProvider>

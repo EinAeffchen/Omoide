@@ -3,6 +3,7 @@ import { useInView } from "react-intersection-observer";
 import {
   Typography,
   Box,
+  Button,
   CircularProgress,
   Alert,
   Paper,
@@ -17,6 +18,7 @@ import { getDuplicates, getDuplicateStats } from "../services/duplicates";
 import { DuplicateGroup } from "../components/DuplicateGroup"; // Our new smart component
 import { DuplicateStats } from "../types";
 import { useTaskCompletionVersion, useTaskEvents } from "../TaskEventsContext";
+import { formatBytes } from "../formatUtils";
 
 const DuplicatesPage: React.FC = () => {
   const [sortBy, setSortBy] = useState<"count" | "size">("count");
@@ -32,6 +34,7 @@ const DuplicatesPage: React.FC = () => {
     items: duplicateGroups,
     hasMore,
     isLoading,
+    error: listError,
   } = useListStore((state) => state.lists[listKey] || defaultListState);
   const { fetchInitial, loadMore, removeItem, clearList } = useListStore();
   const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
@@ -122,22 +125,12 @@ const DuplicatesPage: React.FC = () => {
       });
   };
 
-  const formatNumber = (value: number) => value.toLocaleString();
-
-  const formatBytes = (value: number) => {
-    if (!value) {
-      return "0 B";
-    }
-    const units = ["B", "KB", "MB", "GB", "TB", "PB"];
-    let remainder = value;
-    let unitIndex = 0;
-    while (remainder >= 1024 && unitIndex < units.length - 1) {
-      remainder /= 1024;
-      unitIndex += 1;
-    }
-    const decimals = remainder >= 10 || unitIndex === 0 ? 0 : 1;
-    return remainder.toFixed(decimals) + " " + units[unitIndex];
+  const handleRetryLoad = () => {
+    clearList(listKey);
+    fetchInitial(listKey, () => getDuplicates(null, sortBy, mt, 10, minCount));
   };
+
+  const formatNumber = (value: number) => value.toLocaleString();
 
   const typeLabel = (value: "image" | "video") =>
     value === "image" ? "Images" : "Videos";
@@ -336,6 +329,18 @@ const DuplicatesPage: React.FC = () => {
         <Box sx={{ display: "flex", justifyContent: "center", my: 4 }}>
           <CircularProgress />
         </Box>
+      ) : listError && duplicateGroups.length === 0 ? (
+        <Alert
+          severity="error"
+          sx={{ my: 4 }}
+          action={
+            <Button color="inherit" size="small" onClick={handleRetryLoad}>
+              Retry
+            </Button>
+          }
+        >
+          {listError}
+        </Alert>
       ) : duplicateGroups.length === 0 ? (
         <Typography align="center" sx={{ my: 4 }}>
           No duplicates found.

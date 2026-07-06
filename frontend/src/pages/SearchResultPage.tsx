@@ -1,5 +1,7 @@
 import {
+  Alert,
   Box,
+  Button,
   CircularProgress,
   Container,
   Typography,
@@ -30,7 +32,7 @@ const ITEMS_PER_PAGE = 30;
 const breakpointColumnsObj = {
   default: 5,
   1600: 4,
-  1200: 5,
+  1200: 3,
   900: 2,
   600: 2,
 };
@@ -58,6 +60,7 @@ interface MediaSearchState {
   nextCursor: string | null;
   isLoading: boolean;
   hasMore: boolean;
+  error: string | null;
 }
 
 const emptyMediaState: MediaSearchState = {
@@ -66,6 +69,7 @@ const emptyMediaState: MediaSearchState = {
   nextCursor: null,
   isLoading: false,
   hasMore: false,
+  error: null,
 };
 
 export default function SearchResultsPage() {
@@ -99,6 +103,7 @@ export default function SearchResultsPage() {
   // ---- local state for the media/combined category -----------------------
   const [mediaState, setMediaState] = useState<MediaSearchState>(emptyMediaState);
   const [orderBy, setOrderBy] = useState<"relevance" | "date">("relevance");
+  const [retryTick, setRetryTick] = useState(0);
   const activeQueryRef = useRef<string>("");
 
   // Initial load for the combined (media) category
@@ -108,38 +113,51 @@ export default function SearchResultsPage() {
       setMediaState(emptyMediaState);
       return;
     }
-    activeQueryRef.current = query;
+    const requestKey = `${query}|${orderBy}`;
+    activeQueryRef.current = requestKey;
     setMediaState({ ...emptyMediaState, isLoading: true });
     searchCombined(query, ITEMS_PER_PAGE, undefined, orderBy)
       .then((result) => {
-        if (activeQueryRef.current !== query) return;
+        if (activeQueryRef.current !== requestKey) return;
         setMediaState({
           persons: result.persons ?? [],
           media: result.media ?? [],
           nextCursor: result.next_cursor,
           isLoading: false,
           hasMore: result.next_cursor !== null,
+          error: null,
         });
       })
       .catch(() => {
-        if (activeQueryRef.current !== query) return;
-        setMediaState({ ...emptyMediaState });
+        if (activeQueryRef.current !== requestKey) return;
+        setMediaState({
+          ...emptyMediaState,
+          error: "Search failed. Please try again.",
+        });
       });
-  }, [category, query, location.key, isImageSearch, orderBy]);
+  }, [category, query, location.key, isImageSearch, orderBy, retryTick]);
 
   const loadMoreMedia = useCallback(() => {
     if (!mediaState.hasMore || mediaState.isLoading || !mediaState.nextCursor) return;
     const cursor = mediaState.nextCursor;
+    const requestKey = `${query}|${orderBy}`;
     setMediaState((prev) => ({ ...prev, isLoading: true }));
-    searchCombined(query, ITEMS_PER_PAGE, cursor, orderBy).then((result) => {
-      setMediaState((prev) => ({
-        ...prev,
-        media: [...prev.media, ...(result.media ?? [])],
-        nextCursor: result.next_cursor,
-        isLoading: false,
-        hasMore: result.next_cursor !== null,
-      }));
-    });
+    searchCombined(query, ITEMS_PER_PAGE, cursor, orderBy)
+      .then((result) => {
+        if (activeQueryRef.current !== requestKey) return;
+        setMediaState((prev) => ({
+          ...prev,
+          media: [...prev.media, ...(result.media ?? [])],
+          nextCursor: result.next_cursor,
+          isLoading: false,
+          hasMore: result.next_cursor !== null,
+          error: null,
+        }));
+      })
+      .catch(() => {
+        if (activeQueryRef.current !== requestKey) return;
+        setMediaState((prev) => ({ ...prev, isLoading: false }));
+      });
   }, [mediaState.hasMore, mediaState.isLoading, mediaState.nextCursor, query, orderBy]);
 
   // ---- list-store fetch for tag / scene ----------------------------------
@@ -294,6 +312,24 @@ export default function SearchResultsPage() {
         </Box>
       )}
 
+      {category === "media" && mediaState.error && (
+        <Alert
+          severity="error"
+          sx={{ mb: 3 }}
+          action={
+            <Button
+              color="inherit"
+              size="small"
+              onClick={() => setRetryTick((tick) => tick + 1)}
+            >
+              Retry
+            </Button>
+          }
+        >
+          {mediaState.error}
+        </Alert>
+      )}
+
       {showModelWarmup && (
         <Box sx={{ mb: 3, display: "flex", alignItems: "center", gap: 2, color: "text.secondary" }}>
           <CircularProgress size={20} />
@@ -346,9 +382,11 @@ export default function SearchResultsPage() {
         </Box>
       )}
       {hasMore && !isLoading && <Box ref={loaderRef} sx={{ height: "1px" }} />}
-      {!isLoading && visibleItems.length === 0 && (
-        <Typography sx={{ mt: 4 }}>No results found.</Typography>
-      )}
+      {!isLoading &&
+        visibleItems.length === 0 &&
+        !(category === "media" && mediaState.error) && (
+          <Typography sx={{ mt: 4 }}>No results found.</Typography>
+        )}
     </Container>
   );
 }

@@ -153,6 +153,8 @@ export default function MediaCard({
       clearTimeout(hoverTimeoutRef.current);
     }
     setIsPlayerActive(false);
+    setPlayerUrl(null);
+    hasInitializedPlayerRef.current = false;
   };
 
   const handleDragStart = (event: React.DragEvent<HTMLElement>) => {
@@ -252,8 +254,8 @@ export default function MediaCard({
               }}
             />
 
-            {/* The player is always in the DOM for videos, but only receives its URL and plays when active */}
-            {isVideo && (
+            {/* The player is only mounted while hovering a video card */}
+            {isVideo && playerUrl && (
               <Box
                 sx={{
                   width: "100%",
@@ -265,7 +267,7 @@ export default function MediaCard({
                 }}
               >
                 <ReactPlayer
-                  url={playerUrl ?? undefined}
+                  url={playerUrl}
                   playing={isPlayerActive}
                   loop
                   muted
@@ -273,7 +275,12 @@ export default function MediaCard({
                   height="100%"
                   playsinline
                   config={{
-                    file: { attributes: { crossOrigin: "anonymous" } },
+                    file: {
+                      attributes: {
+                        crossOrigin: "anonymous",
+                        preload: "metadata",
+                      },
+                    },
                   }}
                   style={{ position: "absolute", top: 0, left: 0 }}
                 />

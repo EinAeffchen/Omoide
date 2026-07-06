@@ -1,8 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams, Link as RouterLink } from "react-router-dom";
+import { useInView } from "react-intersection-observer";
 import {
-  Container,
+  Alert,
   Box,
+  Button,
+  CircularProgress,
+  Container,
   Typography,
   Grid,
   ToggleButton,
@@ -12,6 +16,7 @@ import MediaCard from "../components/MediaCard";
 import PersonCard from "../components/PersonCard";
 import { Tag, Media, Person } from "../types";
 import { getTag } from "../services/tag";
+import { getMediaList } from "../services/media";
 import { useListStore, defaultListState } from "../stores/useListStore";
 
 const BG_SECTION = "background.default";
@@ -23,23 +28,56 @@ type MediaFilter = "all" | "image" | "video";
 export default function TagDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [tag, setTag] = useState<Tag | null>(null);
+  const [tagError, setTagError] = useState<string | null>(null);
+  const [retryTick, setRetryTick] = useState(0);
   const [mediaFilter, setMediaFilter] = useState<MediaFilter>("all");
-
-  const listKey = useMemo(() => `tag-${id}-media`, [id]);
-  const { items: mediaItems } = useListStore(
-    (state) => state.lists[listKey] || defaultListState
-  );
-  const { fetchInitial, clearList } = useListStore();
+  const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
 
   useEffect(() => {
     if (!id) return;
-    clearList(listKey);
-    fetchInitial(listKey, async () => {
-      const tagData = await getTag(id);
-      setTag(tagData);
-      return { items: tagData.media ?? [], next_cursor: null };
-    });
-  }, [id, listKey, fetchInitial, clearList]);
+    let cancelled = false;
+    setTag(null);
+    setTagError(null);
+    getTag(id)
+      .then((tagData) => {
+        if (!cancelled) setTag(tagData);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setTagError(
+            error instanceof Error ? error.message : "Failed to load tag"
+          );
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, retryTick]);
+
+  const tagName = tag?.name ?? null;
+  const listKey = tagName ? `tag-media-${tagName}` : "";
+  const listState = useListStore((state) =>
+    listKey ? state.lists[listKey] : undefined
+  );
+  const mediaItems = listState?.items ?? defaultListState.items;
+  const hasMore = listState?.hasMore ?? defaultListState.hasMore;
+  const isLoading = listState?.isLoading ?? defaultListState.isLoading;
+  const listError = listState?.error ?? defaultListState.error;
+  const { fetchInitial, loadMore, clearList } = useListStore();
+
+  useEffect(() => {
+    if (!tagName || !listKey) return;
+    fetchInitial(listKey, () => getMediaList(null, "newest", [tagName]));
+  }, [tagName, listKey, fetchInitial]);
+
+  useEffect(() => {
+    if (!tagName || !listKey) return;
+    if (inView && hasMore && !isLoading && !listError) {
+      loadMore(listKey, (cursor) =>
+        getMediaList(cursor ?? null, "newest", [tagName])
+      );
+    }
+  }, [inView, hasMore, isLoading, listError, listKey, loadMore, tagName]);
 
   const filteredMediaItems = useMemo(() => {
     const items = mediaItems as Media[];
@@ -54,10 +92,27 @@ export default function TagDetailPage() {
     [filteredMediaItems]
   );
 
+  if (tagError) {
+    return (
+      <Box
+        p={4}
+        display="flex"
+        flexDirection="column"
+        alignItems="center"
+        gap={2}
+      >
+        <Alert severity="error">{tagError}</Alert>
+        <Button variant="contained" onClick={() => setRetryTick((t) => t + 1)}>
+          Retry
+        </Button>
+      </Box>
+    );
+  }
+
   if (!tag) {
     return (
       <Box p={4} textAlign="center">
-        <Typography color="text.secondary">Loading…</Typography>
+        <CircularProgress />
       </Box>
     );
   }
@@ -99,6 +154,28 @@ export default function TagDetailPage() {
             <ToggleButton value="video">Videos</ToggleButton>
           </ToggleButtonGroup>
         </Box>
+        {listError && (
+          <Alert
+            severity="error"
+            sx={{ mb: 2 }}
+            action={
+              <Button
+                color="inherit"
+                size="small"
+                onClick={() => {
+                  clearList(listKey);
+                  fetchInitial(listKey, () =>
+                    getMediaList(null, "newest", [tag.name])
+                  );
+                }}
+              >
+                Retry
+              </Button>
+            }
+          >
+            {listError}
+          </Alert>
+        )}
         <Grid container spacing={2}>
           {filteredMediaItems.map((m: Media) => (
             <Grid key={m.id} size={{ xs: 12, sm: 6, md: 4, lg: 3 }}>
@@ -106,6 +183,19 @@ export default function TagDetailPage() {
             </Grid>
           ))}
         </Grid>
+        {isLoading && (
+          <Box textAlign="center" py={3}>
+            <CircularProgress />
+          </Box>
+        )}
+        {!isLoading && !listError && filteredMediaItems.length === 0 && (
+          <Typography color="text.secondary" sx={{ py: 2 }}>
+            No media with this tag.
+          </Typography>
+        )}
+        {hasMore && !listError && (
+          <Box ref={loaderRef} sx={{ height: "10px" }} />
+        )}
       </Box>
 
       {/* People Section */}

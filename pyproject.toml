@@ -35,6 +35,7 @@ dependencies = [
     "pillow-heif>=0.22.0",
     "torchvision==0.27.1",
     "transformers==5.12.1",
+    "reverse-geocoder>=1.5.1",
 ]
 
 [tool.uv.sources]

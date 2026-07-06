@@ -20,14 +20,20 @@ export const getShortVideos = async (options: ShortVideoQuery = {}): Promise<Sho
   return response.json();
 };
 
+export interface ShortVideoResolvePayload {
+  action: ShortVideoResolveAction;
+  media_ids?: number[];
+  select_all?: boolean;
+  max_duration?: number;
+}
+
 export const resolveShortVideos = async (
-  mediaIds: number[],
-  action: ShortVideoResolveAction
+  payload: ShortVideoResolvePayload
 ): Promise<{ removed: number }> => {
   const response = await fetch(`${API}/api/shortvideos/resolve`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ media_ids: mediaIds, action }),
+    body: JSON.stringify(payload),
   });
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));

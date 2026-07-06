@@ -1,31 +1,55 @@
 import React, { useEffect, useState, useMemo } from "react";
-import { Box, Typography } from "@mui/material";
+import { Box, CircularProgress, Typography } from "@mui/material";
 import { Media } from "../types";
 import MediaCard from "./MediaCard";
 import { getSimilarMedia } from "../services/media";
 
 export default function SimilarContent({ mediaId }: { mediaId: number }) {
   const [similar, setSimilar] = useState<Media[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
   const similarIds = useMemo(() => similar.map((item) => item.id), [similar]);
 
   useEffect(() => {
     if (!mediaId) return;
     const controller = new AbortController();
+    const { signal } = controller;
 
-    getSimilarMedia(mediaId)
-      .then(setSimilar)
+    // Reset stale results from the previously shown media
+    setSimilar([]);
+    setIsLoading(true);
+    getSimilarMedia(mediaId, signal)
+      .then((items) => {
+        if (!signal.aborted) setSimilar(items);
+      })
       .catch((err) => {
         // When the fetch is aborted, it throws an error. We can safely ignore it.
-        if (err.name !== "AbortError") {
+        if (!signal.aborted && err.name !== "AbortError") {
           console.error(err);
         }
+      })
+      .finally(() => {
+        if (!signal.aborted) setIsLoading(false);
       });
     return () => {
       controller.abort();
     };
   }, [mediaId]);
 
-  if (similar.length === 0) return null;
+  if (isLoading) {
+    return (
+      <Box display="flex" justifyContent="center" py={3}>
+        <CircularProgress size={24} />
+      </Box>
+    );
+  }
+
+  if (similar.length === 0) {
+    return (
+      <Typography color="text.secondary" sx={{ py: 2 }}>
+        No similar content found.
+      </Typography>
+    );
+  }
 
   return (
     <Box>

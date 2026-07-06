@@ -20,14 +20,20 @@ export const getNoExifDateMedia = async (options: NoExifDateQuery = {}): Promise
   return response.json();
 };
 
+export interface NoExifDateResolvePayload {
+  action: NoExifDateResolveAction;
+  media_ids?: number[];
+  select_all?: boolean;
+  media_type?: "image" | "video";
+}
+
 export const resolveNoExifDate = async (
-  mediaIds: number[],
-  action: NoExifDateResolveAction
+  payload: NoExifDateResolvePayload
 ): Promise<{ removed: number }> => {
   const response = await fetch(`${API}/api/noexifdate/resolve`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ media_ids: mediaIds, action }),
+    body: JSON.stringify(payload),
   });
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));

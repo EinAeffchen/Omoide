@@ -1,4 +1,10 @@
-import React, { createContext, useCallback, useContext, useState } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useState,
+} from "react";
 
 interface SelectionContextValue {
   isSelecting: boolean;
@@ -45,10 +51,13 @@ export const SelectionProvider: React.FC<{ children: React.ReactNode }> = ({
     setIsSelecting(false);
   }, []);
 
+  const value = useMemo(
+    () => ({ isSelecting, selectedIds, toggleSelecting, toggle, clear }),
+    [isSelecting, selectedIds, toggleSelecting, toggle, clear]
+  );
+
   return (
-    <SelectionContext.Provider
-      value={{ isSelecting, selectedIds, toggleSelecting, toggle, clear }}
-    >
+    <SelectionContext.Provider value={value}>
       {children}
     </SelectionContext.Provider>
   );

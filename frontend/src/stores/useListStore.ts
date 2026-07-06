@@ -28,6 +28,7 @@ interface ListStoreState {
   removeItem: (listKey: string, itemId: number | string) => void;
   removeItems: (listKey: string, itemIds: (number | string)[]) => void;
   clearList: (listKey: string) => void;
+  clearListsByPrefix: (prefix: string) => void;
   addItem: <T>(listKey: string, item: T, position?: "start" | "end") => void;
   updateItem: <T extends { id: any }>(listKey: string, item: T) => void;
 }
@@ -195,6 +196,17 @@ export const useListStore = create<ListStoreState>((set, get) => ({
     set((state) => {
       const newLists = { ...state.lists };
       delete newLists[listKey];
+      return { lists: newLists };
+    });
+  },
+  // Drops every cached list whose key starts with the prefix, so stale
+  // variants (e.g. the other sort order) refetch on their next mount.
+  clearListsByPrefix: (prefix: string) => {
+    set((state) => {
+      const newLists: Record<string, ListState<any>> = {};
+      for (const [key, value] of Object.entries(state.lists)) {
+        if (!key.startsWith(prefix)) newLists[key] = value;
+      }
       return { lists: newLists };
     });
   },

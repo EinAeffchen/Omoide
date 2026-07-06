@@ -142,12 +142,88 @@ export type TaskType =
   | "cluster_persons"
   | "scan"
   | "find_duplicates"
+  | "generate_hashes"
   | "compute_blur_scores"
   | "run_processor"
   | "run_processor_for_media"
   | "auto_tag_custom"
-  | "backfill_face_timestamps";
+  | "backfill_face_timestamps"
+  | "build_events"
+  | "geocode_places";
 export type TaskStatus = "pending" | "running" | "completed" | "cancelled";
+
+export interface MemoryGroup {
+  year: number;
+  items: Media[];
+}
+
+export interface HighlightYear {
+  year: number;
+  count: number;
+}
+
+export interface CameraCount {
+  make?: string | null;
+  model?: string | null;
+  count: number;
+}
+
+export interface LibraryStats {
+  totals: {
+    media: number;
+    images: number;
+    videos: number;
+    favorites: number;
+    size_bytes: number;
+    video_seconds: number;
+    with_gps: number;
+    persons: number;
+    faces: number;
+    tags: number;
+    albums: number;
+    events: number;
+  };
+  per_year: { year: number; images: number; videos: number }[];
+  per_month: { month: string; count: number }[];
+  cameras: CameraCount[];
+  top_tags: { id: number; name: string; count: number }[];
+  top_people: { id: number; name?: string | null; count: number }[];
+}
+
+export interface Album {
+  id: number;
+  name: string;
+  description?: string | null;
+  created_at: string;
+  media_count: number;
+  cover_thumbnail?: string | null;
+}
+
+export interface EventItem {
+  id: number;
+  title?: string | null;
+  start_at: string;
+  end_at: string;
+  media_count: number;
+  cover_thumbnail?: string | null;
+}
+
+export interface EventPage {
+  items: EventItem[];
+  next_cursor: string | null;
+}
+
+export interface PlaceCity {
+  city: string;
+  count: number;
+  cover_thumbnail?: string | null;
+}
+
+export interface PlaceCountry {
+  country: string;
+  count: number;
+  cities: PlaceCity[];
+}
 
 export interface Task {
   id: string;

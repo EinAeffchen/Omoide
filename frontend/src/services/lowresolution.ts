@@ -22,14 +22,21 @@ export const getLowResMedia = async (options: LowResQuery = {}): Promise<LowResP
   return response.json();
 };
 
+export interface LowResResolvePayload {
+  action: LowResResolveAction;
+  media_ids?: number[];
+  select_all?: boolean;
+  max_pixels?: number;
+  media_type?: "image" | "video";
+}
+
 export const resolveLowRes = async (
-  mediaIds: number[],
-  action: LowResResolveAction
+  payload: LowResResolvePayload
 ): Promise<{ removed: number }> => {
   const response = await fetch(`${API}/api/lowresolution/resolve`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ media_ids: mediaIds, action }),
+    body: JSON.stringify(payload),
   });
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));

@@ -3,6 +3,7 @@ import math
 import os
 import subprocess
 import sys
+import threading
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -16,13 +17,18 @@ import imagehash
 import numpy as np
 import piexif
 import pillow_heif
+from dateutil import parser as date_parser
 from fastapi import HTTPException
-from PIL import Image, ImageOps, UnidentifiedImageError
-from scenedetect import FrameTimecode, HistogramDetector, detect
+from PIL import ExifTags, Image, ImageOps, UnidentifiedImageError
+from scenedetect import (
+    FrameTimecode,
+    HistogramDetector,
+    SceneManager,
+    open_video,
+)
 from scenedetect.video_splitter import TimecodePair
 from sqlalchemy import delete, distinct, func, or_, text, union_all
 from sqlmodel import Session, delete, select, text, update
-from tqdm import tqdm
 
 from app.accelerators import get_ffmpeg_accel_config
 from app.config import settings
@@ -30,7 +36,12 @@ from app.database import safe_commit
 from app.ffmpeg import ensure_ffmpeg_available
 from app.logger import logger
 from app.models import (
+    Album,
+    AlbumMediaLink,
+    DuplicateIgnore,
     DuplicateMedia,
+    Event,
+    EventMediaLink,
     ExifData,
     Face,
     Media,
@@ -211,30 +222,85 @@ def auto_select_profile_face(session: Session, person_id: int) -> int | None:
     return best_face_id
 
 
-def get_image_taken_date(img_path: Path | None = None) -> datetime:
-    # fallback use creation time
+def _read_exif_datetime(img: Image.Image) -> str | None:
+    """Read the EXIF taken date from an open image.
+
+    Uses the modern Exif API, which works for every PIL plugin (including
+    pillow_heif's HEIC/HEIF images); the legacy _getexif() only exists on the
+    JPEG/TIFF plugins. Prefers DateTimeOriginal, then DateTime.
+    """
+    try:
+        exif = img.getexif()
+        value = exif.get_ifd(ExifTags.IFD.Exif).get(
+            ExifTags.Base.DateTimeOriginal
+        ) or exif.get(ExifTags.Base.DateTime)
+        if value:
+            return str(value)
+    except Exception:
+        pass
+    try:
+        legacy = img._getexif()
+    except (AttributeError, SyntaxError):
+        legacy = None
+    if legacy and (value := legacy.get(36867)):
+        return str(value)
+    return None
+
+
+def _exif_taken_date(img: Image.Image, img_path: Path) -> datetime:
+    """Extract the EXIF taken date from an already-open image.
+
+    Falls back to the file creation time when no usable EXIF date exists.
+    """
     alt_time = datetime.fromtimestamp(img_path.stat().st_ctime)
-
-    try:
-        img = Image.open(str(img_path))
-    except UnidentifiedImageError:
-        return alt_time
-
-    format_code = "%Y:%m:%d %H:%M:%S"
-    try:
-        exif = img._getexif()
-    except AttributeError:
-        exif = None
-    except SyntaxError:
-        exif = None
-    if exif and (creation_date := exif.get(36867)):
+    creation_date = _read_exif_datetime(img)
+    if creation_date:
         try:
-            return datetime.strptime(creation_date, format_code)
+            return datetime.strptime(creation_date, "%Y:%m:%d %H:%M:%S")
         except ValueError:
             logger.debug(
                 "Received invalid time for %s: %s", img_path, creation_date
             )
     return alt_time
+
+
+def get_image_taken_date(img_path: Path | None = None) -> datetime:
+    try:
+        with Image.open(str(img_path)) as img:
+            return _exif_taken_date(img, img_path)
+    except UnidentifiedImageError:
+        # fallback use creation time
+        return datetime.fromtimestamp(img_path.stat().st_ctime)
+
+
+def _parse_video_creation_time(value: str) -> datetime | None:
+    """Parse a container creation_time tag into a naive local datetime.
+
+    The tag is usually an ISO timestamp in UTC; convert it to local time and
+    drop the tzinfo so it compares consistently with EXIF dates. Epoch-era
+    placeholder dates written by some encoders are treated as missing.
+    """
+    try:
+        parsed = date_parser.parse(value)
+    except (ValueError, OverflowError):
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone().replace(tzinfo=None)
+    if parsed.year < 1980:
+        return None
+    return parsed
+
+
+def get_video_taken_date(video_path: Path) -> datetime | None:
+    """Read the recording date from a video's container metadata."""
+    probe = _ffprobe_json(video_path)
+    if not probe:
+        return None
+    tags = probe.get("format", {}).get("tags") or {}
+    creation = tags.get("creation_time")
+    if not creation:
+        return None
+    return _parse_video_creation_time(str(creation))
 
 
 def _ffprobe_json(path: Path, timeout: int = 15) -> dict | None:
@@ -292,24 +358,48 @@ def _ffprobe_json(path: Path, timeout: int = 15) -> dict | None:
     return None
 
 
-def process_file(filepath: Path) -> tuple[Media | None, str | None]:
+def _open_primary_image(filepath: Path) -> Image.Image:
+    """Open an image, falling back to the primary HEIF frame for containers
+    that fail default decoding (e.g. spatial HEICs with depth images)."""
+    try:
+        return Image.open(filepath)
+    except UnidentifiedImageError:
+        raise
+    except Exception:
+        if filepath.suffix.lower() in (".heic", ".heif"):
+            heif_file = pillow_heif.open_heif(filepath)
+            return heif_file[0].to_pillow()
+        raise
+
+
+def process_file(
+    filepath: Path,
+) -> tuple[Media | None, Image.Image | None, str | None]:
     """Reads metadata from the file and prepares a Media record.
 
+    Images are decoded exactly once: dimensions, EXIF taken date, perceptual
+    hash and a resized thumbnail image all come from the same decode. The
+    prepared thumbnail (second element, images only) still needs to be saved
+    via save_thumbnail_image() once the record has an id.
+
     Adds timeouts to external probing to avoid hangs and returns a tuple of
-    (Media | None, error message | None).
+    (Media | None, thumbnail image | None, error message | None).
     """
     try:
         try:
             size = os.path.getsize(filepath)
         except OSError as exc:
             logger.warning("Could not stat %s: %s", filepath, exc)
-            return None, f"Unable to read file information: {exc}"
+            return None, None, f"Unable to read file information: {exc}"
 
         suffix = filepath.suffix.lower()
 
         duration: float | None = None
         width: int | None = None
         height: int | None = None
+        phash: str | None = None
+        taken_at: datetime | None = None
+        thumb_img: Image.Image | None = None
 
         if suffix in settings.scan.VIDEO_SUFFIXES:
             # Prefer ffprobe with a timeout for videos
@@ -333,6 +423,10 @@ def process_file(filepath: Path) -> tuple[Media | None, str | None]:
                 except Exception:
                     width = width or None
                     height = height or None
+                tags = probe.get("format", {}).get("tags") or {}
+                creation = tags.get("creation_time")
+                if creation:
+                    taken_at = _parse_video_creation_time(str(creation))
             else:
                 logger.warning(
                     "Skipping video probe metadata for %s", filepath
@@ -340,16 +434,35 @@ def process_file(filepath: Path) -> tuple[Media | None, str | None]:
                 # Preserve video classification even if metadata probe fails.
                 duration = 0.0
         else:
-            # Images: avoid ffprobe entirely; use PIL for dimensions if possible
+            # Images: avoid ffprobe entirely; decode once with PIL and derive
+            # dimensions, EXIF date, phash and the thumbnail from that decode.
             try:
-                with Image.open(filepath) as im:
+                with _open_primary_image(filepath) as im:
                     width, height = im.size
+                    taken_at = _exif_taken_date(im, filepath)
+                    try:
+                        phash = str(imagehash.phash(im))
+                    except Exception:
+                        logger.warning(
+                            "Failed to generate perceptual hash for %s",
+                            filepath,
+                            exc_info=True,
+                        )
+                    thumb_img = _apply_thumbnail_orientation(im, filepath)
+                    if thumb_img is im:
+                        thumb_img = im.copy()
+                    thumb_img.thumbnail((360, -1))
             except UnidentifiedImageError:
+                thumb_img = None
                 logger.warning("Skipping %s, not an image!", filepath)
             except (OSError, ValueError) as exc:
+                thumb_img = None
                 logger.warning(
                     "Image %s could not be opened: %s", filepath, exc
                 )
+
+        if taken_at is None:
+            taken_at = datetime.fromtimestamp(filepath.stat().st_ctime)
 
         media = Media(
             path=str(filepath),
@@ -360,18 +473,16 @@ def process_file(filepath: Path) -> tuple[Media | None, str | None]:
             height=height,
             faces_extracted=False,
             embeddings_created=False,
-            created_at=get_image_taken_date(img_path=filepath),
+            created_at=taken_at,
             embedding=None,
-            phash=None,
+            phash=phash,
         )
-        if media.duration is None:
-            media.phash = generate_perceptual_hash(media, type="image")
-        else:
+        if media.duration is not None:
             media.phash = generate_perceptual_hash(media, type="video")
-        return media, None
+        return media, thumb_img, None
     except Exception as exc:  # pragma: no cover - defensive safeguard
         logger.exception("Failed to process file %s: %s", filepath, exc)
-        return None, str(exc)
+        return None, None, str(exc)
 
 
 def to_posix_str(s: Path) -> str:
@@ -383,22 +494,38 @@ def to_posix_str(s: Path) -> str:
     return PurePosixPath(s).as_posix()
 
 
-def get_thumb_folder(path: Path) -> Path:
+# Cache of (current folder, file count) per thumbnail base dir so repeated
+# calls (e.g. 30k+ during a scan) don't re-list the directory every time.
+_thumb_folder_lock = threading.Lock()
+_thumb_folder_cache: dict[str, tuple[Path, int]] = {}
+
+
+def _load_thumb_folder_state(path: Path) -> tuple[Path, int]:
     path.mkdir(parents=True, exist_ok=True)
     folders = [folder for folder in path.iterdir() if folder.is_dir()]
     if not folders:
         new_folder = path / "1"
-        new_folder.mkdir()
-        return new_folder
-    else:
-        folders.sort(key=lambda p: int(p.name))
-        latest = folders[-1]
-        file_count = sum(1 for file in latest.iterdir() if file.is_file())
-        if file_count >= settings.general.thumb_dir_folder_size:
-            new_folder = path / str(int(latest.name) + 1)
-            new_folder.mkdir(exist_ok=True)
-            return new_folder
-        return latest
+        new_folder.mkdir(exist_ok=True)
+        return new_folder, 0
+    folders.sort(key=lambda p: int(p.name))
+    latest = folders[-1]
+    file_count = sum(1 for file in latest.iterdir() if file.is_file())
+    return latest, file_count
+
+
+def get_thumb_folder(path: Path) -> Path:
+    key = os.path.normcase(os.path.abspath(os.fspath(path)))
+    with _thumb_folder_lock:
+        state = _thumb_folder_cache.get(key)
+        if state is None or not state[0].is_dir():
+            state = _load_thumb_folder_state(path)
+        folder, count = state
+        if count >= settings.general.thumb_dir_folder_size:
+            folder = path / str(int(folder.name) + 1)
+            folder.mkdir(exist_ok=True)
+            count = 0
+        _thumb_folder_cache[key] = (folder, count + 1)
+        return folder
 
 
 def _apply_thumbnail_orientation(
@@ -542,12 +669,35 @@ def generate_perceptual_hash(
 ) -> str | None:
     try:
         if type == "image":
-            img = Image.open(media.path)
-            return str(imagehash.phash(img))
+            with Image.open(media.path) as img:
+                return str(imagehash.phash(img))
         if type == "video":
             return _generate_video_perceptual_hash(media)
     except Exception:
-        logger.warning("Failed to generate perceptual hash for %s", media.path)
+        logger.warning(
+            "Failed to generate perceptual hash for %s",
+            media.path,
+            exc_info=True,
+        )
+
+
+def save_thumbnail_image(
+    media: Media, img: Image.Image
+) -> tuple[str | None, str | None]:
+    """Persist an already-prepared thumbnail image for a media record."""
+    thumb_folder = get_thumb_folder(settings.general.thumb_dir / "media")
+    thumb_path = thumb_folder / f"{media.id}.jpg"
+    try:
+        img.convert("RGB").save(thumb_path, format="JPEG")
+    except Exception as exc:
+        logger.warning(
+            "Failed to save thumbnail for %s: %s", media.path, exc
+        )
+        return None, f"Unable to save thumbnail: {exc}"
+    return (
+        to_posix_str(thumb_path.relative_to(settings.general.thumb_dir)),
+        None,
+    )
 
 
 def generate_thumbnail(media: Media) -> tuple[str | None, str | None]:
@@ -761,41 +911,18 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
 def _split_by_scenes(
     media: Media, scenes: Iterable[TimecodePair]
 ) -> list[tuple[Scene, cv2.typing.MatLike]]:
-    scene_objs = []
-    for i, (start_time, end_time) in tqdm(
-        enumerate(scenes), total=len(scenes)
-    ):
-        thumb_dir = get_thumb_folder(settings.general.thumb_dir / "scenes")
-        thumbnail_path = thumb_dir / f"{i}_{Path(media.path).stem}.jpg"
-        ffmpeg.input(media.path, ss=start_time.get_seconds()).filter(
-            "scale", 480, -1
-        ).output(str(thumbnail_path), vframes=1).run(
-            quiet=True, overwrite_output=True
-        )
-        out, _ = (
-            ffmpeg
-            .input(media.path, ss=start_time.get_seconds())
-            .output(
-                "pipe:",  # send to stdout
-                vframes=1,  # just one frame
-                format="image2",  # raw image container
-                vcodec="mjpeg",  # JPEG in memory
-            )
-            .run(capture_stdout=True, quiet=True)
-        )
-        arr = np.frombuffer(out, np.uint8)
-        frame_bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-        frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        scene = Scene(
-            media_id=media.id,
-            start_time=start_time,
-            end_time=end_time,
-            thumbnail_path=to_posix_str(
-                thumbnail_path.relative_to(settings.general.thumb_dir)
-            ),
-        )
-        scene_objs.append((scene, frame_rgb))
-    return scene_objs
+    """Extract one frame per detected scene.
+
+    Detected scenes are contiguous (each scene ends where the next begins),
+    so a single parallel extraction pass over the start timestamps rebuilds
+    the same ranges — one decode per scene instead of two serial ffmpeg runs.
+    """
+    scene_list = list(scenes)
+    if not scene_list:
+        return []
+    timestamps = [float(start.get_seconds()) for start, _ in scene_list]
+    duration = float(scene_list[-1][1].get_seconds())
+    return _extract_frames_at(media, timestamps, duration)
 
 
 def _extract_frame_worker(
@@ -806,9 +933,7 @@ def _extract_frame_worker(
     idx: int,
     timestamps: list[float],
     duration: float,
-    thumb_dir: Path,
     media_id: int,
-    media_path: str,
 ) -> tuple[int, tuple | None]:
     """Extract one video frame at timestamp *ts* and write its thumbnail.
 
@@ -875,6 +1000,7 @@ def _extract_frame_worker(
     else:
         thumb_bgr = frame_bgr
 
+    thumb_dir = get_thumb_folder(settings.general.thumb_dir / "scenes")
     thumb_file = thumb_dir / f"{media_id}_frame_{idx}.jpg"
     cv2.imwrite(str(thumb_file), thumb_bgr)
 
@@ -973,8 +1099,13 @@ def extract_scene_frame_and_thumbnail(
     return thumb_relative, frame_rgb
 
 
-def _split_by_frames(media: Media) -> list[tuple[Scene, cv2.typing.MatLike]]:
-    logger.info("Splitting based on frames via ffmpeg")
+def _extract_frames_at(
+    media: Media, timestamps: list[float], duration: float
+) -> list[tuple[Scene, cv2.typing.MatLike]]:
+    """Extract one frame + thumbnail per timestamp and build contiguous
+    Scene entries (each scene ends where the next one starts)."""
+    if not timestamps:
+        return []
     video_path = Path(media.path)
     if not video_path.exists():
         logger.warning("Video file missing: %s", video_path)
@@ -987,29 +1118,6 @@ def _split_by_frames(media: Media) -> list[tuple[Scene, cv2.typing.MatLike]]:
         )
         return []
     accel = get_ffmpeg_accel_config(False)
-
-    duration = media.duration or 0.0
-    if not duration:
-        probe = _ffprobe_json(video_path)
-        if probe:
-            try:
-                duration = float(probe.get("format", {}).get("duration", 0.0))
-            except Exception:
-                duration = 0.0
-
-    max_frames = max(1, int(settings.video.max_frames_per_video))
-    timestamps: list[float] = []
-    if duration and duration > 0:
-        step = duration / max_frames
-        min_step = 2
-        step = max(step, min_step)
-        timestamps = [max(0.0, i * step) for i in range(max_frames)]
-        if timestamps and timestamps[-1] + 1.0 < duration:
-            timestamps.append(duration)
-    else:
-        timestamps = [float(i) for i in range(max_frames)]
-
-    thumb_dir = get_thumb_folder(settings.general.thumb_dir / "scenes")
 
     # Run ffmpeg subprocesses in parallel — each seeks independently so wall
     # time drops from O(N) to O(1) relative to the number of workers.
@@ -1028,9 +1136,7 @@ def _split_by_frames(media: Media) -> list[tuple[Scene, cv2.typing.MatLike]]:
                 idx,
                 timestamps,
                 duration,
-                thumb_dir,
                 media.id,
-                media.path,
             ): idx
             for idx, ts in enumerate(timestamps)
         }
@@ -1058,6 +1164,39 @@ def _split_by_frames(media: Media) -> list[tuple[Scene, cv2.typing.MatLike]]:
         scene_entries.append((scene, frame_rgb))
 
     return scene_entries
+
+
+def _split_by_frames(media: Media) -> list[tuple[Scene, cv2.typing.MatLike]]:
+    logger.info("Splitting based on frames via ffmpeg")
+    video_path = Path(media.path)
+    if not video_path.exists():
+        logger.warning("Video file missing: %s", video_path)
+        return []
+
+    duration = media.duration or 0.0
+    if not duration:
+        probe = _ffprobe_json(video_path)
+        if probe:
+            try:
+                duration = float(probe.get("format", {}).get("duration", 0.0))
+            except Exception:
+                duration = 0.0
+
+    max_frames = max(1, int(settings.video.max_frames_per_video))
+    timestamps: list[float] = []
+    if duration and duration > 0:
+        step = duration / max_frames
+        min_step = 2
+        step = max(step, min_step)
+        timestamps = [max(0.0, i * step) for i in range(max_frames)]
+        # Seeks at or past EOF never return a frame; don't spawn ffmpeg for them.
+        timestamps = [ts for ts in timestamps if ts < duration]
+        if timestamps and timestamps[-1] + 1.0 < duration:
+            timestamps.append(duration)
+    else:
+        timestamps = [float(i) for i in range(max_frames)]
+
+    return _extract_frames_at(media, timestamps, duration)
 
 
 def _decimal_to_dms(value: float):
@@ -1096,9 +1235,14 @@ def update_exif_gps(path: str, lon: float, lat: float):
     }
     exif_dict["GPS"].update(gps_ifd)
     exif_bytes = piexif.dump(exif_dict)
-    img = Image.open(str(path))
-    img = ImageOps.exif_transpose(img)
-    img.save(str(path), exif=exif_bytes)
+    try:
+        # Write the EXIF block in place without re-encoding the pixel data.
+        piexif.insert(exif_bytes, str(path))
+    except Exception:
+        # Non-JPEG formats: re-save with the updated EXIF attached to the
+        # original (un-transposed) image so the Orientation tag stays valid.
+        with Image.open(str(path)) as img:
+            img.save(str(path), exif=exif_bytes)
 
 
 def complete_task(session: Session, task: ProcessingTask):
@@ -1158,21 +1302,68 @@ def _limit_scene_results(
     return limited
 
 
+_SCENE_MIN_LEN_FRAMES = 500
+# split_video only uses detection results when they contain at least this
+# many scenes; anything shorter falls back to frame sampling.
+_SCENE_MIN_USEFUL_SCENES = 3
+
+
+def _video_frame_count(path: Path, media: Media) -> int:
+    """Read the frame count from the container header (no decoding)."""
+    cap = cv2.VideoCapture(os.fspath(path))
+    try:
+        if not cap.isOpened():
+            return 0
+        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        if total <= 0 and media.duration:
+            fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+            if fps > 0:
+                total = int(float(media.duration) * fps)
+        return max(total, 0)
+    finally:
+        cap.release()
+
+
+def _detect_video_scenes(media: Media, path: Path) -> list[TimecodePair]:
+    """Scene-detect a video, skipping work that cannot produce a usable result.
+
+    Detection decodes the whole file, so videos too short to ever contain
+    the minimum number of minimum-length scenes skip it entirely — they
+    would fall back to frame sampling anyway.
+    """
+    total_frames = _video_frame_count(path, media)
+    if (
+        total_frames
+        and total_frames < _SCENE_MIN_USEFUL_SCENES * _SCENE_MIN_LEN_FRAMES
+    ):
+        logger.debug(
+            "Skipping scene detection for %s (%d frames is too short).",
+            path,
+            total_frames,
+        )
+        return []
+
+    logger.debug("Detecting scenes...")
+    frame_skip = max(0, int(settings.video.scene_detection_frame_skip))
+    video = open_video(str(path))
+    manager = SceneManager()
+    manager.add_detector(
+        HistogramDetector(
+            threshold=0.2,
+            min_scene_len=_SCENE_MIN_LEN_FRAMES,
+            # adaptive_threshold=3, window_width=5, min_scene_len=500
+        )
+    )
+    manager.detect_scenes(video, frame_skip=frame_skip, show_progress=False)
+    return manager.get_scene_list()
+
+
 def split_video(
     media: Media, path: Path
 ) -> list[tuple[Scene, cv2.typing.MatLike]]:
     """Returns select frames from a video and a list of scenes"""
     if settings.video.auto_scene_detection:
-        scenes = detect(
-            str(path),
-            HistogramDetector(
-                threshold=0.2,
-                min_scene_len=500,
-                # adaptive_threshold=3, window_width=5, min_scene_len=500
-            ),
-            show_progress=True,
-        )
-        logger.debug("Detecting scenes...")
+        scenes = _detect_video_scenes(media, path)
 
         duration_seconds: float | None = None
         try:
@@ -1182,7 +1373,7 @@ def split_video(
             duration_seconds = None
 
         limited_scenes = _limit_scene_results(scenes, duration_seconds)
-        if len(limited_scenes) >= 3:
+        if len(limited_scenes) >= _SCENE_MIN_USEFUL_SCENES:
             if len(limited_scenes) < len(scenes):
                 logger.debug(
                     "Trimming scene list from %d to %d entries (duration≈%.2fs)",
@@ -1271,6 +1462,41 @@ def delete_record(media_id, session: Session):
     session.exec(
         delete(DuplicateMedia).where(DuplicateMedia.media_id == media.id)
     )
+    session.exec(
+        delete(DuplicateIgnore).where(
+            or_(
+                DuplicateIgnore.media_id_a == media.id,
+                DuplicateIgnore.media_id_b == media.id,
+            )
+        )
+    )
+    session.exec(
+        delete(AlbumMediaLink).where(AlbumMediaLink.media_id == media.id)
+    )
+    linked_event_ids = session.exec(
+        select(EventMediaLink.event_id).where(
+            EventMediaLink.media_id == media.id
+        )
+    ).all()
+    session.exec(
+        delete(EventMediaLink).where(EventMediaLink.media_id == media.id)
+    )
+    if linked_event_ids:
+        session.exec(
+            update(Event)
+            .where(Event.id.in_(linked_event_ids), Event.media_count > 0)
+            .values(media_count=Event.media_count - 1)
+        )
+    session.exec(
+        update(Album)
+        .where(Album.cover_media_id == media.id)
+        .values(cover_media_id=None)
+    )
+    session.exec(
+        update(Event)
+        .where(Event.cover_media_id == media.id)
+        .values(cover_media_id=None)
+    )
     for pid in affected_person_ids:
         auto_select_profile_face(session, pid)
     session.delete(media)
@@ -1319,7 +1545,7 @@ def delete_file(session: Session, media_id: int):
 
 def remove_person(person_id, session):
     if settings.general.presentation_mode:
-        return HTTPException(
+        raise HTTPException(
             status_code=403,
             detail="Not allowed in settings.general.presentation_mode mode.",
         )

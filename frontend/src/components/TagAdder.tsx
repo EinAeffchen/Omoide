@@ -1,12 +1,8 @@
 import React, { useState, useEffect } from "react";
-import {
-  TextField,
-  Autocomplete,
-  CircularProgress,
-  createFilterOptions,
-} from "@mui/material";
+import { TextField, Autocomplete, CircularProgress } from "@mui/material";
 import { Tag } from "../types";
 import { getTags } from "../services/tag";
+import { searchTags } from "../services/search";
 import { createTag, assignTag } from "../services/tagging";
 
 type OwnerType = "media" | "person";
@@ -22,7 +18,8 @@ interface TagOption extends Partial<Tag> {
   inputValue?: string;
 }
 
-const filter = createFilterOptions<TagOption>();
+const SEARCH_DEBOUNCE_MS = 300;
+const SEARCH_LIMIT = 25;
 
 export default function TagAdder({
   ownerType,
@@ -30,17 +27,39 @@ export default function TagAdder({
   existingTags,
   onTagAdded,
 }: TagAdderProps) {
-  // We only need to track the list of all available tags now
-  const [allTags, setAllTags] = useState<Tag[]>([]);
+  // Options come from a server-side search of the typed input so the
+  // duplicate check is not limited to the first page of tags.
+  const [options, setOptions] = useState<Tag[]>([]);
+  const [inputValue, setInputValue] = useState("");
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    const query = inputValue.trim();
+    let cancelled = false;
     setLoading(true);
-    getTags(null) // Assuming getTags can fetch all tags or takes a page parameter
-      .then((data) => setAllTags(data.items || []))
-      .catch((error) => console.error("Failed to load all tags:", error))
-      .finally(() => setLoading(false));
-  }, []);
+    const timer = window.setTimeout(
+      () => {
+        const request = query
+          ? searchTags(query, SEARCH_LIMIT)
+          : getTags(null);
+        request
+          .then((page) => {
+            if (!cancelled) setOptions(page.items ?? []);
+          })
+          .catch((error) => {
+            if (!cancelled) console.error("Failed to load tags:", error);
+          })
+          .finally(() => {
+            if (!cancelled) setLoading(false);
+          });
+      },
+      query ? SEARCH_DEBOUNCE_MS : 0
+    );
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [inputValue]);
 
   const handleSelection = async (
     event: React.SyntheticEvent,
@@ -73,14 +92,13 @@ export default function TagAdder({
       return;
     }
 
-    // Find or create the tag
-    let tagToAssign = allTags.find(
+    // Find the tag in the search results or create it
+    let tagToAssign = options.find(
       (t) => t.name.toLowerCase() === finalTagName
     );
     if (!tagToAssign) {
       try {
         tagToAssign = await createTag(finalTagName);
-        setAllTags((prev) => [...prev, tagToAssign!]);
       } catch (error) {
         console.error("Error creating tag:", error);
         return;
@@ -96,7 +114,7 @@ export default function TagAdder({
     }
   };
 
-  const availableOptions = allTags.filter(
+  const availableOptions = options.filter(
     (tag) => !existingTags.some((existingTag) => existingTag.id === tag.id)
   );
 
@@ -109,6 +127,8 @@ export default function TagAdder({
       handleHomeEndKeys
       value={null}
       onChange={handleSelection}
+      inputValue={inputValue}
+      onInputChange={(_, newInputValue) => setInputValue(newInputValue)}
       options={availableOptions}
       loading={loading}
       getOptionLabel={(option) => {
@@ -116,24 +136,38 @@ export default function TagAdder({
         if (option.inputValue) return option.name; // For "Create..." text
         return option.name ?? "";
       }}
-      filterOptions={(options, params) => {
-        const filtered = filter(options, params);
-        const { inputValue } = params;
-        // Suggest the creation of a new value
-        const isExisting = options.some((option) => inputValue === option.name);
-        if (inputValue !== "" && !isExisting) {
+      filterOptions={(opts, params) => {
+        // Options are already filtered server-side; only decide whether to
+        // offer creating a new tag based on the search results.
+        const filtered = [...opts] as TagOption[];
+        const query = params.inputValue.trim().toLowerCase();
+        const isExisting = opts.some(
+          (option) =>
+            typeof option !== "string" &&
+            query === option.name?.toLowerCase()
+        );
+        if (query !== "" && !isExisting && !loading) {
           filtered.push({
-            inputValue: inputValue,
-            name: `Create "${inputValue}"`,
+            inputValue: params.inputValue,
+            name: `Create "${params.inputValue}"`,
           });
         }
         return filtered;
       }}
-      renderOption={(props, option) => (
-        <li {...props} key={option.id || option.inputValue}>
-          {option.name}
-        </li>
-      )}
+      renderOption={(props, option) => {
+        if (typeof option === "string") {
+          return (
+            <li {...props} key={option}>
+              {option}
+            </li>
+          );
+        }
+        return (
+          <li {...props} key={option.id || option.inputValue}>
+            {option.name}
+          </li>
+        );
+      }}
       renderInput={(params) => (
         <TextField
           {...params}

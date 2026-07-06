@@ -16,6 +16,7 @@ import Alert from "@mui/material/Alert";
 import Snackbar from "@mui/material/Snackbar";
 import { PersonContentTabs } from "../components/PersonContentTabs";
 import { PersonHero } from "../components/PersonHero";
+import ConfirmDialog from "../components/ConfirmDialog";
 import { usePersonDetailPage } from "../hooks/usePersonDetailPage";
 import { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
@@ -170,22 +171,14 @@ export default function PersonDetailPage() {
       </Snackbar>
 
       {/* Confirm Delete Dialog */}
-      <Dialog open={confirmDelete} onClose={() => setConfirmDelete(false)}>
-        <DialogTitle>Confirm Deletion</DialogTitle>
-        <DialogContent>
-          <Typography>Are you sure you want to delete this person?</Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setConfirmDelete(false)}>Cancel</Button>
-          <Button
-            onClick={handleDeletePerson}
-            color="error"
-            variant="contained"
-          >
-            Delete
-          </Button>
-        </DialogActions>
-      </Dialog>
+      <ConfirmDialog
+        open={confirmDelete}
+        title="Confirm Deletion"
+        message="Are you sure you want to delete this person?"
+        confirmLabel="Delete"
+        onConfirm={handleDeletePerson}
+        onClose={() => setConfirmDelete(false)}
+      />
 
       <Dialog open={mergeTarget !== null} onClose={() => setMergeTarget(null)}>
         <DialogTitle>Confirm Merge</DialogTitle>

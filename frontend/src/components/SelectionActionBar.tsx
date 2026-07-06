@@ -9,12 +9,15 @@ import {
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import ReplayIcon from "@mui/icons-material/Replay";
+import PhotoAlbumIcon from "@mui/icons-material/PhotoAlbum";
 import { useSelection } from "../context/SelectionContext";
 import { RerunProcessorsDialog } from "./RerunProcessorsDialog";
+import { AddToAlbumDialog } from "./AddToAlbumDialog";
 
 export const SelectionActionBar: React.FC = () => {
   const { selectedIds, clear } = useSelection();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [albumDialogOpen, setAlbumDialogOpen] = useState(false);
   const [snackbar, setSnackbar] = useState<{
     open: boolean;
     message: string;
@@ -46,6 +49,15 @@ export const SelectionActionBar: React.FC = () => {
           <Chip label={`${count} selected`} size="small" color="primary" />
           <Button
             size="small"
+            startIcon={<PhotoAlbumIcon fontSize="small" />}
+            onClick={() => setAlbumDialogOpen(true)}
+            variant="contained"
+            disableElevation
+          >
+            Add to Album
+          </Button>
+          <Button
+            size="small"
             startIcon={<ReplayIcon fontSize="small" />}
             onClick={() => setDialogOpen(true)}
             variant="contained"
@@ -71,6 +83,19 @@ export const SelectionActionBar: React.FC = () => {
         onStarted={() =>
           setSnackbar({ open: true, message: "Processing started." })
         }
+      />
+
+      <AddToAlbumDialog
+        open={albumDialogOpen}
+        mediaIds={Array.from(selectedIds)}
+        onClose={() => setAlbumDialogOpen(false)}
+        onAdded={(album) => {
+          setSnackbar({
+            open: true,
+            message: `Added to "${album.name}".`,
+          });
+          clear();
+        }}
       />
 
       <Snackbar

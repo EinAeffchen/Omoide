@@ -20,6 +20,7 @@ export function TagsSection({
 }: TagsSectionProps) {
   const owner = media || person;
   const ownerType = media ? "media" : "person";
+  if (!owner) return null;
   const tags = owner.tags ?? [];
   const ownerId = owner.id;
   return (
@@ -27,7 +28,7 @@ export function TagsSection({
       {!config.PRESENTATION_MODE && (
         <Box mb={2}>
           <Typography variant="h6" gutterBottom>
-            Add tag to media
+            {ownerType === "person" ? "Add tag to person" : "Add tag to media"}
           </Typography>
           <TagAdder
             ownerType={ownerType}

@@ -133,6 +133,22 @@ export function Header() {
       );
   }, []);
 
+  // Keep the search input in sync with the URL on the search results route
+  useEffect(() => {
+    if (location.pathname !== "/searchresults") return;
+    const params = new URLSearchParams(location.search);
+    const urlQuery = params.get("query");
+    const urlCategory = params.get("category");
+    if (urlQuery !== null) setQ(urlQuery);
+    if (
+      urlCategory === "media" ||
+      urlCategory === "tag" ||
+      urlCategory === "scene"
+    ) {
+      setCategory(urlCategory);
+    }
+  }, [location.pathname, location.search]);
+
   function onSearchSubmit(e: React.FormEvent) {
     e.preventDefault();
     const trimmed = q.trim();
@@ -140,7 +156,7 @@ export function Header() {
     navigate(
       `/searchresults?` +
         new URLSearchParams({ category, query: trimmed }).toString(),
-      { replace: true, state: { timestamp: Date.now() } }
+      { state: { timestamp: Date.now() } }
     );
     setIsSearchVisible(false);
   }

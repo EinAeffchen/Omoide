@@ -1,17 +1,50 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import BackgroundTasks, HTTPException
 from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, select
 
+import app.database as db
 from app.config import settings
+from app.database import safe_commit
 from app.logger import logger
 from app.models import ProcessingTask
 
+from .state import clear_task_progress
+
 __all__ = ["create_and_run_task"]
+
+
+def _run_task_guarded(callable_task: Callable[[str], None], task_id: str) -> None:
+    """
+    Run a background task and surface crashes.
+
+    Without this, an unhandled exception dies inside the server's background
+    executor: nothing reaches the app log and the task row stays "running"
+    forever — indistinguishable from a hang for the user.
+    """
+    try:
+        callable_task(task_id)
+    except Exception:
+        logger.exception(
+            "Background task %s crashed with an unhandled exception", task_id
+        )
+        try:
+            with Session(db.engine) as session:
+                task = session.get(ProcessingTask, task_id)
+                if task and task.status in ("pending", "running"):
+                    task.status = "failed"
+                    task.finished_at = datetime.now(timezone.utc)
+                    session.add(task)
+                    safe_commit(session)
+        except Exception:
+            logger.exception("Could not mark crashed task %s as failed", task_id)
+        finally:
+            clear_task_progress(task_id)
 
 
 def create_and_run_task(
@@ -27,6 +60,8 @@ def create_and_run_task(
         "run_processor",
         "run_processor_for_media",
         "backfill_face_timestamps",
+        "build_events",
+        "geocode_places",
     ],
     callable_task: Callable[[str], None],
 ) -> ProcessingTask:
@@ -61,5 +96,5 @@ def create_and_run_task(
     session.commit()
     session.refresh(task)
 
-    background_tasks.add_task(callable_task, task.id)
+    background_tasks.add_task(_run_task_guarded, callable_task, task.id)
     return task

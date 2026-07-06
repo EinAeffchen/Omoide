@@ -177,12 +177,9 @@ export function PeopleSection({
           <Suspense fallback={<SectionLoader />}>
             <DetectedFaces
               isProcessing={false}
-              allowIndividualActions={true}
-              onSingleFaceDelete={(faceId) => onDeleteFace([faceId])}
               title="Unassigned Faces"
               faces={orphans}
               onAssign={onAssign}
-              onSetProfile={() => {}}
               onDelete={onDeleteFace}
               onDetach={onDetachFace}
               onCreateMultiple={onCreateFace}

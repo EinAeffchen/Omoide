@@ -12,6 +12,7 @@ import {
 import Grid from "@mui/material/Grid";
 import { CursorResponse, useInfinite } from "../hooks/useInfinite";
 import PersonCard from "../components/PersonCard";
+import ConfirmDialog from "../components/ConfirmDialog";
 import { PersonReadSimple } from "../types";
 import config from "../config";
 import { getPeople } from "../services/person";
@@ -37,6 +38,8 @@ export default function PeoplePage() {
     new Set<number>(),
   );
   const [isDeleting, setIsDeleting] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
   const [snackbar, setSnackbar] = useState<{
     open: boolean;
     message: string;
@@ -48,8 +51,9 @@ export default function PeoplePage() {
     setItems,
     hasMore,
     loading,
+    error,
     loaderRef,
-  } = useInfinite<PersonReadSimple>(fetchPeople, [refreshKey]);
+  } = useInfinite<PersonReadSimple>(fetchPeople, [refreshKey, retryKey]);
 
   useEffect(() => {
     setSelectedIds((previous) => {
@@ -70,19 +74,19 @@ export default function PeoplePage() {
     });
   }, [people]);
 
-  if (loading && people.length === 0) {
-    return (
-      <Box textAlign="center" py={4}>
-        <CircularProgress color="secondary" />
-      </Box>
-    );
-  }
-
   if (!config.ENABLE_PEOPLE) {
     return (
       <Typography variant="h5" color="text.primary" gutterBottom>
         People disabled!
       </Typography>
+    );
+  }
+
+  if (loading && people.length === 0) {
+    return (
+      <Box textAlign="center" py={4}>
+        <CircularProgress color="secondary" />
+      </Box>
     );
   }
 
@@ -108,16 +112,17 @@ export default function PeoplePage() {
     });
   };
 
-  const handleDeleteSelected = async () => {
+  const handleDeleteSelected = () => {
     if (!selectionMode || selectedIds.size === 0) {
       return;
     }
+    setConfirmDeleteOpen(true);
+  };
+
+  const handleConfirmDeleteSelected = async () => {
     const ids = Array.from(selectedIds);
-    if (
-      !window.confirm(
-        `Delete ${ids.length} selected person${ids.length === 1 ? "" : "s"}? This cannot be undone.`,
-      )
-    ) {
+    if (ids.length === 0) {
+      setConfirmDeleteOpen(false);
       return;
     }
 
@@ -171,6 +176,7 @@ export default function PeoplePage() {
       });
     } finally {
       setIsDeleting(false);
+      setConfirmDeleteOpen(false);
     }
   };
 
@@ -219,6 +225,24 @@ export default function PeoplePage() {
         </Stack>
       </Stack>
 
+      {error && (
+        <Alert
+          severity="error"
+          sx={{ mb: 3 }}
+          action={
+            <Button
+              color="inherit"
+              size="small"
+              onClick={() => setRetryKey((prev) => prev + 1)}
+            >
+              Retry
+            </Button>
+          }
+        >
+          Failed to load people: {error}
+        </Alert>
+      )}
+
       <Grid container spacing={3} alignItems="stretch">
         {people.map((person) => (
           <Grid key={person.id} size={{ xs: 6, sm: 4, md: 2, lg: 1.5 }}>
@@ -248,6 +272,16 @@ export default function PeoplePage() {
           Scroll to load more...
         </Box>
       )}
+
+      <ConfirmDialog
+        open={confirmDeleteOpen}
+        title="Delete Selected People"
+        message={`Delete ${selectedCount} selected person${selectedCount === 1 ? "" : "s"}? This cannot be undone.`}
+        confirmLabel="Delete"
+        loading={isDeleting}
+        onConfirm={handleConfirmDeleteSelected}
+        onClose={() => setConfirmDeleteOpen(false)}
+      />
 
       <Snackbar
         open={snackbar.open}

@@ -58,12 +58,18 @@ export const getMediaLocations = async (
   return response.json();
 };
 
+export interface CameraFilter {
+  make?: string | null;
+  model?: string | null;
+}
+
 export const getMediaList = async (
   cursor: string | null,
   sortOrder: "newest" | "latest",
   tags: string[],
   folder?: string | null,
-  recursive = true
+  recursive = true,
+  camera?: CameraFilter | null
 ): Promise<CursorPage<Media>> => {
   const params = new URLSearchParams();
   params.append("sort", sortOrder);
@@ -76,6 +82,12 @@ export const getMediaList = async (
   }
   if (!recursive) {
     params.append("recursive", "false");
+  }
+  if (camera?.make) {
+    params.append("camera_make", camera.make);
+  }
+  if (camera?.model) {
+    params.append("camera_model", camera.model);
   }
   const response = await fetch(`${API}/api/media/?${params.toString()}`);
   if (!response.ok) {

@@ -546,13 +546,18 @@ FACE_RECOGNITION_PRESETS: dict[
         "person_cluster_max_l2_radius": 0.95,
         "person_merge_percent_similarity": 78,
         "cluster_batch_size": 15000,
+        "cluster_seed_min_det_score": 0.65,
+        "cluster_seed_min_frontality": 0.35,
+        "person_matching_max_prototypes": 3,
         "hdbscan_min_cluster_size": 6,
         "hdbscan_min_samples": 12,
         "hdbscan_cluster_selection_method": "eom",
         "hdbscan_cluster_selection_epsilon": 0.07,
-        "cw_threshold": 0.6,
+        "hdbscan_min_membership_probability": 0.40,
+        "cw_threshold": 0.70,
         "cw_k_neighbors":10,
         "cw_iterations": 20,
+        "cw_min_member_similarity": 0.55,
     },
     FaceClusteringPreset.NORMAL: {
         "face_recognition_min_confidence": 0.5,
@@ -566,13 +571,18 @@ FACE_RECOGNITION_PRESETS: dict[
         "person_cluster_max_l2_radius": 1,
         "person_merge_percent_similarity": 72,
         "cluster_batch_size": 15000,
+        "cluster_seed_min_det_score": 0.60,
+        "cluster_seed_min_frontality": 0.30,
+        "person_matching_max_prototypes": 3,
         "hdbscan_min_cluster_size": 6,
         "hdbscan_min_samples": 10,
         "hdbscan_cluster_selection_method": "eom",
         "hdbscan_cluster_selection_epsilon": 0.10,
-        "cw_threshold": 0.6,
+        "hdbscan_min_membership_probability": 0.30,
+        "cw_threshold": 0.65,
         "cw_k_neighbors":10,
         "cw_iterations": 20,
+        "cw_min_member_similarity": 0.50,
     },
     FaceClusteringPreset.LOOSE: {
         "face_recognition_min_confidence": 0.4,
@@ -586,13 +596,18 @@ FACE_RECOGNITION_PRESETS: dict[
         "person_cluster_max_l2_radius": 1.04,
         "person_merge_percent_similarity": 68,
         "cluster_batch_size": 15000,
+        "cluster_seed_min_det_score": 0.55,
+        "cluster_seed_min_frontality": 0.25,
+        "person_matching_max_prototypes": 3,
         "hdbscan_min_cluster_size": 4,
         "hdbscan_min_samples": 4,
         "hdbscan_cluster_selection_method": "eom",
         "hdbscan_cluster_selection_epsilon": 0.11,
-        "cw_threshold": 0.6,
+        "hdbscan_min_membership_probability": 0.20,
+        "cw_threshold": 0.62,
         "cw_k_neighbors":10,
         "cw_iterations": 20,
+        "cw_min_member_similarity": 0.45,
     },
 }
 
@@ -613,6 +628,10 @@ class FaceRecognitionSettings(BaseModel):
     # skip blurry/occluded face crops before embedding (Laplacian variance check)
     face_sharpness_filter_enabled: bool = False
     face_sharpness_min_variance: float = 30.0
+    # cap how many frames per video are scanned for faces (sampled evenly
+    # across the video's scenes). Faces recur across scenes, so scanning
+    # every scene frame adds little. 0 = scan all scene frames.
+    face_detection_max_video_frames: int = 15
     # number of faces needed to automatically create a person
     person_min_face_count: int = 2
     # require a person to span at least this many distinct media assets
@@ -625,17 +644,34 @@ class FaceRecognitionSettings(BaseModel):
     person_merge_search_k: int = 20
     # reduce if ram is an issue, the higher the more accurate the clustering.
     cluster_batch_size: int = 15000
+    # Quality gate for SEEDING new person clusters. Low-confidence and hard
+    # profile faces produce unreliable embeddings that pile up into junk
+    # "people" (side profiles, statues). Such faces are excluded from cluster
+    # formation but can still be ATTACHED to existing persons during the
+    # leftover matching pass. Faces extracted before these columns existed
+    # (NULL values) are not filtered.
+    cluster_seed_min_det_score: float = 0.55
+    cluster_seed_min_frontality: float = 0.25
+    # number of embedding prototypes kept per person when matching leftover
+    # faces (captures pose modes instead of a single frontal-dominated centroid)
+    person_matching_max_prototypes: int = 3
     # clustering algorithm to use for person discovery
-    # graph k-NN clustering settings (similarity in percent)
-    cw_threshold: float = 0.6
+    # graph k-NN clustering settings (cosine similarity)
+    cw_threshold: float = 0.62
     cw_iterations: int = 20
     cw_k_neighbors: int = 10
+    # after Chinese Whispers converges, drop cluster members whose cosine
+    # similarity to the cluster centroid falls below this (kills transitive
+    # chain merges; dropped faces stay unassigned for the matching pass)
+    cw_min_member_similarity: float = 0.45
     # Cap per-HDBSCAN batch size to keep large datasets from stalling.
     # HDBSCAN tuning to reduce over-merged clusters (e.g., side profiles)
     hdbscan_min_cluster_size: int = 6
     hdbscan_min_samples: int = 10
     hdbscan_cluster_selection_method: str = "eom"  # "leaf" for finer clusters
     hdbscan_cluster_selection_epsilon: float = 0.10
+    # demote HDBSCAN members with membership probability below this to noise
+    hdbscan_min_membership_probability: float = 0.20
 
     def model_post_init(self, __context: Any) -> None:
         fields_set = getattr(self, "model_fields_set", set())
@@ -694,6 +730,11 @@ class VideoSettings(BaseModel):
     auto_scene_detection: bool = True
     # Max number of frames detected per video if automatic scene detection fails
     max_frames_per_video: int = 30
+    # Frames to skip between analyzed frames during scene detection. Higher
+    # values speed up detection roughly linearly; with the coarse minimum
+    # scene length used here the precision loss is negligible. 0 = analyze
+    # every frame.
+    scene_detection_frame_skip: int = 2
 
 
 class ContentProcessorSettings(BaseModel):

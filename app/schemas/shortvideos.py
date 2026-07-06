@@ -26,5 +26,7 @@ class ShortVideoPage(BaseModel):
 
 
 class ShortVideoResolveRequest(BaseModel):
-    media_ids: list[int]
+    media_ids: list[int] = []
     action: Literal["DELETE_FILES", "DELETE_RECORDS", "BLACKLIST_RECORDS"]
+    select_all: bool = False
+    max_duration: float = 10.0

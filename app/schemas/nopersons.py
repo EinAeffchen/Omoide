@@ -27,5 +27,8 @@ class NoPersonsPage(BaseModel):
 
 
 class NoPersonsResolveRequest(BaseModel):
-    media_ids: list[int]
+    media_ids: list[int] = []
     action: Literal["DELETE_FILES", "DELETE_RECORDS", "BLACKLIST_RECORDS"]
+    select_all: bool = False
+    media_type: str | None = None
+    scope: str = "processed"

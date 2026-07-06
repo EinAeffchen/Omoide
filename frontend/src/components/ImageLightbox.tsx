@@ -150,11 +150,30 @@ export function ImageLightbox({ open, src, alt, onClose }: ImageLightboxProps) {
     pinchPanRef.current = null;
   };
 
-  // Keyboard shortcuts
+  // Keyboard shortcuts — registered in the capture phase so Arrow keys are
+  // consumed here (pan when zoomed, otherwise noop) and never reach the
+  // page-level prev/next navigation handler while the lightbox is open.
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "+" || e.key === "=") {
+      if (
+        e.key === "ArrowLeft" ||
+        e.key === "ArrowRight" ||
+        e.key === "ArrowUp" ||
+        e.key === "ArrowDown"
+      ) {
+        e.stopPropagation();
+        e.preventDefault();
+        const { zoom, panX, panY } = viewStateRef.current;
+        if (zoom > MIN_ZOOM) {
+          const step = 40;
+          const dx =
+            e.key === "ArrowLeft" ? step : e.key === "ArrowRight" ? -step : 0;
+          const dy =
+            e.key === "ArrowUp" ? step : e.key === "ArrowDown" ? -step : 0;
+          updateState({ zoom, panX: panX + dx, panY: panY + dy });
+        }
+      } else if (e.key === "+" || e.key === "=") {
         const { zoom, panX, panY } = viewStateRef.current;
         updateState({ zoom: clampZoom(zoom * (1 + ZOOM_STEP)), panX, panY });
       } else if (e.key === "-") {
@@ -165,8 +184,8 @@ export function ImageLightbox({ open, src, alt, onClose }: ImageLightboxProps) {
         reset();
       }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [open, reset, updateState]);
 
   const { zoom, panX, panY } = viewState;

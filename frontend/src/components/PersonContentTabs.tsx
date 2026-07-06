@@ -24,7 +24,9 @@ import { TimelineTab } from "./TimelineTab";
 import MediaAppearances from "./MediaAppearances";
 import SimilarPersonCard from "./SimilarPersonCard";
 import { TagsSection } from "./TagsSection";
-import PersonRelationshipGraph from "./PersonRelationshipGraph";
+const PersonRelationshipGraph = React.lazy(
+  () => import("./PersonRelationshipGraph")
+);
 import type { MergeResult } from "../services/personActions";
 
 const DetectedFaces = React.lazy(() => import("./DetectedFaces"));
@@ -148,6 +150,7 @@ export function PersonContentTabs({
         await Promise.resolve(action(...args));
       } catch (error) {
         console.error("An error occurred during the face action:", error);
+        throw error;
       } finally {
         setIsProcessingFaces(false);
       }
@@ -223,13 +226,10 @@ export function PersonContentTabs({
       !hasLoadedRelationships
     ) {
       setHasRequestedRelationships(true);
-      Promise.resolve(onLoadRelationships())
-        .catch((error) =>
-          console.error("Failed to load relationship graph:", error),
-        )
-        .finally(() => {
-          /* request state stored upstream */
-        });
+      Promise.resolve(onLoadRelationships()).catch((error) => {
+        console.error("Failed to load relationship graph:", error);
+        setHasRequestedRelationships(false);
+      });
     }
   };
 
@@ -360,6 +360,10 @@ export function PersonContentTabs({
                   onChange={(_, value) =>
                     onSuggestedFacesLimitChange(value as number)
                   }
+                  onChangeCommitted={(_, value) => {
+                    onSuggestedFacesLimitChange(value as number);
+                    void onRefreshSuggestions();
+                  }}
                 />
               </Box>
               <Button
@@ -463,12 +467,14 @@ export function PersonContentTabs({
       </TabPanel>
 
       <TabPanel value={tabValue} index={3}>
-        <PersonRelationshipGraph
-          graph={relationshipGraph}
-          depth={relationshipDepth}
-          isLoading={isLoadingRelationships}
-          onDepthChange={(depthValue) => onLoadRelationships(depthValue)}
-        />
+        <Suspense fallback={<CircularProgress />}>
+          <PersonRelationshipGraph
+            graph={relationshipGraph}
+            depth={relationshipDepth}
+            isLoading={isLoadingRelationships}
+            onDepthChange={(depthValue) => onLoadRelationships(depthValue)}
+          />
+        </Suspense>
       </TabPanel>
 
       <TabPanel value={tabValue} index={4}>

@@ -27,7 +27,7 @@ interface FaceCardProps {
   onToggleSelect?: (faceId: number) => void;
 }
 
-export default function FaceCard({
+function FaceCard({
   face,
   isProfile,
   onSetProfile,
@@ -72,6 +72,7 @@ export default function FaceCard({
       <Avatar
         src={thumbUrl}
         variant="rounded"
+        slotProps={{ img: { loading: "lazy" } }}
         sx={{
           width: "100%",
           height: "100%",
@@ -156,3 +157,5 @@ export default function FaceCard({
     </Card>
   );
 }
+
+export default React.memo(FaceCard);

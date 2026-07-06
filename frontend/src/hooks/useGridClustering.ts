@@ -10,18 +10,17 @@ const MAX_CLUSTERING_ZOOM = 18;
 export function useGridClustering({
   locations,
   map,
+  zoom,
 }: {
   locations: MediaLocation[];
   map: L.Map | null;
+  zoom: number | null;
 }): ClusterPoint[] {
   return useMemo(() => {
-    // Cannot cluster without a map instance or locations
-    if (!map || !locations || locations.length === 0) {
+    // Cannot cluster without a map instance, a known zoom level, or locations
+    if (!map || zoom == null || !locations || locations.length === 0) {
       return [];
     }
-
-    // This object will hold our grid cells. The key is a string like "x-y".
-    const zoom = map.getZoom();
 
     if (zoom >= MAX_CLUSTERING_ZOOM) {
       // Return each location as a single-point "cluster"
@@ -106,5 +105,5 @@ export function useGridClustering({
     }
 
     return result;
-  }, [locations, map]); // Re-run clustering when locations or the map instance change
+  }, [locations, map, zoom]); // Re-run clustering when locations, the map instance, or zoom change
 }

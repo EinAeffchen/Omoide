@@ -21,7 +21,14 @@ const INITIAL_COUNTERS: Record<TaskType, number> = {
   run_processor: 0,
   run_processor_for_media: 0,
   auto_tag_custom: 0,
+  backfill_face_timestamps: 0,
+  generate_hashes: 0,
+  build_events: 0,
+  geocode_places: 0,
 };
+
+const BASE_POLL_INTERVAL_MS = 2000;
+const MAX_POLL_INTERVAL_MS = 30000;
 
 type TaskEventsContextValue = {
   activeTasks: Task[];
@@ -56,9 +63,12 @@ export function TaskEventsProvider({
     useState<Partial<Record<TaskType, Task>>>({});
 
   const prevTasksRef = useRef<Record<string, Task>>({});
-  const pendingFetchRef = useRef<Promise<void> | null>(null);
+  const pendingFetchRef = useRef<Promise<boolean> | null>(null);
   const subscribersRef = useRef(0);
-  const pollIntervalRef = useRef<number | null>(null);
+  const pollTimeoutRef = useRef<number | null>(null);
+  const pollingActiveRef = useRef(false);
+  const pausedRef = useRef(false);
+  const failureCountRef = useRef(0);
   const isMountedRef = useRef(true);
 
   useEffect(() => {
@@ -99,7 +109,7 @@ export function TaskEventsProvider({
     setGlobalCompletionCount((value) => value + completedTypes.length);
   }, []);
 
-  const fetchTasks = useCallback(async () => {
+  const fetchTasks = useCallback(async (): Promise<boolean> => {
     if (pendingFetchRef.current) {
       try {
         await pendingFetchRef.current;
@@ -111,7 +121,7 @@ export function TaskEventsProvider({
     const run = (async () => {
       try {
         const tasks = await getActiveTasks();
-        if (!isMountedRef.current) return;
+        if (!isMountedRef.current) return true;
 
         setActiveTasks(tasks);
 
@@ -127,16 +137,18 @@ export function TaskEventsProvider({
         if (finished.length) {
           await applyFinishedTasks(finished);
         }
+        return true;
       } catch (error) {
-        if (process.env.NODE_ENV !== "production") {
+        if (import.meta.env.DEV) {
           console.warn("Failed to poll active tasks", error);
         }
+        return false;
       }
     })();
 
     pendingFetchRef.current = run;
     try {
-      await run;
+      return await run;
     } finally {
       if (pendingFetchRef.current === run) {
         pendingFetchRef.current = null;
@@ -144,20 +156,57 @@ export function TaskEventsProvider({
     }
   }, [applyFinishedTasks]);
 
+  const pollTick = useCallback(async () => {
+    if (!pollingActiveRef.current) return;
+    if (
+      typeof document !== "undefined" &&
+      document.visibilityState === "hidden"
+    ) {
+      // Pause while the tab is hidden; the visibilitychange handler resumes.
+      pausedRef.current = true;
+      return;
+    }
+
+    const success = await fetchTasks();
+    failureCountRef.current = success ? 0 : failureCountRef.current + 1;
+
+    if (!pollingActiveRef.current || pausedRef.current) return;
+    const delay = Math.min(
+      BASE_POLL_INTERVAL_MS * 2 ** failureCountRef.current,
+      MAX_POLL_INTERVAL_MS
+    );
+    pollTimeoutRef.current = window.setTimeout(() => {
+      void pollTick();
+    }, delay);
+  }, [fetchTasks]);
+
+  const handleVisibilityChange = useCallback(() => {
+    if (document.visibilityState !== "visible") return;
+    if (!pollingActiveRef.current || !pausedRef.current) return;
+    pausedRef.current = false;
+    void pollTick();
+  }, [pollTick]);
+
   const startPolling = useCallback(() => {
     if (typeof window === "undefined") return;
-    if (pollIntervalRef.current !== null) return;
-    fetchTasks();
-    pollIntervalRef.current = window.setInterval(fetchTasks, 2000);
-  }, [fetchTasks]);
+    if (pollingActiveRef.current) return;
+    pollingActiveRef.current = true;
+    pausedRef.current = false;
+    failureCountRef.current = 0;
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    void pollTick();
+  }, [pollTick, handleVisibilityChange]);
 
   const stopPolling = useCallback(() => {
     if (typeof window === "undefined") return;
-    if (pollIntervalRef.current !== null) {
-      window.clearInterval(pollIntervalRef.current);
-      pollIntervalRef.current = null;
+    pollingActiveRef.current = false;
+    pausedRef.current = false;
+    document.removeEventListener("visibilitychange", handleVisibilityChange);
+    if (pollTimeoutRef.current !== null) {
+      window.clearTimeout(pollTimeoutRef.current);
+      pollTimeoutRef.current = null;
     }
-  }, []);
+  }, [handleVisibilityChange]);
 
   const subscribe = useCallback(() => {
     subscribersRef.current += 1;

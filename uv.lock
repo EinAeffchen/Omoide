@@ -885,6 +885,7 @@ dependencies = [
     { name = "python-multipart" },
     { name = "pywebview" },
     { name = "qtpy" },
+    { name = "reverse-geocoder" },
     { name = "scenedetect" },
     { name = "sqlite-vec" },
     { name = "sqlmodel" },
@@ -930,6 +931,7 @@ requires-dist = [
     { name = "python-multipart", specifier = "==0.0.32" },
     { name = "pywebview", specifier = ">=6.0" },
     { name = "qtpy", specifier = ">=2.4.1" },
+    { name = "reverse-geocoder", specifier = ">=1.5.1" },
     { name = "scenedetect", specifier = "==0.6.6" },
     { name = "sqlite-vec", specifier = "==0.1.9" },
     { name = "sqlmodel", specifier = "==0.0.24" },
@@ -1763,6 +1765,16 @@ sdist = { url = "https://files.pythonhosted.org/packages/ac/c3/e2a2b89f2d3e2179a
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a0/f4/c67b0b3f1b9245e8d266f0f112c500d50e5b4e83cb6f3b71b6528104182a/requests-2.34.2-py3-none-any.whl", hash = "sha256:2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0", size = 73075, upload-time = "2026-05-14T19:25:26.443Z" },
 ]
+
+[[package]]
+name = "reverse-geocoder"
+version = "1.5.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "scipy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/0b/0f/b7d5d4b36553731f11983e19e1813a1059ad0732c5162c01b3220c927d31/reverse_geocoder-1.5.1.tar.gz", hash = "sha256:2a2e781b5f69376d922b78fe8978f1350c84fce0ddb07e02c834ecf98b57c75c", size = 2246559, upload-time = "2016-09-15T16:46:46.277Z" }
 
 [[package]]
 name = "rich"

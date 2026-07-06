@@ -1,7 +1,6 @@
 import os
 import subprocess
 import sys
-from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Annotated
@@ -9,7 +8,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from fastapi.responses import PlainTextResponse
-from sqlalchemy import and_, func, or_, text, tuple_, union_all
+from sqlalchemy import and_, case, func, or_, text, tuple_, union_all
 from sqlalchemy.orm import aliased, selectinload
 from sqlmodel import Session, col, select
 
@@ -216,17 +215,6 @@ def _open_in_file_browser(parent: Path, resolved_file: Path | None) -> None:
     subprocess.Popen(["xdg-open", str(parent)])
 
 
-@dataclass
-class _FolderAccumulator:
-    path: str
-    name: str
-    parent_path: str | None
-    depth: int
-    media_count: int = 0
-    subfolders: set[str] = field(default_factory=set)
-    previews: list[MediaFolderPreview] = field(default_factory=list)
-
-
 def format_timestamp(seconds: float) -> str:
     """
     Turn seconds (e.g. 12.3456) into a WebVTT timestamp like "00:00:12.346".
@@ -243,8 +231,11 @@ def format_timestamp(seconds: float) -> str:
 @router.get("/missing-geo", response_model=CursorPage)
 def get_missing_geo(
     session: Session = Depends(get_session),
-    cursor: str | None = None,  # 1. Accept an optional string cursor
-    limit: int = 100,  # 2. Make the limit a parameter
+    cursor: str | None = Query(
+        None,
+        description="encoded as `<inserted_at>_<id>`; e.g. `2025-05-05T12:34:56.789012_1234`",
+    ),
+    limit: int = Query(100, ge=1, le=200),
 ):
     stmt = (
         select(Media)
@@ -254,29 +245,32 @@ def get_missing_geo(
         .order_by(Media.inserted_at.desc(), Media.id.desc())
     )
 
-    # 3. If a cursor is provided, add it to the query
     if cursor:
         try:
-            # The cursor will be the `inserted_at` timestamp of the last item from the previous page
-            cursor_datetime = datetime.fromisoformat(cursor)
-            stmt = stmt.where(Media.inserted_at < cursor_datetime)
+            val_str, id_str = cursor.split("_", 1)
+            cursor_datetime = datetime.fromisoformat(val_str)
+            cursor_id = int(id_str)
         except ValueError:
-            # Handle invalid cursor format if necessary
-            pass
+            raise HTTPException(status_code=400, detail="Invalid cursor format.")
+        stmt = stmt.where(
+            or_(
+                Media.inserted_at < cursor_datetime,
+                and_(
+                    Media.inserted_at == cursor_datetime,
+                    Media.id < cursor_id,
+                ),
+            )
+        )
 
-    # Apply the limit to get one page of results
     stmt = stmt.limit(limit)
 
     results = session.exec(stmt).all()
 
-    # 4. Determine the next cursor
     next_cursor = None
     if len(results) == limit:
-        # If we got a full page, the next cursor is the timestamp of the last item
-        last_item_timestamp = results[-1].inserted_at
-        next_cursor = last_item_timestamp.isoformat()
+        last = results[-1]
+        next_cursor = f"{last.inserted_at.isoformat()}_{last.id}"
 
-    # 5. Return the data in the correct object shape
     return CursorPage(items=results, next_cursor=next_cursor)
 
 
@@ -296,6 +290,12 @@ def list_media(
         True,
         description="Include media in nested subfolders when filtering by folder.",
     ),
+    camera_make: str | None = Query(
+        None, description="Filter by EXIF camera make."
+    ),
+    camera_model: str | None = Query(
+        None, description="Filter by EXIF camera model."
+    ),
     sort: Annotated[str, Query(enum=["newest", "latest"])] = "newest",
     cursor: str | None = Query(
         None,
@@ -311,6 +311,13 @@ def list_media(
     # select by tags
     if tags and len(tags) > 0:
         q = q.join(Media.tags).where(Tag.name.in_(tags))
+
+    if camera_make or camera_model:
+        q = q.join(ExifData, ExifData.media_id == Media.id)
+        if camera_make:
+            q = q.where(ExifData.make == camera_make)
+        if camera_model:
+            q = q.where(ExifData.model == camera_model)
 
     normalized_folder = ""
     if folder is not None:
@@ -387,77 +394,99 @@ def list_media_folders(
     parent_parts = _split_relative_path(normalized_parent)
 
     normalized_path_expr = func.replace(Media.path, "\\", "/")
-    stmt = select(
-        Media.id,
-        Media.path,
-        Media.filename,
-        Media.thumbnail_path,
-    ).order_by(Media.created_at.desc(), Media.id.desc())
 
+    where_clauses = []
     if normalized_parent:
-        stmt = stmt.where(normalized_path_expr.like(f"{normalized_parent}/%"))
+        where_clauses.append(
+            normalized_path_expr.like(f"{normalized_parent}/%")
+        )
+        rel_expr = func.substr(
+            normalized_path_expr, len(normalized_parent) + 2
+        )
+    else:
+        rel_expr = func.ltrim(normalized_path_expr, "/")
 
-    rows = session.exec(stmt).all()
+    slash_pos = func.instr(rel_expr, "/")
+    first_seg = func.substr(rel_expr, 1, slash_pos - 1)
+    rest_expr = func.substr(rel_expr, slash_pos + 1)
+    rest_slash = func.instr(rest_expr, "/")
+    second_seg = case(
+        (rest_slash > 0, func.substr(rest_expr, 1, rest_slash - 1)),
+        else_=None,
+    )
 
-    folder_details: dict[str, _FolderAccumulator] = {}
-    direct_media_count = 0
+    direct_media_count = (
+        session.exec(
+            select(func.count(Media.id)).where(*where_clauses, slash_pos == 0)
+        ).first()
+        or 0
+    )
 
-    for media_id, media_path, filename, thumbnail_path in rows:
-        path_parts = _split_relative_path(media_path)
-        if len(path_parts) <= len(parent_parts):
-            continue
+    folder_rows = session.exec(
+        select(
+            first_seg.label("name"),
+            func.count(Media.id).label("media_count"),
+            func.count(func.distinct(second_seg)).label("subfolder_count"),
+        )
+        .where(*where_clauses, slash_pos > 0)
+        .group_by(first_seg)
+    ).all()
 
-        relative_parts = path_parts[len(parent_parts) :]
-        if not relative_parts:
-            continue
-
-        if len(relative_parts) == 1:
-            direct_media_count += 1
-            continue
-
-        folder_name = relative_parts[0]
-        folder_path_segments = [*parent_parts, folder_name]
-        folder_path = "/".join(folder_path_segments)
-        parent_path_value = "/".join(parent_parts) if parent_parts else None
-
-        entry = folder_details.get(folder_path)
-        if entry is None:
-            entry = _FolderAccumulator(
-                path=folder_path,
-                name=folder_name,
-                parent_path=parent_path_value,
-                depth=len(parent_parts) + 1,
+    previews_by_folder: dict[str, list[MediaFolderPreview]] = {}
+    if preview_limit > 0 and folder_rows:
+        row_number = (
+            func.row_number()
+            .over(
+                partition_by=first_seg,
+                order_by=(Media.created_at.desc(), Media.id.desc()),
             )
-            folder_details[folder_path] = entry
-
-        entry.media_count += 1
-
-        if len(relative_parts) > 2:
-            subfolder_name = relative_parts[1]
-            entry.subfolders.add(subfolder_name)
-
-        if preview_limit > 0:
-            if len(entry.previews) < preview_limit:
-                entry.previews.append(
-                    MediaFolderPreview(
-                        id=media_id,
-                        path=media_path,
-                        filename=filename,
-                        thumbnail_path=thumbnail_path,
-                    )
+            .label("rn")
+        )
+        preview_subq = (
+            select(
+                Media.id,
+                Media.path,
+                Media.filename,
+                Media.thumbnail_path,
+                first_seg.label("folder_name"),
+                row_number,
+            )
+            .where(*where_clauses, slash_pos > 0)
+            .subquery()
+        )
+        preview_rows = session.exec(
+            select(
+                preview_subq.c.id,
+                preview_subq.c.path,
+                preview_subq.c.filename,
+                preview_subq.c.thumbnail_path,
+                preview_subq.c.folder_name,
+            )
+            .where(preview_subq.c.rn <= preview_limit)
+            .order_by(preview_subq.c.folder_name, preview_subq.c.rn)
+        ).all()
+        for media_id, media_path, filename, thumbnail_path, folder_name in preview_rows:
+            previews_by_folder.setdefault(folder_name, []).append(
+                MediaFolderPreview(
+                    id=media_id,
+                    path=media_path,
+                    filename=filename,
+                    thumbnail_path=thumbnail_path,
                 )
+            )
 
+    folder_parent_path = "/".join(parent_parts) if parent_parts else None
     folders = [
         MediaFolderEntry(
-            path=entry.path,
-            name=entry.name,
-            parent_path=entry.parent_path,
-            depth=entry.depth,
-            media_count=entry.media_count,
-            subfolder_count=len(entry.subfolders),
-            previews=list(entry.previews),
+            path="/".join([*parent_parts, folder_name]),
+            name=folder_name,
+            parent_path=folder_parent_path,
+            depth=len(parent_parts) + 1,
+            media_count=int(media_count),
+            subfolder_count=int(subfolder_count),
+            previews=previews_by_folder.get(folder_name, []),
         )
-        for entry in folder_details.values()
+        for folder_name, media_count, subfolder_count in folder_rows
     ]
 
     folders.sort(key=lambda entry: entry.name.lower())
@@ -590,17 +619,34 @@ def list_videos(
     cursor: str | None = Query(
         None,
         description=(
-            "encoded as `<id>`; e.g. `2025-05-05T12:34:56.789012_1234` or `2500_1234`"
+            "encoded as `<value>_<id>`; e.g. `2025-05-05T12:34:56.789012_1234`"
         ),
     ),
 ):
     stmt = select(Media).where(Media.duration != None, col(Media.processing_error).is_(None))  # videos have a duration
-    stmt = stmt.order_by(Media.inserted_at.desc())
+    stmt = stmt.order_by(Media.inserted_at.desc(), Media.id.desc())
     if cursor:
-        before_id = int(cursor)
-        stmt = stmt.where(Media.id < before_id)
+        try:
+            val_str, id_str = cursor.split("_", 1)
+            prev_cursor_val = datetime.fromisoformat(val_str)
+            prev_cursor_id = int(id_str)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid cursor format.")
+        stmt = stmt.where(
+            or_(
+                Media.inserted_at < prev_cursor_val,
+                and_(
+                    Media.inserted_at == prev_cursor_val,
+                    Media.id < prev_cursor_id,
+                ),
+            )
+        )
     results = session.exec(stmt.limit(limit)).all()
-    next_cursor = str(results[-1].id) if len(results) == limit else None
+    if len(results) == limit:
+        last = results[-1]
+        next_cursor = f"{last.inserted_at.isoformat()}_{last.id}"
+    else:
+        next_cursor = None
     return CursorPage(items=results, next_cursor=next_cursor)
 
 
@@ -865,7 +911,7 @@ def scenes_vtt(
 )
 def delete_media_file(media_id: int, session: Session = Depends(get_session)):
     if settings.general.presentation_mode:
-        return HTTPException(
+        raise HTTPException(
             status_code=403,
             detail="Not allowed in settings.general.presentation_mode mode.",
         )
@@ -882,7 +928,7 @@ def delete_media_record(
     session: Session = Depends(get_session),
 ):
     if settings.general.presentation_mode:
-        return HTTPException(
+        raise HTTPException(
             status_code=403,
             detail="Not allowed in settings.general.presentation_mode mode.",
         )
@@ -1095,7 +1141,7 @@ def update_geolocation(
     session: Session = Depends(get_session),
 ):
     if settings.general.presentation_mode:
-        return HTTPException(
+        raise HTTPException(
             status_code=403,
             detail="Not allowed in settings.general.presentation_mode mode.",
         )
@@ -1108,8 +1154,13 @@ def update_geolocation(
         settings.general.ensure_media_path_writable(Path(media.path))
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
-    media.exif.lat = data.latitude
-    media.exif.lon = data.longitude
+    exif = media.exif
+    if exif is None:
+        exif = ExifData(media_id=media.id)
+        media.exif = exif
+        session.add(exif)
+    exif.lat = data.latitude
+    exif.lon = data.longitude
     update_exif_gps(media.path, data.longitude, data.latitude)
     session.add(media)
     session.commit()

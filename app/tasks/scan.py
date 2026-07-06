@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -16,10 +17,15 @@ from app.config import settings
 from app.database import safe_commit
 from app.logger import logger
 from app.models import Media, ProcessingTask
-from app.utils import generate_thumbnail, process_file
+from app.utils import generate_thumbnail, process_file, save_thumbnail_image
 from .state import clear_task_progress, record_task_failure, set_task_progress
 
 __all__ = ["run_scan"]
+
+# Per-file work (metadata probes, image decodes, ffmpeg subprocesses) releases
+# the GIL, so a small thread pool scales well; DB writes stay single-threaded.
+_PROCESS_WORKERS = max(2, min(8, os.cpu_count() or 4))
+_PROCESS_BATCH_SIZE = _PROCESS_WORKERS * 4
 
 THUMBNAIL_DIR_NAMES = {
     ".thumbs",
@@ -78,9 +84,10 @@ def _scan_path_key(value: str | Path) -> str:
 def run_scan(task_id: str) -> None:
     discovery_update_batch = 200
     discovery_update_interval = 2.0
-    progress_batch_threshold = 50
-    progress_update_interval = 2.0
     media_dirs = [base for base, _ in settings.general.resolved_media_dirs()]
+    allowed_suffixes = frozenset(
+        settings.scan.VIDEO_SUFFIXES + settings.scan.IMAGE_SUFFIXES
+    )
 
     with Session(db.engine) as sess:
         task = sess.get(ProcessingTask, task_id)
@@ -109,12 +116,8 @@ def run_scan(task_id: str) -> None:
                 if ".omoide" in dirs:
                     dirs.remove(".omoide")
                 for fname in files:
-                    suffix = Path(fname).suffix.lower()
-                    if (
-                        suffix
-                        not in settings.scan.VIDEO_SUFFIXES
-                        + settings.scan.IMAGE_SUFFIXES
-                    ):
+                    suffix = os.path.splitext(fname)[1].lower()
+                    if suffix not in allowed_suffixes:
                         continue
                     try:
                         candidate = Path(root) / fname
@@ -216,100 +219,122 @@ def run_scan(task_id: str) -> None:
             t = s.get(ProcessingTask, task_id)
             return bool(t and t.status == "cancelled")
 
+    def process_candidate(filepath: Path):
+        logger.debug("Parsing: %s", filepath)
+        set_task_progress(
+            task_id,
+            current_item=os.fspath(filepath),
+            current_step="processing",
+        )
+        return process_file(filepath)
+
+    def create_thumbnail(item) -> tuple[str | None, str | None]:
+        media_obj, thumb_img = item
+        try:
+            if thumb_img is not None:
+                thumb, thumb_error = save_thumbnail_image(media_obj, thumb_img)
+                thumb_img.close()
+                if thumb:
+                    return thumb, thumb_error
+            # Videos, plus images whose in-memory thumbnail failed: use the
+            # full pipeline (ffmpeg / re-decode with HEIC fallbacks).
+            return generate_thumbnail(media_obj)
+        except Exception as exc:  # pragma: no cover - defensive safeguard
+            logger.exception(
+                "Unexpected error thumbnailing %s: %s", media_obj.path, exc
+            )
+            return None, f"Unexpected error generating thumbnail: {exc}"
+
     with heavy_writer(name="scan", cancelled=is_cancelled):
         with Session(db.engine) as sess:
             task = sess.get(ProcessingTask, task_id)
             processed = task.processed or 0
-            batch_since_commit = 0
             check_every_sec = 5
             next_cancel_check = time.monotonic() + check_every_sec
-            next_progress_update = time.monotonic() + progress_update_interval
 
             set_task_progress(
                 task_id, current_step="processing", current_item=None
             )
 
-            for filepath in new_files:
-                logger.debug("Parsing: %s", filepath)
-                set_task_progress(
-                    task_id,
-                    current_item=os.fspath(filepath),
-                    current_step="processing",
-                )
-                if time.monotonic() >= next_cancel_check:
-                    next_cancel_check = time.monotonic() + check_every_sec
-                    sess.refresh(task, attribute_names=["status"])
-                    if task.status == "cancelled":
-                        logger.info("Scan cancelled by user.")
-                        if batch_since_commit > 0:
-                            task.processed = processed
-                            sess.add(task)
-                            safe_commit(sess)
-                            batch_since_commit = 0
-                            next_progress_update = (
-                                time.monotonic() + progress_update_interval
+            with ThreadPoolExecutor(max_workers=_PROCESS_WORKERS) as pool:
+                for start in range(0, len(new_files), _PROCESS_BATCH_SIZE):
+                    if time.monotonic() >= next_cancel_check:
+                        next_cancel_check = time.monotonic() + check_every_sec
+                        sess.refresh(task, attribute_names=["status"])
+                        if task.status == "cancelled":
+                            logger.info("Scan cancelled by user.")
+                            break
+
+                    batch = new_files[start : start + _PROCESS_BATCH_SIZE]
+
+                    # Metadata, phash and thumbnail decoding run in parallel;
+                    # all DB access stays on this thread.
+                    results = list(pool.map(process_candidate, batch))
+
+                    pending = []
+                    for filepath, (media_obj, thumb_img, process_error) in zip(
+                        batch, results
+                    ):
+                        if not media_obj:
+                            reason = (
+                                process_error
+                                or "Failed to extract media metadata."
                             )
-                        break
+                            logger.warning(
+                                "Skipping %s due to processing error: %s",
+                                filepath,
+                                reason,
+                            )
+                            record_task_failure(
+                                task_id, os.fspath(filepath), reason
+                            )
+                            continue
+                        try:
+                            with sess.begin_nested():
+                                sess.add(media_obj)
+                        except IntegrityError:
+                            if thumb_img is not None:
+                                thumb_img.close()
+                            continue
+                        pending.append((media_obj, thumb_img))
 
-                media_obj, process_error = process_file(filepath)
-                if not media_obj:
-                    reason = (
-                        process_error or "Failed to extract media metadata."
-                    )
-                    logger.warning(
-                        "Skipping %s due to processing error: %s",
-                        filepath,
-                        reason,
-                    )
-                    record_task_failure(task_id, os.fspath(filepath), reason)
-                    continue
+                    # Thumbnails need the flushed media id; saving prepared
+                    # images and running ffmpeg parallelize safely.
+                    thumb_results = list(pool.map(create_thumbnail, pending))
 
-                sess.add(media_obj)
-                try:
-                    sess.flush()
-                except IntegrityError:
-                    sess.rollback()
-                    continue
+                    for (media_obj, _), (thumb, thumb_error) in zip(
+                        pending, thumb_results
+                    ):
+                        if not thumb:
+                            reason = (
+                                thumb_error or "Failed to generate thumbnail."
+                            )
+                            logger.warning(
+                                "Thumbnail generation failed for %s: %s",
+                                media_obj.path,
+                                reason,
+                            )
+                            record_task_failure(
+                                task_id, media_obj.path, reason
+                            )
+                            media_obj.processing_error = reason
+                            sess.add(media_obj)
+                            continue
+                        media_obj.thumbnail_path = thumb
+                        sess.add(media_obj)
+                        processed += 1
 
-                thumb, thumb_error = generate_thumbnail(media_obj)
-                if not thumb:
-                    reason = thumb_error or "Failed to generate thumbnail."
-                    logger.warning(
-                        "Thumbnail generation failed for %s: %s",
-                        filepath,
-                        reason,
-                    )
-                    record_task_failure(task_id, os.fspath(filepath), reason)
-                    media_obj.processing_error = reason
-                    sess.add(media_obj)
-                    safe_commit(sess)
-                    continue
-
-                media_obj.thumbnail_path = thumb
-                sess.add(media_obj)
-
-                processed += 1
-                batch_since_commit += 1
-                if (
-                    batch_since_commit >= progress_batch_threshold
-                    or time.monotonic() >= next_progress_update
-                ):
                     task.processed = processed
                     sess.add(task)
                     safe_commit(sess)
-                    batch_since_commit = 0
-                    next_progress_update = (
-                        time.monotonic() + progress_update_interval
-                    )
 
             sess.refresh(task)
             task.status = (
                 "completed" if task.status != "cancelled" else "cancelled"
             )
             task.finished_at = datetime.now(timezone.utc)
+            task.processed = processed
             sess.add(task)
-            if batch_since_commit > 0:
-                task.processed = processed
             safe_commit(sess)
             set_task_progress(task_id, current_step="finalizing", current_item=None)
 

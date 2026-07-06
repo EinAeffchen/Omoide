@@ -124,7 +124,7 @@ def update_face_embedding(
     delete_face: bool = False,
 ):
     if settings.general.presentation_mode:
-        return HTTPException(
+        raise HTTPException(
             status_code=403,
             detail="Not allowed in settings.general.presentation_mode mode.",
         )

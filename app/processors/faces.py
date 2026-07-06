@@ -50,6 +50,30 @@ class FaceProcessor(MediaProcessor):
         return merged
 
     @staticmethod
+    def _estimate_frontality(kps) -> float | None:
+        """
+        Estimate how frontal a face is from the 5-point detector keypoints
+        (left eye, right eye, nose, mouth corners). Projects the nose tip onto
+        the eye-to-eye line: a frontal face lands near the midpoint (t=0.5),
+        a hard profile lands near/beyond an eye. Returns 1.0 (frontal) to
+        0.0 (extreme profile), or None if keypoints are unusable.
+        """
+        if kps is None:
+            return None
+        pts = np.asarray(kps, dtype=np.float64)
+        if pts.ndim != 2 or pts.shape[0] < 3 or pts.shape[1] < 2:
+            return None
+        left_eye, right_eye, nose = pts[0], pts[1], pts[2]
+        eye_vec = right_eye - left_eye
+        denom = float(eye_vec @ eye_vec)
+        if not np.isfinite(denom) or denom <= 1e-6:
+            return 0.0
+        t = float((nose - left_eye) @ eye_vec) / denom
+        if not np.isfinite(t):
+            return None
+        return float(np.clip(1.0 - 2.0 * abs(t - 0.5), 0.0, 1.0))
+
+    @staticmethod
     def _stored_bbox_to_xyxy(bbox: list[int] | None) -> list[int] | None:
         if not bbox or len(bbox) < 4:
             return None
@@ -83,7 +107,15 @@ class FaceProcessor(MediaProcessor):
         self, faces: list, scene: MatLike, media: Media, timestamp: float | None = None
     ) -> list[tuple[Face, np.ndarray]]:
         face_entries: list[tuple[Face, np.ndarray]] = []
+        min_confidence = float(
+            settings.face_recognition.face_recognition_min_confidence
+        )
         for i, f in enumerate(faces):
+            det_score = getattr(f, "det_score", None)
+            if det_score is not None:
+                det_score = float(det_score)
+                if det_score < min_confidence:
+                    continue
             x1, y1, x2, y2 = map(int, f.bbox)
             crop = self._crop_with_margin(
                 scene, [x1, y1, x2 - x1, y2 - y1], pad_pct=0.2
@@ -121,6 +153,8 @@ class FaceProcessor(MediaProcessor):
                 ),
                 bbox=[x1, y1, x2 - x1, y2 - y1],
                 timestamp=timestamp,
+                det_score=det_score,
+                frontality=self._estimate_frontality(getattr(f, "kps", None)),
             )
             face_entries.append((face, vec))
         return face_entries
@@ -150,6 +184,42 @@ class FaceProcessor(MediaProcessor):
             )
             if parsed is not None
         ]
+        max_video_frames = int(
+            getattr(
+                settings.face_recognition, "face_detection_max_video_frames", 0
+            )
+            or 0
+        )
+        if (
+            media.duration is not None
+            and max_video_frames > 0
+            and len(scenes) > max_video_frames
+        ):
+            # Sample frames evenly across the video — faces recur between
+            # scenes, so scanning every scene frame adds little coverage.
+            if max_video_frames == 1:
+                indices = [0]
+            else:
+                indices = sorted(
+                    {
+                        int(
+                            round(
+                                i
+                                * (len(scenes) - 1)
+                                / (max_video_frames - 1)
+                            )
+                        )
+                        for i in range(max_video_frames)
+                    }
+                )
+            logger.debug(
+                "Face detection: sampling %d of %d scene frames for %s",
+                len(indices),
+                len(scenes),
+                media.path,
+            )
+            scenes = [scenes[i] for i in indices]
+
         for scene in tqdm(scenes):
             scene_timestamp: float | None = None
             try:
@@ -281,7 +351,13 @@ class FaceProcessor(MediaProcessor):
             allowed_modules=["detection", "landmark_2d_106", "recognition"],
             providers=providers,
         )
-        self.model.prepare(ctx_id=self._ctx_id, det_size=(640, 640))
+        self.model.prepare(
+            ctx_id=self._ctx_id,
+            det_size=(640, 640),
+            det_thresh=float(
+                settings.face_recognition.face_recognition_min_confidence
+            ),
+        )
 
     def unload(self):
         pass  # Keep InsightFace warm to avoid reload cost on the next run

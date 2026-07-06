@@ -29,18 +29,9 @@ import { BrokenMediaItem } from "../types";
 import { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
 import { getBrokenMedia, resolveBroken, retryBroken } from "../services/broken";
-
-const formatBytes = (bytes: number) => {
-  if (!bytes) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let value = bytes;
-  let unitIndex = 0;
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024;
-    unitIndex += 1;
-  }
-  return `${value.toFixed(value >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
-};
+import ConfirmDialog from "../components/ConfirmDialog";
+import { resolveConfirmCopy, BulkResolveAction, FeedbackSeverity } from "../components/BulkResolveToolbar";
+import { formatBytes } from "../formatUtils";
 
 const buildThumbUrl = (item: BrokenMediaItem) =>
   `${API}/thumbnails/${item.thumbnail_path ? encodeFilePath(item.thumbnail_path) : `${item.id}.jpg`}`;
@@ -53,10 +44,14 @@ const BrokenMediaPage: React.FC = () => {
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [pendingAction, setPendingAction] = useState<{
+    action: BulkResolveAction;
+    selectAll: boolean;
+  } | null>(null);
   const [snackbar, setSnackbar] = useState<{
     open: boolean;
     message: string;
-    severity: "success" | "error";
+    severity: FeedbackSeverity;
   }>({ open: false, message: "", severity: "success" });
 
   const fetchBroken = useCallback(
@@ -92,41 +87,49 @@ const BrokenMediaPage: React.FC = () => {
   const selectAllVisible = () => setSelectedIds(new Set(items.map((i) => i.id)));
   const clearSelection = () => setSelectedIds(new Set());
 
-  const handleAction = async (
-    action: "DELETE_FILES" | "DELETE_RECORDS" | "BLACKLIST_RECORDS",
-    selectAll = false
-  ) => {
-    const count = selectAll ? total : selectedIds.size;
-    if (count === 0) return;
+  const removeLocalItems = (ids: number[], removed: number) => {
+    const idSet = new Set(ids);
+    setItems((prev) => prev.filter((item) => !idSet.has(item.id)));
+    setTotal((prev) => Math.max(0, prev - removed));
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      ids.forEach((id) => next.delete(id));
+      return next;
+    });
+  };
 
-    const actionLabel =
-      action === "DELETE_FILES"
-        ? "delete the files and their records"
-        : action === "DELETE_RECORDS"
-        ? "remove the database records (files kept on disk)"
-        : "blacklist and remove the database records";
+  const requestAction = (action: BulkResolveAction, selectAll = false) => {
+    if ((selectAll ? total : selectedIds.size) === 0) return;
+    setPendingAction({ action, selectAll });
+  };
 
-    if (!window.confirm(`${actionLabel.charAt(0).toUpperCase() + actionLabel.slice(1)} for ${count} item(s)?`))
-      return;
-
+  const handleConfirmAction = async () => {
+    if (!pendingAction) return;
+    const ids = pendingAction.selectAll ? [] : Array.from(selectedIds);
     setIsActionLoading(true);
     try {
-      const payload = selectAll
-        ? { select_all: true, action }
-        : { media_ids: Array.from(selectedIds), action };
+      const payload = pendingAction.selectAll
+        ? { select_all: true, action: pendingAction.action }
+        : { media_ids: ids, action: pendingAction.action };
       const result = await resolveBroken(payload);
       setSnackbar({
         open: true,
-        message: `${result.removed} item(s) processed`,
-        severity: "success",
+        message: result.removed > 0 ? `${result.removed} item(s) processed` : "No items matched",
+        severity: result.removed > 0 ? "success" : "warning",
       });
-      await fetchBroken(null, false);
+      if (pendingAction.selectAll) {
+        await fetchBroken(null, false);
+      } else {
+        removeLocalItems(ids, result.removed);
+      }
+      setPendingAction(null);
     } catch (err) {
       setSnackbar({
         open: true,
         message: err instanceof Error ? err.message : "Action failed",
         severity: "error",
       });
+      setPendingAction(null);
     } finally {
       setIsActionLoading(false);
     }
@@ -141,11 +144,22 @@ const BrokenMediaPage: React.FC = () => {
       const payload = selectAll
         ? { select_all: true }
         : { media_ids: Array.from(selectedIds) };
-      const result = await retryBroken(payload);
+      // The server retries at most a small batch per call and reports how many
+      // matching items are left; keep going while batches still recover items.
+      let retried = 0;
+      let cleared = 0;
+      let stillBroken = 0;
+      for (;;) {
+        const result = await retryBroken(payload);
+        retried += result.retried;
+        cleared += result.cleared;
+        stillBroken += result.still_broken;
+        if (!result.remaining || result.cleared === 0) break;
+      }
       setSnackbar({
         open: true,
-        message: `Retried ${result.retried} item(s): ${result.cleared} recovered, ${result.still_broken} still broken`,
-        severity: result.cleared > 0 ? "success" : "error",
+        message: `Retried ${retried} item(s): ${cleared} recovered, ${stillBroken} still broken`,
+        severity: cleared > 0 ? "success" : "warning",
       });
       await fetchBroken(null, false);
     } catch (err) {
@@ -161,6 +175,9 @@ const BrokenMediaPage: React.FC = () => {
 
   const selectedCount = selectedIds.size;
   const allVisibleSelected = items.length > 0 && selectedCount === items.length;
+  const pendingCopy = pendingAction
+    ? resolveConfirmCopy(pendingAction.action, pendingAction.selectAll ? total : selectedCount)
+    : null;
 
   return (
     <Box sx={{ p: 3, maxWidth: "1400px", mx: "auto" }}>
@@ -171,6 +188,12 @@ const BrokenMediaPage: React.FC = () => {
         These files could not be processed — frames could not be extracted, making
         them unsearchable. Review the error, then delete or blacklist them.
       </Typography>
+
+      {error && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {error}
+        </Alert>
+      )}
 
       <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
         <Stack
@@ -195,7 +218,7 @@ const BrokenMediaPage: React.FC = () => {
               onClick={clearSelection}
               disabled={selectedCount === 0}
             >
-              Clear
+              Clear selection
             </Button>
           </Stack>
         </Stack>
@@ -218,7 +241,7 @@ const BrokenMediaPage: React.FC = () => {
                 <Button
                   variant="outlined"
                   startIcon={<DeleteIcon />}
-                  onClick={() => handleAction("DELETE_RECORDS")}
+                  onClick={() => requestAction("DELETE_RECORDS")}
                   disabled={selectedCount === 0 || isActionLoading}
                 >
                   Remove records
@@ -231,7 +254,7 @@ const BrokenMediaPage: React.FC = () => {
                   variant="outlined"
                   color="error"
                   startIcon={<DeleteForeverIcon />}
-                  onClick={() => handleAction("DELETE_FILES")}
+                  onClick={() => requestAction("DELETE_FILES")}
                   disabled={selectedCount === 0 || isActionLoading}
                 >
                   Delete files
@@ -244,7 +267,7 @@ const BrokenMediaPage: React.FC = () => {
                   variant="contained"
                   color="error"
                   startIcon={<BlockIcon />}
-                  onClick={() => handleAction("BLACKLIST_RECORDS")}
+                  onClick={() => requestAction("BLACKLIST_RECORDS")}
                   disabled={selectedCount === 0 || isActionLoading}
                 >
                   Blacklist
@@ -271,7 +294,7 @@ const BrokenMediaPage: React.FC = () => {
                   variant="text"
                   color="error"
                   startIcon={<BlockIcon />}
-                  onClick={() => handleAction("BLACKLIST_RECORDS", true)}
+                  onClick={() => requestAction("BLACKLIST_RECORDS", true)}
                   disabled={isActionLoading}
                 >
                   Blacklist all
@@ -340,6 +363,7 @@ const BrokenMediaPage: React.FC = () => {
                           component="img"
                           src={buildThumbUrl(item)}
                           alt={item.filename}
+                          loading="lazy"
                           sx={{
                             width: "100%",
                             height: "100%",
@@ -399,11 +423,15 @@ const BrokenMediaPage: React.FC = () => {
         )}
       </Paper>
 
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {error}
-        </Alert>
-      )}
+      <ConfirmDialog
+        open={Boolean(pendingAction)}
+        title={pendingCopy?.title ?? ""}
+        message={pendingCopy?.message ?? ""}
+        confirmLabel={pendingCopy?.confirmLabel}
+        loading={isActionLoading}
+        onConfirm={handleConfirmAction}
+        onClose={() => setPendingAction(null)}
+      />
 
       <Snackbar
         open={snackbar.open}

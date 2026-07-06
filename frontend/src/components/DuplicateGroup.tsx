@@ -10,6 +10,8 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
+  Snackbar,
+  Alert,
 } from "@mui/material";
 import Grid from "@mui/material/Grid";
 import { DuplicateGroup as GroupType } from "../types";
@@ -34,6 +36,7 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [confirmAction, setConfirmAction] =
     useState<ExtendedActionType | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const handleResolve = async () => {
     if (!confirmAction) return;
@@ -51,7 +54,9 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
       onGroupResolved();
     } catch (error) {
       console.error(`Failed to resolve group ${group.group_id}:`, error);
-      alert("Action failed. Please check the console.");
+      setErrorMessage(
+        error instanceof Error ? error.message : "Failed to resolve group"
+      );
     } finally {
       setIsProcessing(false);
       setConfirmAction(null);
@@ -166,6 +171,15 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
           </Button>
         </DialogActions>
       </Dialog>
+      <Snackbar
+        open={!!errorMessage}
+        autoHideDuration={6000}
+        onClose={() => setErrorMessage(null)}
+      >
+        <Alert severity="error" onClose={() => setErrorMessage(null)}>
+          {errorMessage}
+        </Alert>
+      </Snackbar>
     </Paper>
   );
 };

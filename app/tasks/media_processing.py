@@ -259,6 +259,7 @@ def run_media_processing(task_id: str) -> None:
                     safe_commit(s)
         except Exception:
             logger.exception("Failed to mark task %s as failed", task_id)
+        clear_task_progress(task_id)
 
 
 def _run_media_processing(task_id: str) -> None:
@@ -286,11 +287,7 @@ def _run_media_processing(task_id: str) -> None:
         set_task_progress(task_id, current_step="preparing", current_item=None)
 
         def is_cancelled() -> bool:
-            try:
-                session.refresh(task, attribute_names=["status"])
-                return task.status == "cancelled"
-            except Exception:
-                return False
+            return _is_task_cancelled(task_id)
 
         if not processors:
             logger.debug("Processor registry empty; loading processors now.")
@@ -317,9 +314,9 @@ def _run_media_processing(task_id: str) -> None:
             session.add(task)
             safe_commit(session)
 
+            batch_index = 0
             while True:
-                session.refresh(task, attribute_names=["status"])
-                if task.status == "cancelled":
+                if _is_task_cancelled(task_id):
                     logger.info("Task cancelled. Stopping before next batch.")
                     break
 
@@ -337,8 +334,7 @@ def _run_media_processing(task_id: str) -> None:
                 cancelled_mid_batch = False
 
                 for media in medias_batch:
-                    session.refresh(task, attribute_names=["status"])
-                    if task.status == "cancelled":
+                    if _is_task_cancelled(task_id):
                         logger.info("Task cancelled mid-batch. Stopping.")
                         cancelled_mid_batch = True
                         break
@@ -384,9 +380,13 @@ def _run_media_processing(task_id: str) -> None:
                     session.add(task)
                     set_task_progress(task_id, current_step="idle")
 
+                batch_index += 1
                 if batch_dirty:
-                    remaining = _count_media_to_process(session)
-                    task.total = task.processed + remaining
+                    # Recounting is only needed to track records deleted by
+                    # processors; refreshing every few batches is enough.
+                    if batch_index % 5 == 0:
+                        remaining = _count_media_to_process(session)
+                        task.total = task.processed + remaining
                     session.add(task)
                     safe_commit(session)
 
@@ -465,7 +465,8 @@ def run_single_processor(
 
             def _count() -> int:
                 stmt = select(func.count(col(Media.id))).where(
-                    col(Media.missing_since).is_(None)
+                    col(Media.missing_since).is_(None),
+                    col(Media.processing_error).is_(None),
                 )
                 if pending_condition is not None:
                     stmt = stmt.where(pending_condition)
@@ -481,7 +482,10 @@ def run_single_processor(
                     logger.info("Task cancelled. Stopping before next batch.")
                     break
 
-                stmt = select(Media).where(col(Media.missing_since).is_(None))
+                stmt = select(Media).where(
+                    col(Media.missing_since).is_(None),
+                    col(Media.processing_error).is_(None),
+                )
                 if pending_condition is not None:
                     stmt = stmt.where(pending_condition)
                 if use_offset_paging:
@@ -511,6 +515,10 @@ def run_single_processor(
 
                     media_path = Path(media.path) if media.path else None
                     if media_path is None or not media_path.exists():
+                        if not media.missing_since:
+                            media.missing_since = datetime.now(timezone.utc)
+                            session.add(media)
+                            batch_dirty = True
                         offset += 1
                         continue
 
@@ -524,7 +532,7 @@ def run_single_processor(
                     )
                     scenes = _get_or_extract_scenes(media, session)
 
-                    if scenes:
+                    if scenes or target.handles_empty_scenes:
                         set_task_progress(
                             task_id,
                             current_item=os.fspath(media.path),
@@ -532,6 +540,8 @@ def run_single_processor(
                         )
                         target.process(media, session, scenes=scenes)
                         session.add(media)
+                    elif media_path.exists():
+                        _apply_processors(media, [], session, task_id=task_id)
 
                     task.processed += 1
                     batch_dirty = True
@@ -650,7 +660,7 @@ def run_processors_for_media(
                         )
                         scenes = _get_or_extract_scenes(media, session)
 
-                        if scenes:
+                        if scenes or target.handles_empty_scenes:
                             set_task_progress(
                                 task_id,
                                 current_item=os.fspath(media.path),

@@ -83,7 +83,7 @@ def create_tag(
     session: Session = Depends(get_session),
 ):
     if settings.general.presentation_mode:
-        return HTTPException(
+        raise HTTPException(
             status_code=403,
             detail="Not allowed in settings.general.presentation_mode mode.",
         )
@@ -106,7 +106,7 @@ def add_tag_to_media(
     media_id: int, tag_id: int, session: Session = Depends(get_session)
 ):
     if settings.general.presentation_mode:
-        return HTTPException(
+        raise HTTPException(
             status_code=403,
             detail="Not allowed in settings.general.presentation_mode mode.",
         )
@@ -118,7 +118,7 @@ def remove_tag_from_media(
     media_id: int, tag_id: int, session: Session = Depends(get_session)
 ):
     if settings.general.presentation_mode:
-        return HTTPException(
+        raise HTTPException(
             status_code=403,
             detail="Not allowed in settings.general.presentation_mode mode.",
         )
@@ -133,7 +133,7 @@ def remove_tag_from_media(
 @router.delete("/{tag_id}", status_code=status.HTTP_204_NO_CONTENT)
 def remove_tag(tag_id: int, session: Session = Depends(get_session)):
     if settings.general.presentation_mode:
-        return HTTPException(
+        raise HTTPException(
             status_code=403,
             detail="Not allowed in settings.general.presentation_mode mode.",
         )
@@ -148,7 +148,7 @@ def add_tag_to_person(
     person_id: int, tag_id: int, session: Session = Depends(get_session)
 ):
     if settings.general.presentation_mode:
-        return HTTPException(
+        raise HTTPException(
             status_code=403,
             detail="Not allowed in settings.general.presentation_mode mode.",
         )
@@ -166,7 +166,7 @@ def remove_tag_from_person(
     person_id: int, tag_id: int, session: Session = Depends(get_session)
 ):
     if settings.general.presentation_mode:
-        return HTTPException(
+        raise HTTPException(
             status_code=403,
             detail="Not allowed in settings.general.presentation_mode mode.",
         )

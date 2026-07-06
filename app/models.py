@@ -82,6 +82,10 @@ class Face(SQLModel, table=True):
     thumbnail_path: str | None = Field(default=None)
     bbox: list[int] = Field(sa_column=Column(JSON))
     timestamp: float | None = Field(default=None, nullable=True)  # video frame time in seconds
+    # detector confidence (InsightFace det_score); NULL for faces extracted before this column existed
+    det_score: float | None = Field(default=None, nullable=True)
+    # 1.0 = frontal, 0.0 = extreme profile (estimated from the 5-point keypoints)
+    frontality: float | None = Field(default=None, nullable=True)
 
     media: "Media" = Relationship(back_populates="faces")
     person: Optional["Person"] = Relationship(
@@ -234,6 +238,10 @@ class ExifData(SQLModel, table=True):
     lat: float | None = Field(default=None, index=True)
     lon: float | None = Field(default=None, index=True)
 
+    # reverse-geocoded place (filled by the geocode_places task)
+    city: str | None = Field(default=None, index=True)
+    country: str | None = Field(default=None, index=True)
+
     media: Media = Relationship(back_populates="exif")
 
 
@@ -269,3 +277,44 @@ class PersonRelationship(SQLModel, table=True):
     coappearance_count: int = Field(default=0, index=True)
     last_media_id: int | None = Field(default=None, foreign_key="media.id")
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Album(SQLModel, table=True):
+    id: int = Field(default=None, primary_key=True)
+    name: str = Field(index=True)
+    description: str | None = Field(default=None)
+    created_at: datetime = Field(default_factory=datetime.now)
+    cover_media_id: int | None = Field(
+        default=None, foreign_key="media.id", nullable=True
+    )
+
+    class Config:
+        from_attributes = True
+
+
+class AlbumMediaLink(SQLModel, table=True):
+    album_id: int = Field(foreign_key="album.id", primary_key=True)
+    media_id: int = Field(foreign_key="media.id", primary_key=True)
+    created_at: datetime = Field(default_factory=datetime.now)
+
+
+class Event(SQLModel, table=True):
+    """Automatically clustered group of media taken close together in time."""
+
+    id: int = Field(default=None, primary_key=True)
+    # place label ("Berlin" / "Berlin, DE"); date range lives in start/end
+    title: str | None = Field(default=None)
+    start_at: datetime = Field(index=True)
+    end_at: datetime = Field(index=True)
+    media_count: int = Field(default=0)
+    cover_media_id: int | None = Field(
+        default=None, foreign_key="media.id", nullable=True
+    )
+
+    class Config:
+        from_attributes = True
+
+
+class EventMediaLink(SQLModel, table=True):
+    event_id: int = Field(foreign_key="event.id", primary_key=True)
+    media_id: int = Field(foreign_key="media.id", primary_key=True)

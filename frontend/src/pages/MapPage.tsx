@@ -2,7 +2,7 @@ import { Box, useTheme } from "@mui/material";
 import { useMemo } from "react";
 import type { LatLngExpression, Map as LeafletMap } from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   MapContainer,
   Marker,
@@ -36,23 +36,23 @@ interface FocusLocation {
   zoom?: number;
 }
 
+const FETCH_DEBOUNCE_MS = 250;
+
 function MapController({
   onLocationsChange,
   onMapChange,
-  focus,
+  onZoomChange,
 }: {
   onLocationsChange: (locs: MediaLocation[]) => void;
   onMapChange: (map: L.Map) => void;
-  focus?: FocusLocation;
+  onZoomChange: (zoom: number) => void;
 }) {
   const map = useMap();
-
-  useEffect(() => {
-    onMapChange(map);
-    fetchLocationsForView();
-  }, [map, onMapChange]);
+  const debounceRef = useRef<number | null>(null);
+  const requestSeqRef = useRef(0);
 
   const fetchLocationsForView = useCallback(() => {
+    const seq = ++requestSeqRef.current;
     const bounds = map.getBounds();
     getMediaLocations(
       bounds.getNorth(),
@@ -60,18 +60,40 @@ function MapController({
       bounds.getEast(),
       bounds.getWest()
     )
-      .then(onLocationsChange)
+      .then((locs) => {
+        // Drop stale responses that finished after a newer request started.
+        if (seq === requestSeqRef.current) onLocationsChange(locs);
+      })
       .catch(console.error);
   }, [map, onLocationsChange]);
 
-  useMapEvents({
-    load: () => {
-      if (!focus) {
-        fetchLocationsForView();
+  const scheduleFetch = useCallback(() => {
+    if (debounceRef.current !== null) {
+      window.clearTimeout(debounceRef.current);
+    }
+    debounceRef.current = window.setTimeout(() => {
+      debounceRef.current = null;
+      fetchLocationsForView();
+    }, FETCH_DEBOUNCE_MS);
+  }, [fetchLocationsForView]);
+
+  useEffect(() => {
+    onMapChange(map);
+    onZoomChange(map.getZoom());
+    fetchLocationsForView();
+    return () => {
+      if (debounceRef.current !== null) {
+        window.clearTimeout(debounceRef.current);
       }
+    };
+  }, [map, onMapChange, onZoomChange, fetchLocationsForView]);
+
+  useMapEvents({
+    moveend: scheduleFetch,
+    zoomend: () => {
+      onZoomChange(map.getZoom());
+      scheduleFetch();
     },
-    moveend: fetchLocationsForView,
-    zoomend: fetchLocationsForView,
   });
 
   return null;
@@ -82,6 +104,7 @@ export default function MapPage() {
   const [searchParams] = useSearchParams();
   const [locations, setLocations] = useState<MediaLocation[]>([]);
   const [mapInstance, setMapInstance] = useState<LeafletMap | null>(null);
+  const [zoom, setZoom] = useState<number | null>(null);
   const theme = useTheme();
 
   const focus = useMemo((): FocusLocation | undefined => {
@@ -106,7 +129,7 @@ export default function MapPage() {
   }, [mapInstance, focus]);
 
   // Our custom hook processes the raw locations into clusters
-  const clusters = useGridClustering({ locations, map: mapInstance });
+  const clusters = useGridClustering({ locations, map: mapInstance, zoom });
 
   const initialCenter: LatLngExpression = focus
     ? [focus.latitude, focus.longitude]
@@ -137,7 +160,7 @@ export default function MapPage() {
         <MapController
           onLocationsChange={setLocations}
           onMapChange={setMapInstance}
-          focus={focus}
+          onZoomChange={setZoom}
         />
 
         {clusters.map((point) => {

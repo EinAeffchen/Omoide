@@ -31,6 +31,7 @@ from .person_clustering import (
     rebuild_person_embedding,
     run_person_clustering,
 )
+from .organize import run_build_events, run_geocode_places
 from .pipeline import run_cleanup_and_chain, run_scan_and_chain
 from .relationships import rebuild_person_relationships
 from .scan import run_scan
@@ -55,6 +56,8 @@ __all__ = [
     "run_single_processor",
     "run_person_clustering",
     "rebuild_person_relationships",
+    "run_build_events",
+    "run_geocode_places",
     "run_scan",
     "run_scan_and_chain",
     "state",

@@ -1,13 +1,29 @@
 import { API } from "../config";
 import { AppConfig, ProfileListResponse, ProfileHealth } from "../types";
 
-export const getConfig = async (): Promise<AppConfig> => {
-  const response = await fetch(`${API}/api/config/`);
-  console.log(response)
-  if (!response.ok) {
-    throw new Error("Failed to fetch config");
+// Share a single in-flight/settled promise so concurrent and repeat callers
+// (e.g. per-navigation detail pages) reuse one request.
+let configPromise: Promise<AppConfig> | null = null;
+
+export const getConfig = (): Promise<AppConfig> => {
+  if (!configPromise) {
+    configPromise = (async () => {
+      const response = await fetch(`${API}/api/config/`);
+      if (!response.ok) {
+        throw new Error("Failed to fetch config");
+      }
+      return response.json();
+    })().catch((error) => {
+      // Do not cache failures; allow the next caller to retry.
+      configPromise = null;
+      throw error;
+    });
   }
-  return response.json();
+  return configPromise;
+};
+
+const invalidateConfigCache = () => {
+  configPromise = null;
 };
 
 export const saveConfig = async (
@@ -28,6 +44,7 @@ export const saveConfig = async (
     const err = await response.json().catch(() => ({}));
     throw new Error(err?.detail?.message || err?.detail || "Failed to save config");
   }
+  invalidateConfigCache();
   return response.json();
 };
 
@@ -40,6 +57,7 @@ export const reloadConfig = async (): Promise<AppConfig> => {
   }
 
   // Fetch latest config from backend so we can sync frontend runtime flags
+  invalidateConfigCache();
   const latest = await getConfig();
 
   // In production builds, config getters read from window.runtimeConfig.

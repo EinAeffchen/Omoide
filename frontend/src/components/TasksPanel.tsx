@@ -43,6 +43,16 @@ import LabelIcon from "@mui/icons-material/Label";
 import BlurOnIcon from "@mui/icons-material/BlurOn";
 import CameraAltIcon from "@mui/icons-material/CameraAlt";
 
+// Friendly names for the raw current_step keys published by backend tasks.
+// Unknown steps fall back to the raw key.
+const STEP_LABELS: Record<string, string> = {
+  clustering_batches: "Preparing clustering batches",
+  clustering_batch: "Clustering faces",
+  clustering_unassigned: "Clustering faces",
+  merging_similar_persons: "Merging similar people",
+  matching_known_persons: "Matching faces to known people",
+};
+
 type TaskLabels = Partial<Record<TaskType, string>>;
 const TASK_LABELS: TaskLabels = {
   scan: "Scan for New Files",
@@ -55,6 +65,8 @@ const TASK_LABELS: TaskLabels = {
   run_processor_for_media: "Rerun Processors (Selection)",
   auto_tag_custom: "Apply New Custom Tags",
   backfill_face_timestamps: "Backfill Face Timestamps",
+  build_events: "Cluster Events",
+  geocode_places: "Geocode Places",
 };
 
 const PROCESSOR_ACTIONS = [
@@ -443,7 +455,7 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
                     {t.status === "running" && (
                       <Typography variant="caption" color="text.secondary" noWrap sx={{ display: "block" }}>
                         {t.current_step
-                          ? `${t.current_step}`
+                          ? STEP_LABELS[t.current_step] ?? t.current_step
                           : showIndeterminate
                             ? "Working..."
                             : ""}

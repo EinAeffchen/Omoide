@@ -22,14 +22,21 @@ export const getBlurryMedia = async (options: BlurQuery = {}): Promise<BlurPage>
   return response.json();
 };
 
+export interface BlurResolvePayload {
+  action: BlurResolveAction;
+  media_ids?: number[];
+  select_all?: boolean;
+  threshold?: number;
+  media_type?: "image" | "video";
+}
+
 export const resolveBlurry = async (
-  mediaIds: number[],
-  action: BlurResolveAction
+  payload: BlurResolvePayload
 ): Promise<{ removed: number }> => {
   const response = await fetch(`${API}/api/blur/resolve`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ media_ids: mediaIds, action }),
+    body: JSON.stringify(payload),
   });
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));

@@ -1,21 +1,17 @@
-import React from "react";
+import React, { Suspense, lazy } from "react";
 import { Routes, Route, useLocation } from "react-router-dom";
+import { Box, CircularProgress } from "@mui/material";
 import IndexPage from "./pages/IndexPage";
 import MediaDetailPage from "./pages/MediaDetailPage";
-import PersonDetailPage from "./pages/PersonDetailPage";
 import { Layout } from "./components/Layout";
 import TagDetailPage from "./pages/TagDetailPage";
 import ImagesPage from "./pages/ImagesPage";
 import VideosPage from "./pages/VideosPage";
 import PeoplePage from "./pages/PeoplePage";
 import TagsPage from "./pages/TagPage";
-import MapPage from "./pages/MapPage";
 import SearchPage from "./pages/SearchResultPage";
-import OrphanFacesPage from "./pages/OrphanFaces";
-import MapEditorPage from "./pages/MapEditorPage";
 import BlurryPage from "./pages/BlurryPage";
 import DuplicatesPage from "./pages/DuplicatesPage";
-import ConfigurationPage from "./pages/ConfigurationPage";
 import MissingFilesPage from "./pages/MissingFilesPage";
 import NopersonsPage from "./pages/NopersonsPage";
 import UntaggedPage from "./pages/UntaggedPage";
@@ -25,12 +21,39 @@ import NoExifDatePage from "./pages/NoExifDatePage";
 import BrokenMediaPage from "./pages/BrokenMediaPage";
 import { WriteModeBoundary } from "./components/ReadOnlyBoundary";
 
+const PersonDetailPage = lazy(() => import("./pages/PersonDetailPage"));
+const MapPage = lazy(() => import("./pages/MapPage"));
+const MapEditorPage = lazy(() => import("./pages/MapEditorPage"));
+const ConfigurationPage = lazy(() => import("./pages/ConfigurationPage"));
+const OrphanFacesPage = lazy(() => import("./pages/OrphanFaces"));
+const HighlightsPage = lazy(() => import("./pages/HighlightsPage"));
+const StatisticsPage = lazy(() => import("./pages/StatisticsPage"));
+const AlbumsPage = lazy(() => import("./pages/AlbumsPage"));
+const AlbumDetailPage = lazy(() => import("./pages/AlbumDetailPage"));
+const EventsPage = lazy(() => import("./pages/EventsPage"));
+const EventDetailPage = lazy(() => import("./pages/EventDetailPage"));
+const PlacesPage = lazy(() => import("./pages/PlacesPage"));
+const PlaceMediaPage = lazy(() => import("./pages/PlaceMediaPage"));
+
+const RouteFallback = () => (
+  <Box
+    sx={{
+      display: "flex",
+      justifyContent: "center",
+      alignItems: "center",
+      minHeight: "50vh",
+    }}
+  >
+    <CircularProgress />
+  </Box>
+);
+
 export const AppRoutes = () => {
   const location = useLocation();
   const backgroundLocation = location.state?.backgroundLocation;
 
   return (
-    <>
+    <Suspense fallback={<RouteFallback />}>
       <Routes location={backgroundLocation || location}>
         <Route path="/" element={<Layout />}>
           <Route index element={<IndexPage />} />
@@ -59,6 +82,14 @@ export const AppRoutes = () => {
           <Route path="/people" element={<PeoplePage />} />
           <Route path="/person/:id" element={<PersonDetailPage />} />
           <Route path="/tag/:id" element={<TagDetailPage />} />
+          <Route path="/highlights" element={<HighlightsPage />} />
+          <Route path="/statistics" element={<StatisticsPage />} />
+          <Route path="/albums" element={<AlbumsPage />} />
+          <Route path="/album/:id" element={<AlbumDetailPage />} />
+          <Route path="/events" element={<EventsPage />} />
+          <Route path="/event/:id" element={<EventDetailPage />} />
+          <Route path="/places" element={<PlacesPage />} />
+          <Route path="/places/media" element={<PlaceMediaPage />} />
           <Route
             path="/blur"
             element={
@@ -146,6 +177,6 @@ export const AppRoutes = () => {
           <Route path="/medium/:id" element={<MediaDetailPage />} />
         </Routes>
       )}
-    </>
+    </Suspense>
   );
 };

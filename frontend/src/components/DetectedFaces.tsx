@@ -1,4 +1,4 @@
-import React, { useRef, useCallback, useState, useEffect, useMemo } from "react";
+import React, { useCallback, useState, useEffect, useMemo } from "react";
 import {
   Avatar,
   Box,
@@ -25,6 +25,7 @@ import ViewModuleIcon from "@mui/icons-material/ViewModule";
 import { FaceRead, Person } from "../types";
 import FaceCard from "./FaceCard";
 import FaceMediaGroup from "./FaceMediaGroup";
+import ConfirmDialog from "./ConfirmDialog";
 import { useFaceSelection } from "../hooks/useFaceSelection";
 import { searchPersonsByName } from "../services/personActions";
 import config, { API } from "../config";
@@ -34,10 +35,10 @@ interface DetectedFacesProps {
   isProcessing: boolean;
   faces: FaceRead[];
   title: string;
-  onDelete: (faceIds: number[]) => void;
-  onDetach: (faceIds: number[]) => void;
-  onAssign: (faceIds: number[], personId: number) => void;
-  onCreateMultiple?: (faceIds: number[], name?: string) => Promise<Person>;
+  onDelete: (faceIds: number[]) => void | Promise<void>;
+  onDetach: (faceIds: number[]) => void | Promise<void>;
+  onAssign: (faceIds: number[], personId: number) => void | Promise<void>;
+  onCreateMultiple?: (faceIds: number[], name?: string) => Promise<Person | void>;
   personId?: number;
 
   profileFaceId?: number;
@@ -73,7 +74,6 @@ export default function DetectedFaces({
   onClearPinned,
 }: DetectedFacesProps) {
   const theme = useTheme();
-  const observerRef = useRef<IntersectionObserver | null>(null);
   const {
     selectedFaceIds,
     onToggleSelect,
@@ -99,6 +99,7 @@ export default function DetectedFaces({
   const [assignTargetPerson, setAssignTargetPerson] = useState<Person | null>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [openCreateDialog, setOpenCreateDialog] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [newPersonName, setNewPersonName] = useState("");
 
   const canMutate = !config.PRESENTATION_MODE;
@@ -147,22 +148,28 @@ export default function DetectedFaces({
     return name.slice(0, 2).toUpperCase() || "?";
   }, []);
 
-  const lastCardRef = useCallback(
-    (node: HTMLDivElement | null) => {
-      if (isLoadingMore) return;
-      if (observerRef.current) observerRef.current.disconnect();
-      observerRef.current = new IntersectionObserver(
-        (entries) => {
-          if (entries[0].isIntersecting && hasMore && onLoadMore && !isLoadingMore) {
-            onLoadMore();
-          }
-        },
-        { threshold: 0.1, rootMargin: "0px 0px 100px 0px" },
-      );
-      if (node) observerRef.current.observe(node);
-    },
-    [isLoadingMore, hasMore, onLoadMore],
+  const [lastCardNode, setLastCardNode] = useState<HTMLDivElement | null>(
+    null,
   );
+  const lastCardRef = useCallback((node: HTMLDivElement | null) => {
+    setLastCardNode(node);
+  }, []);
+
+  useEffect(() => {
+    if (!lastCardNode || !hasMore || !onLoadMore || isLoadingMore) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          onLoadMore();
+        }
+      },
+      { threshold: 0.1, rootMargin: "0px 0px 100px 0px" },
+    );
+    observer.observe(lastCardNode);
+    return () => {
+      observer.disconnect();
+    };
+  }, [lastCardNode, hasMore, isLoadingMore, onLoadMore]);
 
   useEffect(() => {
     onClearSelection();
@@ -185,18 +192,30 @@ export default function DetectedFaces({
       setAssignCandidates([]);
       return;
     }
+    const controller = new AbortController();
     const handler = setTimeout(async () => {
       setIsSearching(true);
       try {
-        const results = await searchPersonsByName(assignSearchTerm);
+        const results = await searchPersonsByName(
+          assignSearchTerm,
+          controller.signal,
+        );
+        if (controller.signal.aborted) return;
         setAssignCandidates(results);
       } catch (error) {
-        console.error("Failed to search for people:", error);
+        if (!controller.signal.aborted) {
+          console.error("Failed to search for people:", error);
+        }
       } finally {
-        setIsSearching(false);
+        if (!controller.signal.aborted) {
+          setIsSearching(false);
+        }
       }
     }, 300);
-    return () => clearTimeout(handler);
+    return () => {
+      clearTimeout(handler);
+      controller.abort();
+    };
   }, [assignSearchTerm, canMutate]);
 
   if (faces.length === 0 && !isLoadingMore && !hasMore && title === "Detected Faces") {
@@ -208,15 +227,36 @@ export default function DetectedFaces({
 
   const handleAssign = async (faceIds: number[], assignedToPersonId: number) => {
     if (!canMutate) return;
-    onClearSelection();
-    await onAssign(faceIds, assignedToPersonId);
+    try {
+      await onAssign(faceIds, assignedToPersonId);
+      onClearSelection();
+    } catch (error) {
+      console.error("Failed to assign faces:", error);
+    }
   };
 
   const handleDetach = async () => {
     if (!onDetach || selectedFaceIds.length === 0 || !canMutate) return;
     const faceIds = [...selectedFaceIds];
-    onClearSelection();
-    await onDetach(faceIds);
+    try {
+      await onDetach(faceIds);
+      onClearSelection();
+    } catch (error) {
+      console.error("Failed to detach faces:", error);
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!onDelete || selectedFaceIds.length === 0 || !canMutate) return;
+    const faceIds = [...selectedFaceIds];
+    try {
+      await onDelete(faceIds);
+      onClearSelection();
+      setConfirmDeleteOpen(false);
+    } catch (error) {
+      console.error("Failed to delete faces:", error);
+      setConfirmDeleteOpen(false);
+    }
   };
 
   const handleCloseAssignDialog = () => {
@@ -389,7 +429,7 @@ export default function DetectedFaces({
                 color="error"
                 size="small"
                 disabled={isProcessing}
-                onClick={() => onDelete(selectedFaceIds)}
+                onClick={() => setConfirmDeleteOpen(true)}
               >
                 Delete
               </Button>
@@ -436,10 +476,14 @@ export default function DetectedFaces({
           <Button
             onClick={async () => {
               if (onCreateMultiple && canMutate) {
-                await onCreateMultiple(selectedFaceIds, newPersonName);
-                setOpenCreateDialog(false);
-                setSelectedFaceIds([]);
-                setNewPersonName("");
+                try {
+                  await onCreateMultiple(selectedFaceIds, newPersonName);
+                  setOpenCreateDialog(false);
+                  setSelectedFaceIds([]);
+                  setNewPersonName("");
+                } catch (error) {
+                  console.error("Failed to create person:", error);
+                }
               }
             }}
           >
@@ -447,6 +491,16 @@ export default function DetectedFaces({
           </Button>
         </DialogActions>
       </Dialog>
+
+      <ConfirmDialog
+        open={canMutate && confirmDeleteOpen}
+        title="Delete Faces"
+        message={`Delete ${selectedFaceIds.length} selected face${selectedFaceIds.length === 1 ? "" : "s"}? This cannot be undone.`}
+        confirmLabel="Delete"
+        loading={isProcessing}
+        onConfirm={handleConfirmDelete}
+        onClose={() => setConfirmDeleteOpen(false)}
+      />
 
       {/* Assign-to-person dialog */}
       <Dialog

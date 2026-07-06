@@ -20,14 +20,20 @@ export const getUntaggedMedia = async (options: UntaggedQuery = {}): Promise<Unt
   return response.json();
 };
 
+export interface UntaggedResolvePayload {
+  action: UntaggedResolveAction;
+  media_ids?: number[];
+  select_all?: boolean;
+  media_type?: "image" | "video";
+}
+
 export const resolveUntagged = async (
-  mediaIds: number[],
-  action: UntaggedResolveAction
+  payload: UntaggedResolvePayload
 ): Promise<{ removed: number }> => {
   const response = await fetch(`${API}/api/untagged/resolve`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ media_ids: mediaIds, action }),
+    body: JSON.stringify(payload),
   });
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));

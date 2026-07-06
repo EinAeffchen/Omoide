@@ -22,14 +22,21 @@ export const getNoPersonsMedia = async (options: NoPersonsQuery = {}): Promise<N
   return response.json();
 };
 
+export interface NoPersonsResolvePayload {
+  action: NoPersonsResolveAction;
+  media_ids?: number[];
+  select_all?: boolean;
+  media_type?: "image" | "video";
+  scope?: "processed" | "all";
+}
+
 export const resolveNoPersons = async (
-  mediaIds: number[],
-  action: NoPersonsResolveAction
+  payload: NoPersonsResolvePayload
 ): Promise<{ removed: number }> => {
   const response = await fetch(`${API}/api/nopersons/resolve`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ media_ids: mediaIds, action }),
+    body: JSON.stringify(payload),
   });
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));

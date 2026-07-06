@@ -42,6 +42,12 @@ class MediaProcessor(ABC):
         """
         return {}
 
+    # Whether process() can run when scene extraction produced nothing (e.g.
+    # processors that read the media file directly instead of using frames).
+    # Processors with a get_pending_condition() based on their own output must
+    # set this so sceneless media still get marked as processed.
+    handles_empty_scenes: bool = False
+
     def get_pending_condition(self) -> Any | None:
         """Return an SQLAlchemy filter condition for media not yet processed by this processor.
         Return None if the processor has no completion flag (runs on all media)."""

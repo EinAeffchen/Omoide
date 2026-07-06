@@ -93,11 +93,11 @@ export default function SimilarPersonCard({
         <>
           <Checkbox
             checked={selected}
-            onChange={(event) => {
+            onChange={handleToggle}
+            onClick={(event) => {
+              event.preventDefault();
               event.stopPropagation();
-              handleToggle();
             }}
-            onClick={handleToggle}
             sx={{
               position: "absolute",
               top: 8,

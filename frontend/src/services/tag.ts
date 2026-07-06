@@ -10,10 +10,12 @@ export const getTags = async (
     params.append("cursor", cursor);
   }
   const response = await fetch(`${API}/api/tags/?${params.toString()}`);
+  if (!response.ok) throw new Error("Failed to fetch tags");
   return response.json();
 };
 
 export const getTag = async (id: string): Promise<Tag> => {
   const response = await fetch(`${API}/api/tags/${id}`);
+  if (!response.ok) throw new Error(`Failed to load tag (${response.status})`);
   return response.json();
 };

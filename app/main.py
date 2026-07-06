@@ -77,19 +77,24 @@ from sqlmodel import Session, select
 
 import app.database as db
 from app.api import (
+    albums,
     blur,
     broken,
     config,
     duplicates,
+    events,
     face,
     lowresolution,
     media,
+    memories,
     missing,
     noexifdate,
     nopersons,
     person,
+    places,
     search,
     shortvideos,
+    stats,
     tags,
     tasks,
     untagged,
@@ -243,7 +248,6 @@ def _cleanup_tasks_on_shutdown():
         logger.warning("Task cleanup on shutdown failed: %s", e)
 
 
-@asynccontextmanager
 def _prewarm_clip() -> None:
     """Load the CLIP bundle in a background thread at startup.
 
@@ -257,6 +261,7 @@ def _prewarm_clip() -> None:
         logger.warning("OpenCLIP pre-warm failed (will retry on first use): %s", exc)
 
 
+@asynccontextmanager
 async def lifespan(app: FastAPI):
     # Load the ML model
     load_processors()
@@ -350,6 +355,11 @@ app.include_router(
 )
 app.include_router(noexifdate, prefix="/api/noexifdate", tags=["noexifdate"])
 app.include_router(broken.router, prefix="/api/broken", tags=["broken"])
+app.include_router(memories, prefix="/api/memories", tags=["memories"])
+app.include_router(stats, prefix="/api/stats", tags=["stats"])
+app.include_router(albums, prefix="/api/albums", tags=["albums"])
+app.include_router(events, prefix="/api/events", tags=["events"])
+app.include_router(places, prefix="/api/places", tags=["places"])
 
 
 @app.get("/thumbnails/{file_path:path}", include_in_schema=False)
@@ -359,8 +369,7 @@ async def serve_thumbnail(file_path: str):
     # Prevent path traversal by resolving and ensuring base is a parent
     try:
         full_path = (base / requested).resolve()
-        if not str(full_path).startswith(str(base.resolve())):
-            raise HTTPException(status_code=404, detail="File not found")
+        full_path.relative_to(base.resolve())
     except Exception:
         raise HTTPException(status_code=404, detail="File not found")
 

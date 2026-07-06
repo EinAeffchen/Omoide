@@ -32,6 +32,11 @@ import EventBusyIcon from "@mui/icons-material/EventBusy";
 import ReportProblemIcon from "@mui/icons-material/ReportProblem";
 import CheckBoxOutlineBlankIcon from "@mui/icons-material/CheckBoxOutlineBlank";
 import CheckBoxIcon from "@mui/icons-material/CheckBox";
+import PhotoAlbumIcon from "@mui/icons-material/PhotoAlbum";
+import StarIcon from "@mui/icons-material/Star";
+import TheatersIcon from "@mui/icons-material/Theaters";
+import PublicIcon from "@mui/icons-material/Public";
+import InsightsIcon from "@mui/icons-material/Insights";
 import config from "../config";
 
 const DRAWER_WIDTH = 280;
@@ -67,6 +72,9 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
       items: [
         { label: "Images", to: "/images", icon: <PhotoLibraryIcon /> },
         { label: "Videos", to: "/videos", icon: <MovieIcon /> },
+        { label: "Albums", to: "/albums", icon: <PhotoAlbumIcon /> },
+        { label: "Events", to: "/events", icon: <TheatersIcon /> },
+        { label: "Highlights", to: "/highlights", icon: <StarIcon /> },
         { label: "Tags", to: "/tags", icon: <LabelIcon /> },
       ],
     },
@@ -86,6 +94,7 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
       label: "Map",
       items: [
         { label: "Map View", to: "/map", icon: <MapIcon /> },
+        { label: "Places", to: "/places", icon: <PublicIcon /> },
         { label: "Add Locations", to: "/geotagger", icon: <AddLocationIcon /> },
       ],
     },
@@ -113,6 +122,11 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
     {
       label: "System",
       items: [
+        {
+          label: "Statistics",
+          to: "/statistics",
+          icon: <InsightsIcon />,
+        },
         {
           label: "Configuration",
           to: "/configuration",
@@ -149,6 +163,18 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
     ...section,
     items: section.items.filter((it) => !shouldHidePath(it.to)),
   })).filter((section) => section.items.length > 0);
+
+  // Map detail routes to their owning section so a sensible nav item highlights
+  const activePath = (() => {
+    const { pathname } = location;
+    if (pathname.startsWith("/tag/")) return "/tags";
+    if (pathname.startsWith("/person/")) return "/people";
+    if (pathname.startsWith("/album/")) return "/albums";
+    if (pathname.startsWith("/event/")) return "/events";
+    if (pathname.startsWith("/places/")) return "/places";
+    if (pathname.startsWith("/medium/")) return null;
+    return pathname;
+  })();
 
   return (
     <Box
@@ -240,7 +266,10 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
               {section.label}
             </ListSubheader>
             {section.items.map((item) => {
-              const isActive = location.pathname.startsWith(item.to);
+              const isActive =
+                activePath !== null &&
+                (activePath === item.to ||
+                  activePath.startsWith(`${item.to}/`));
               return (
                 <ListItem key={item.to} disablePadding sx={{ mb: 0.5 }}>
                   <ListItemButton

@@ -18,7 +18,9 @@ from app.tasks import (
     compute_blur_scores,
     create_and_run_task,
     run_backfill_face_timestamps,
+    run_build_events,
     run_duplicate_detection,
+    run_geocode_places,
     run_media_processing,
     run_person_clustering,
     run_processors_for_media,
@@ -34,7 +36,7 @@ from app.tasks import (
 from app.tasks import (
     state as task_state,
 )
-from app.utils import get_image_taken_date
+from app.utils import get_image_taken_date, get_video_taken_date
 
 router = APIRouter()
 
@@ -75,13 +77,17 @@ async def start_creation_refresh(
             break
 
         for media in media_batch:
-            if media.duration is not None:
-                continue
-
             media_path_obj = Path(media.path)
             if not media_path_obj.exists():
                 continue
-            media.created_at = get_image_taken_date(media_path_obj)
+            if media.duration is not None:
+                # Keep the existing date when the container has no usable
+                # creation_time instead of resetting it to file ctime.
+                video_date = get_video_taken_date(media_path_obj)
+                if video_date is not None:
+                    media.created_at = video_date
+            else:
+                media.created_at = get_image_taken_date(media_path_obj)
 
         offset += batch_size
         session.commit()
@@ -180,6 +186,40 @@ async def start_blur_scoring(
 
 
 @router.post(
+    "/build_events",
+    response_model=ProcessingTask,
+    summary="Cluster the library into time-based events",
+)
+async def start_build_events(
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+):
+    return create_and_run_task(
+        session=session,
+        background_tasks=background_tasks,
+        task_type="build_events",
+        callable_task=run_build_events,
+    )
+
+
+@router.post(
+    "/geocode_places",
+    response_model=ProcessingTask,
+    summary="Reverse-geocode media GPS data into places (offline)",
+)
+async def start_geocode_places(
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+):
+    return create_and_run_task(
+        session=session,
+        background_tasks=background_tasks,
+        task_type="geocode_places",
+        callable_task=run_geocode_places,
+    )
+
+
+@router.post(
     "/run_processor/{processor_name}",
     response_model=ProcessingTask,
     summary="Run a single processor over all media",
@@ -254,7 +294,7 @@ async def start_backfill_face_timestamps(
 @router.post("/reset/processing", summary="Resets media processing status")
 def reset_processing(session: Session = Depends(get_session)):
     if settings.general.presentation_mode:
-        return HTTPException(
+        raise HTTPException(
             status_code=403,
             detail="Not allowed in settings.general.presentation_mode mode.",
         )
@@ -264,7 +304,7 @@ def reset_processing(session: Session = Depends(get_session)):
 @router.post("/reset/clustering", summary="Resets person clustering")
 def reset_clustering(session: Session = Depends(get_session)):
     if settings.general.presentation_mode:
-        return HTTPException(
+        raise HTTPException(
             status_code=403,
             detail="Not allowed in settings.general.presentation_mode mode.",
         )
@@ -277,7 +317,7 @@ def cancel_task(
     session: Session = Depends(get_session),
 ):
     if settings.general.presentation_mode:
-        return HTTPException(
+        raise HTTPException(
             status_code=403,
             detail="Not allowed in settings.general.presentation_mode mode.",
         )

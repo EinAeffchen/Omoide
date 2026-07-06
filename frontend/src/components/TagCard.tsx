@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Link as RouterLink } from "react-router-dom";
-import { Box, Typography, IconButton, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, Button, useTheme } from "@mui/material";
+import { Box, Typography, IconButton, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, Button, Snackbar, Alert, useTheme } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import MovieIcon from "@mui/icons-material/Movie";
 import PersonIcon from "@mui/icons-material/Person";
@@ -19,6 +19,7 @@ export default function TagCard({ tag, onTagDeleted }: TagCardProps) {
   const theme = useTheme();
   const [hovered, setHovered] = useState(false);
   const [openConfirmDialog, setOpenConfirmDialog] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const handleOpenConfirmDialog = (event: React.MouseEvent) => {
     event.preventDefault();
@@ -37,7 +38,7 @@ export default function TagCard({ tag, onTagDeleted }: TagCardProps) {
       onTagDeleted(tag.id);
     } catch (error) {
       console.error("Error during tag deletion:", error);
-      alert(`An error occurred while deleting tag "${tag.name}".`);
+      setErrorMessage(`An error occurred while deleting tag "${tag.name}".`);
     }
   };
 
@@ -212,8 +213,8 @@ export default function TagCard({ tag, onTagDeleted }: TagCardProps) {
         </DialogTitle>
         <DialogContent>
           <DialogContentText sx={{ color: "text.secondary" }}>
-            Are you sure you want to permanently delete the tag **"{tag.name}
-            "**? This action cannot be undone.
+            Are you sure you want to permanently delete the tag{" "}
+            <strong>"{tag.name}"</strong>? This action cannot be undone.
           </DialogContentText>
         </DialogContent>
         <DialogActions sx={{ p: "8px 24px 16px 24px" }}>
@@ -228,6 +229,15 @@ export default function TagCard({ tag, onTagDeleted }: TagCardProps) {
           </Button>
         </DialogActions>
       </Dialog>
+      <Snackbar
+        open={!!errorMessage}
+        autoHideDuration={6000}
+        onClose={() => setErrorMessage(null)}
+      >
+        <Alert severity="error" onClose={() => setErrorMessage(null)}>
+          {errorMessage}
+        </Alert>
+      </Snackbar>
     </>
   );
 }

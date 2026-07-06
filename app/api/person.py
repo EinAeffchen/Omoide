@@ -683,7 +683,7 @@ def update_person(
     session: Session = Depends(get_session),
 ):
     if settings.general.presentation_mode:
-        return HTTPException(
+        raise HTTPException(
             status_code=403,
             detail="Not allowed in settings.general.presentation_mode mode.",
         )
@@ -706,7 +706,7 @@ def set_profile_face(
     session: Session = Depends(get_session),
 ):
     if settings.general.presentation_mode:
-        return HTTPException(
+        raise HTTPException(
             status_code=403,
             detail="Not allowed in settings.general.presentation_mode mode.",
         )
@@ -729,7 +729,7 @@ def auto_profile_face(
     session: Session = Depends(get_session),
 ):
     if settings.general.presentation_mode:
-        return HTTPException(
+        raise HTTPException(
             status_code=403,
             detail="Not allowed in settings.general.presentation_mode mode.",
         )
@@ -907,7 +907,7 @@ def merge_persons(
     session: Session = Depends(get_session),
 ):
     if settings.general.presentation_mode:
-        return HTTPException(
+        raise HTTPException(
             status_code=403,
             detail="Not allowed in settings.general.presentation_mode mode.",
         )
@@ -926,7 +926,7 @@ def merge_multiple_persons(
     session: Session = Depends(get_session),
 ):
     if settings.general.presentation_mode:
-        return HTTPException(
+        raise HTTPException(
             status_code=403,
             detail="Not allowed in settings.general.presentation_mode mode.",
         )
@@ -1089,7 +1089,7 @@ def auto_merge_similar_persons(
     session: Session = Depends(get_session),
 ):
     if settings.general.presentation_mode:
-        return HTTPException(
+        raise HTTPException(
             status_code=403,
             detail="Not allowed in settings.general.presentation_mode mode.",
         )

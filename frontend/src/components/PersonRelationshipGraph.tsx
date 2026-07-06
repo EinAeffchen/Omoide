@@ -864,9 +864,18 @@ const PersonRelationshipGraph: React.FC<PersonRelationshipGraphProps> = ({
     height = 560,
   } = useResizeObserver<HTMLDivElement>();
 
+  const navigateRef = useRef(navigate);
+  navigateRef.current = navigate;
+  const sizeRef = useRef({ width, height });
+  sizeRef.current = { width, height };
+
   const [showEdgeLabels, setShowEdgeLabels] = useState(true);
+  const showEdgeLabelsRef = useRef(showEdgeLabels);
+  showEdgeLabelsRef.current = showEdgeLabels;
   const [spacing, setSpacing] = useState(() => clampForceSpacing(140));
   const [minWeight, setMinWeight] = useState(1);
+  const [spacingDraft, setSpacingDraft] = useState(spacing);
+  const [minWeightDraft, setMinWeightDraft] = useState(minWeight);
 
   const setContainerRef = useCallback(
     (node: HTMLDivElement | null) => {
@@ -893,12 +902,14 @@ const PersonRelationshipGraph: React.FC<PersonRelationshipGraphProps> = ({
   }, [graph]);
 
   useEffect(() => {
-    setMinWeight((current) => {
+    const clampToSummary = (current: number) => {
       const { min, max } = weightSummary;
       if (current < min) return min;
       if (current > max) return max;
       return current;
-    });
+    };
+    setMinWeight(clampToSummary);
+    setMinWeightDraft(clampToSummary);
   }, [weightSummary]);
 
   const processedData: GraphData | undefined = useMemo(() => {
@@ -1109,7 +1120,7 @@ const PersonRelationshipGraph: React.FC<PersonRelationshipGraphProps> = ({
         visualWidth,
         intensity,
         formattedLabel,
-        label: showEdgeLabels ? formattedLabel : "",
+        label: showEdgeLabelsRef.current ? formattedLabel : "",
         style: {
           stroke: color,
           lineWidth: denseGraph
@@ -1137,7 +1148,6 @@ const PersonRelationshipGraph: React.FC<PersonRelationshipGraphProps> = ({
   }, [
     graph,
     minWeight,
-    showEdgeLabels,
     theme.palette.grey,
     theme.palette.primary,
     weightSummary,
@@ -1164,8 +1174,8 @@ const PersonRelationshipGraph: React.FC<PersonRelationshipGraphProps> = ({
 
     const graphInstance = new G6Graph({
       container: containerRef.current,
-      width,
-      height,
+      width: sizeRef.current.width,
+      height: sizeRef.current.height,
       pixelRatio: Math.min(2, window.devicePixelRatio * 1.1),
       behaviors: ["drag-element", "drag-canvas", "zoom-canvas", "scroll-canvas"],
       edge: {
@@ -1227,7 +1237,7 @@ const PersonRelationshipGraph: React.FC<PersonRelationshipGraphProps> = ({
     graphInstance.on(NodeEvent.CLICK, (event: IElementEvent) => {
       const nodeId = getEventElementId(event);
       if (nodeId) {
-        navigate(`/person/${nodeId}`);
+        navigateRef.current(`/person/${nodeId}`);
       }
     });
 
@@ -1261,7 +1271,8 @@ const PersonRelationshipGraph: React.FC<PersonRelationshipGraphProps> = ({
       graphInstance.destroy();
       g6GraphRef.current = null;
     };
-  }, [height, navigate, theme.palette.primary.main, width]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const graphInstance = g6GraphRef.current;
@@ -1296,6 +1307,20 @@ const PersonRelationshipGraph: React.FC<PersonRelationshipGraphProps> = ({
     graphInstance.setSize(width, height);
     void graphInstance.fitView({ padding: 48 });
   }, [width, height]);
+
+  useEffect(() => {
+    const graphInstance = g6GraphRef.current;
+    if (!graphInstance) return;
+    const edges = graphInstance.getEdgeData() as GraphEdge[];
+    if (!edges.length) return;
+    graphInstance.updateEdgeData(
+      edges.map((edge) => ({
+        id: edge.id,
+        label: showEdgeLabels ? edge.formattedLabel : "",
+      }))
+    );
+    void graphInstance.draw();
+  }, [showEdgeLabels]);
 
   const handleDepthChange = (event: SelectChangeEvent<string>) => {
     const nextDepth = Number(event.target.value);
@@ -1375,18 +1400,23 @@ const PersonRelationshipGraph: React.FC<PersonRelationshipGraphProps> = ({
               color="text.secondary"
               sx={{ display: "block", mb: 0.5 }}
             >
-              Force link distance: {spacing}px
+              Force link distance: {spacingDraft}px
             </Typography>
             <Slider
               size="small"
               min={MIN_SPACING}
               max={MAX_SPACING}
               step={10}
-              value={spacing}
+              value={spacingDraft}
               valueLabelDisplay="auto"
               onChange={(_, value) =>
-                setSpacing(clampForceSpacing(clampSliderValue(value)))
+                setSpacingDraft(clampForceSpacing(clampSliderValue(value)))
               }
+              onChangeCommitted={(_, value) => {
+                const next = clampForceSpacing(clampSliderValue(value));
+                setSpacingDraft(next);
+                setSpacing(next);
+              }}
             />
           </Box>
           <Box sx={{ width: 240 }}>
@@ -1395,17 +1425,22 @@ const PersonRelationshipGraph: React.FC<PersonRelationshipGraphProps> = ({
               color="text.secondary"
               sx={{ display: "block", mb: 0.5 }}
             >
-              Minimum shared photos: {minWeight}
+              Minimum shared photos: {minWeightDraft}
             </Typography>
             <Slider
               size="small"
               min={weightSummary.min}
               max={weightSummary.max}
               step={1}
-              value={minWeight}
+              value={minWeightDraft}
               disabled={weightSummary.min === weightSummary.max}
               valueLabelDisplay="auto"
-              onChange={(_, value) => setMinWeight(clampSliderValue(value))}
+              onChange={(_, value) => setMinWeightDraft(clampSliderValue(value))}
+              onChangeCommitted={(_, value) => {
+                const next = clampSliderValue(value);
+                setMinWeightDraft(next);
+                setMinWeight(next);
+              }}
             />
           </Box>
           <Button variant="outlined" size="small" onClick={handleResetView}>
@@ -1431,11 +1466,21 @@ const PersonRelationshipGraph: React.FC<PersonRelationshipGraphProps> = ({
             <CircularProgress size={32} />
           </Box>
         )}
-        {!isLoading && !hasGraph ? (
+        <Box
+          ref={setContainerRef}
+          sx={{
+            width: "100%",
+            height: "100%",
+            borderRadius: 1,
+            backgroundColor: alpha("#0D1321", 0.7),
+          }}
+        />
+        {!isLoading && !hasGraph && (
           <Box
             sx={{
               position: "absolute",
               inset: 0,
+              zIndex: 1,
               display: "flex",
               flexDirection: "column",
               alignItems: "center",
@@ -1444,6 +1489,8 @@ const PersonRelationshipGraph: React.FC<PersonRelationshipGraphProps> = ({
               gap: 1,
               color: "text.secondary",
               px: 2,
+              borderRadius: 1,
+              bgcolor: "background.paper",
             }}
           >
             <Typography variant="subtitle1">
@@ -1454,16 +1501,6 @@ const PersonRelationshipGraph: React.FC<PersonRelationshipGraphProps> = ({
               photo threshold.
             </Typography>
           </Box>
-        ) : (
-          <Box
-            ref={setContainerRef}
-            sx={{
-              width: "100%",
-              height: "100%",
-              borderRadius: 1,
-              backgroundColor: alpha("#0D1321", 0.7),
-            }}
-          />
         )}
       </Box>
     </Paper>

@@ -87,7 +87,8 @@ export default function MediaDetailPage() {
     message: string;
     severity: "success" | "error";
   }>({ open: false, message: "", severity: "success" });
-  const [tabValue, setTabValue] = useState(0);
+  // Empty string falls back to the media type's first tab until the user picks one
+  const [tabKey, setTabKey] = useState<string>("");
   const [touchStartX, setTouchStartX] = useState<number | null>(null);
   const [seekRequest, setSeekRequest] = useState<{ time: number; seq: number } | null>(null);
   const handleSeekRequest = useCallback((time: number) => {
@@ -181,12 +182,18 @@ export default function MediaDetailPage() {
     async (signal?: AbortSignal) => {
       if (!id) return;
       setIsDetailLoading(true);
+      setLoadError(null);
       try {
-        const data = await getMedia(id);
+        const data = await getMedia(id, signal);
         if (!signal?.aborted) setDetail(data);
       } catch (err) {
-        if (!signal?.aborted)
+        if (!signal?.aborted) {
           console.error("Failed to fetch media detail:", err);
+          setLoadError({
+            message:
+              err instanceof Error ? err.message : "Failed to load media",
+          });
+        }
       } finally {
         if (!signal?.aborted) setIsDetailLoading(false);
       }
@@ -216,9 +223,10 @@ export default function MediaDetailPage() {
 
       navigate(`/medium/${targetId}`, {
         state: buildNavigationState({ media: null, autoplayVideo: true }),
+        replace: !!backgroundLocation,
       });
     },
-    [navigate, neighbors, buildNavigationState]
+    [navigate, neighbors, buildNavigationState, backgroundLocation]
   );
 
   useEffect(() => {
@@ -233,15 +241,21 @@ export default function MediaDetailPage() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      const target = e.target as HTMLElement | null;
+      if (target?.closest?.("input, textarea, [contenteditable='true']")) {
+        return;
+      }
+      if (dialogType) return;
       if (e.key === "ArrowLeft") handleNavigate("prev");
       if (e.key === "ArrowRight") handleNavigate("next");
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handleNavigate]);
+  }, [handleNavigate, dialogType]);
 
   useEffect(() => {
-    if (!task?.id || ["completed", "failed"].includes(task.status)) return;
+    if (!task?.id || ["completed", "cancelled"].includes(task.status)) return;
     const intervalId = setInterval(async () => {
       try {
         const updatedTask = await getTask(task.id);
@@ -311,7 +325,7 @@ export default function MediaDetailPage() {
   };
   const navigateAfterDelete = useCallback(() => {
     if (backgroundLocation) {
-      navigate(backgroundLocation.pathname + backgroundLocation.search);
+      navigate(-1);
     } else {
       navigate("/");
     }
@@ -354,7 +368,7 @@ export default function MediaDetailPage() {
 
   const handleClose = () => {
     if (backgroundLocation) {
-      navigate(backgroundLocation.pathname + backgroundLocation.search);
+      navigate(-1);
     } else {
       navigate("/");
     }
@@ -411,6 +425,25 @@ export default function MediaDetailPage() {
           >
             <CircularProgress />
           </Box>
+        ) : loadError && !detail ? (
+          <Box
+            sx={{
+              display: "flex",
+              flexDirection: "column",
+              justifyContent: "center",
+              alignItems: "center",
+              gap: 2,
+              height: "60vh",
+            }}
+          >
+            <Alert severity="error">{loadError.message}</Alert>
+            <Box sx={{ display: "flex", gap: 1 }}>
+              <Button variant="contained" onClick={() => fetchDetail()}>
+                Retry
+              </Button>
+              <Button onClick={handleClose}>Close</Button>
+            </Box>
+          </Box>
         ) : (
           detail && (
             <Container maxWidth="xl" sx={{ pt: { xs: 0, sm: 2 }, pb: { xs: 2, sm: 6 }, px: { xs: 0, sm: 3 } }}>
@@ -457,8 +490,6 @@ export default function MediaDetailPage() {
                   <MediaHeader
                     media={detail.media}
                     onOpenDialog={setDialogType}
-                    onToggleExif={() => setTabValue(3)}
-                    showExif={tabValue === 3}
                     isBinary={isBinary}
                     onOpenFolder={async (mediaId) => {
                       try {
@@ -528,6 +559,8 @@ export default function MediaDetailPage() {
               ) : (
                 <MediaContentTabs
                   detail={detail}
+                  tabKey={tabKey}
+                  onTabChange={setTabKey}
                   onTagAdded={handleTagAddedToMedia}
                   onDetailReload={fetchDetail}
                   onTagUpdate={handleMediaUpdate}
