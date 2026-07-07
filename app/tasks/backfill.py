@@ -7,7 +7,7 @@ from pathlib import Path
 import cv2
 import ffmpeg
 import numpy as np
-from sqlmodel import Session, col, select
+from sqlmodel import Session, col, func, select
 
 import app.database as db
 from app.config import settings
@@ -17,7 +17,147 @@ from app.models import Face, Media, ProcessingTask, Scene, Status
 from app.processor_registry import load_processors, processors
 from app.tasks.state import clear_task_progress, set_task_progress
 
-__all__ = ["run_backfill_face_timestamps"]
+__all__ = ["run_backfill_face_quality", "run_backfill_face_timestamps"]
+
+
+def run_backfill_face_quality(task_id: str) -> None:
+    """
+    Backfill det_score/frontality for faces extracted before those columns
+    existed, by re-running the detector on the stored face thumbnails.
+
+    Faces where no face can be re-detected (heavily blurred crops, statues,
+    extreme profiles) get det_score=0.0 / frontality=0.0 — exactly the signal
+    the clustering seed gate needs to keep them from forming junk persons.
+    They can still be attached to existing persons by the matching pass.
+    """
+    from app.processors.faces import FaceProcessor
+
+    if not processors:
+        load_processors()
+    face_proc = next((p for p in processors if p.name == "faces"), None)
+    if face_proc is None:
+        logger.error("FaceProcessor not found; cannot backfill face quality.")
+        return
+    face_proc.load_model()
+    detector = face_proc.model.det_model
+
+    with Session(db.engine) as session:
+        task = session.get(ProcessingTask, task_id)
+        if not task:
+            logger.error("Task %s not found.", task_id)
+            return
+        task.status = Status.RUNNING
+        task.started_at = datetime.now(timezone.utc)
+        task.total = int(
+            session.exec(
+                select(func.count(Face.id)).where(Face.det_score.is_(None))
+            ).one()
+        )
+        session.add(task)
+        safe_commit(session)
+        logger.info("Backfilling quality for %d face(s).", task.total)
+
+    set_task_progress(task_id, current_step="backfilling_face_quality")
+
+    processed = 0
+    last_id = 0
+    batch_size = 200
+    while True:
+        with Session(db.engine) as session:
+            task = session.get(ProcessingTask, task_id)
+            if not task or task.status == Status.CANCELLED:
+                logger.info("backfill_face_quality cancelled.")
+                break
+
+            faces = session.exec(
+                select(Face)
+                .where(Face.det_score.is_(None), Face.id > last_id)
+                .order_by(Face.id)
+                .limit(batch_size)
+            ).all()
+            if not faces:
+                break
+            last_id = faces[-1].id
+
+            for face in faces:
+                det_score = 0.0
+                frontality = 0.0
+                thumb = (
+                    settings.general.thumb_dir / face.thumbnail_path
+                    if face.thumbnail_path
+                    else None
+                )
+                if thumb is not None and thumb.exists():
+                    img = cv2.imread(os.fspath(thumb))
+                    if img is not None and img.size > 0:
+                        # Thumbnails are tight crops where the face fills the
+                        # frame — beyond SCRFD's trained anchor scales, so
+                        # detection fails on perfectly good faces. Padding the
+                        # crop by 40% per side restores detection (measured:
+                        # 0/60 -> 60/60 on confirmed faces) and puts scores on
+                        # the same scale as full-image pipeline detections.
+                        pad_y = int(img.shape[0] * 0.4)
+                        pad_x = int(img.shape[1] * 0.4)
+                        img = cv2.copyMakeBorder(
+                            img,
+                            pad_y,
+                            pad_y,
+                            pad_x,
+                            pad_x,
+                            cv2.BORDER_CONSTANT,
+                            value=(114, 114, 114),
+                        )
+                        try:
+                            bboxes, kpss = detector.detect(img, metric="default")
+                        except Exception as exc:
+                            logger.debug(
+                                "Quality re-detection failed for face %s: %s",
+                                face.id,
+                                exc,
+                            )
+                            bboxes, kpss = np.empty((0, 5)), None
+                        if bboxes is not None and len(bboxes) > 0:
+                            # thumbnails are single-face crops; take the
+                            # largest detection
+                            areas = (bboxes[:, 2] - bboxes[:, 0]) * (
+                                bboxes[:, 3] - bboxes[:, 1]
+                            )
+                            best = int(np.argmax(areas))
+                            det_score = float(bboxes[best, 4])
+                            if kpss is not None and len(kpss) > best:
+                                frontality = (
+                                    FaceProcessor._estimate_frontality(kpss[best])
+                                    or 0.0
+                                )
+                face.det_score = det_score
+                face.frontality = frontality
+                session.add(face)
+
+            processed += len(faces)
+            with_task = session.get(ProcessingTask, task_id)
+            if with_task:
+                with_task.processed = processed
+                session.add(with_task)
+            safe_commit(session)
+            set_task_progress(
+                task_id,
+                current_step="backfilling_face_quality",
+                current_item=f"{processed} faces rated",
+            )
+
+    with Session(db.engine) as session:
+        task = session.get(ProcessingTask, task_id)
+        if task:
+            task.status = (
+                Status.CANCELLED
+                if task.status == Status.CANCELLED
+                else Status.COMPLETED
+            )
+            task.finished_at = datetime.now(timezone.utc)
+            session.add(task)
+            safe_commit(session)
+    clear_task_progress(task_id)
+    logger.info("backfill_face_quality: rated %d face(s).", processed)
 
 
 def _iou(a: list[int], b: list[int]) -> float:

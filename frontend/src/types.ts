@@ -148,6 +148,7 @@ export type TaskType =
   | "run_processor_for_media"
   | "auto_tag_custom"
   | "backfill_face_timestamps"
+  | "backfill_face_quality"
   | "build_events"
   | "geocode_places";
 export type TaskStatus = "pending" | "running" | "completed" | "cancelled";
@@ -645,13 +646,18 @@ export interface AppConfig {
     person_cluster_max_l2_radius: number;
     person_merge_percent_similarity: number;
     cluster_batch_size: number;
+    cluster_seed_min_det_score: number;
+    cluster_seed_min_frontality: number;
+    person_matching_max_prototypes: number;
     hdbscan_min_cluster_size: number;
     hdbscan_min_samples: number;
     hdbscan_cluster_selection_method: string;
     hdbscan_cluster_selection_epsilon: number;
+    hdbscan_min_membership_probability: number;
     cw_threshold: number;
     cw_k_neighbors: number;
     cw_iterations: number;
+    cw_min_member_similarity: number;
   };
   duplicates: {
     duplicate_auto_handling: string;

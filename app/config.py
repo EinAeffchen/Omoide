@@ -536,7 +536,7 @@ FACE_RECOGNITION_PRESETS: dict[
 ] = {
     FaceClusteringPreset.STRICT: {
         "face_recognition_min_confidence": 0.6,
-        "existing_person_cosine_threshold": 0.86,
+        "existing_person_cosine_threshold": 0.68,
         "existing_person_min_cosine_margin": 0.07,
         "rerun_face_iou_dedupe_threshold": 0.70,
         "face_recognition_min_face_pixels": 1600,
@@ -561,7 +561,7 @@ FACE_RECOGNITION_PRESETS: dict[
     },
     FaceClusteringPreset.NORMAL: {
         "face_recognition_min_confidence": 0.5,
-        "existing_person_cosine_threshold": 0.80,
+        "existing_person_cosine_threshold": 0.62,
         "existing_person_min_cosine_margin": 0.05,
         "rerun_face_iou_dedupe_threshold": 0.70,
         "face_recognition_min_face_pixels": 1600,
@@ -586,7 +586,7 @@ FACE_RECOGNITION_PRESETS: dict[
     },
     FaceClusteringPreset.LOOSE: {
         "face_recognition_min_confidence": 0.4,
-        "existing_person_cosine_threshold": 0.75,
+        "existing_person_cosine_threshold": 0.56,
         "existing_person_min_cosine_margin": 0.03,
         "rerun_face_iou_dedupe_threshold": 0.70,
         "face_recognition_min_face_pixels": 1200,
@@ -616,8 +616,11 @@ class FaceRecognitionSettings(BaseModel):
     preset: FaceClusteringPreset = FaceClusteringPreset.LOOSE
     # minimum confidence needed to extract a face
     face_recognition_min_confidence: float = 0.5
-    # stricter threshold for assigning new faces to existing persons (vs general usage)
-    existing_person_cosine_threshold: float = 0.80
+    # cosine threshold for attaching a face to an existing person's prototypes.
+    # Must stay consistent with person_cluster_max_l2_radius: clusters accept
+    # members down to ~0.5 cosine from the centroid, so demanding 0.8 here
+    # meant trimmed/leftover faces of the same person could never re-attach.
+    existing_person_cosine_threshold: float = 0.62
     # requires a margin between best and second-best match (cosine space)
     existing_person_min_cosine_margin: float = 0.05
     # on processor re-run, treat detections with IoU above this threshold as duplicates

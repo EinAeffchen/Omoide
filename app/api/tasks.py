@@ -17,6 +17,7 @@ from app.tasks import (
     clean_missing_files,
     compute_blur_scores,
     create_and_run_task,
+    run_backfill_face_quality,
     run_backfill_face_timestamps,
     run_build_events,
     run_duplicate_detection,
@@ -288,6 +289,23 @@ async def start_backfill_face_timestamps(
         background_tasks=background_tasks,
         task_type="backfill_face_timestamps",
         callable_task=run_backfill_face_timestamps,
+    )
+
+
+@router.post(
+    "/backfill_face_quality",
+    response_model=ProcessingTask,
+    summary="Rate existing faces (det_score/frontality) by re-detecting on their thumbnails",
+)
+async def start_backfill_face_quality(
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+):
+    return create_and_run_task(
+        session=session,
+        background_tasks=background_tasks,
+        task_type="backfill_face_quality",
+        callable_task=run_backfill_face_quality,
     )
 
 

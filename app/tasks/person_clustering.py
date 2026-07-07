@@ -1098,22 +1098,29 @@ def _load_person_prototype_matrix(
             getattr(settings.face_recognition, "person_matching_max_prototypes", 3)
         ),
     )
+    # Prefer quality faces for the prototypes so junk members (blurry/profile
+    # faces mistakenly attached to a person) do not become attachment anchors.
+    # Persons with no quality-rated faces fall back to all of their faces.
+    quality_filter, quality_params = _quality_seed_filter()
     rows = session.exec(
         text(
+            f"""
+            SELECT f.person_id, fe.embedding,
+                   CASE WHEN 1=1 {quality_filter} THEN 1 ELSE 0 END AS is_quality
+              FROM face            AS f
+              JOIN face_embeddings AS fe ON fe.face_id = f.id
+             WHERE f.person_id IS NOT NULL
             """
-            SELECT person_id, embedding
-              FROM face_embeddings
-             WHERE person_id IS NOT NULL
-               AND person_id > 0
-            """
-        )
+        ).bindparams(**quality_params)
     ).all()
 
-    grouped: dict[int, list[np.ndarray]] = {}
-    for person_id, raw_embedding in rows:
+    quality_grouped: dict[int, list[np.ndarray]] = {}
+    fallback_grouped: dict[int, list[np.ndarray]] = {}
+    for person_id, raw_embedding, is_quality in rows:
         if person_id is None:
             continue
-        vecs = grouped.setdefault(int(person_id), [])
+        target = quality_grouped if is_quality else fallback_grouped
+        vecs = target.setdefault(int(person_id), [])
         if len(vecs) >= per_person_cap:
             continue
         vec = vector_from_stored(raw_embedding)
@@ -1125,6 +1132,11 @@ def _load_person_prototype_matrix(
         if not np.isfinite(norm) or norm == 0.0:
             continue
         vecs.append((vec / norm).astype(np.float32, copy=False))
+
+    grouped: dict[int, list[np.ndarray]] = dict(fallback_grouped)
+    grouped.update(
+        {pid: vecs for pid, vecs in quality_grouped.items() if vecs}
+    )
 
     proto_person_ids: list[int] = []
     proto_vectors: list[np.ndarray] = []

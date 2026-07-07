@@ -37,6 +37,7 @@ import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import FaceIcon from "@mui/icons-material/Face";
+import FaceRetouchingNaturalIcon from "@mui/icons-material/FaceRetouchingNatural";
 import AccessTimeIcon from "@mui/icons-material/AccessTime";
 import BubbleChartIcon from "@mui/icons-material/BubbleChart";
 import LabelIcon from "@mui/icons-material/Label";
@@ -51,6 +52,7 @@ const STEP_LABELS: Record<string, string> = {
   clustering_unassigned: "Clustering faces",
   merging_similar_persons: "Merging similar people",
   matching_known_persons: "Matching faces to known people",
+  backfilling_face_quality: "Rating face quality",
 };
 
 type TaskLabels = Partial<Record<TaskType, string>>;
@@ -65,6 +67,7 @@ const TASK_LABELS: TaskLabels = {
   run_processor_for_media: "Rerun Processors (Selection)",
   auto_tag_custom: "Apply New Custom Tags",
   backfill_face_timestamps: "Backfill Face Timestamps",
+  backfill_face_quality: "Rate Face Quality",
   build_events: "Cluster Events",
   geocode_places: "Geocode Places",
 };
@@ -557,6 +560,23 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
                   <ListItemText
                     primary="Backfill Face Timestamps"
                     secondary="Update timestamps on existing video faces"
+                    secondaryTypographyProps={{ variant: "caption" }}
+                  />
+                </ListItemButton>
+              </ListItem>
+            )}
+            {config.ENABLE_PEOPLE && (
+              <ListItem disablePadding>
+                <ListItemButton
+                  onClick={() => startTask("backfill_face_quality")}
+                  disabled={isTaskRunning("backfill_face_quality")}
+                >
+                  <ListItemIcon>
+                    <FaceRetouchingNaturalIcon />
+                  </ListItemIcon>
+                  <ListItemText
+                    primary="Rate Face Quality"
+                    secondary="Score existing faces so blurry/profile shots stop forming junk people"
                     secondaryTypographyProps={{ variant: "caption" }}
                   />
                 </ListItemButton>

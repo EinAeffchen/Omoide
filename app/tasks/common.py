@@ -59,6 +59,7 @@ def create_and_run_task(
         "compute_blur_scores",
         "run_processor",
         "run_processor_for_media",
+        "backfill_face_quality",
         "backfill_face_timestamps",
         "build_events",
         "geocode_places",
