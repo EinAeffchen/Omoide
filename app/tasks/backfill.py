@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import cv2
@@ -10,6 +10,7 @@ import numpy as np
 from sqlmodel import Session, col, func, select
 
 import app.database as db
+from app.concurrency import heavy_writer
 from app.config import settings
 from app.database import safe_commit
 from app.logger import logger
@@ -47,7 +48,7 @@ def run_backfill_face_quality(task_id: str) -> None:
             logger.error("Task %s not found.", task_id)
             return
         task.status = Status.RUNNING
-        task.started_at = datetime.now(timezone.utc)
+        task.started_at = datetime.now(UTC)
         task.total = int(
             session.exec(
                 select(func.count(Face.id)).where(Face.det_score.is_(None))
@@ -57,105 +58,131 @@ def run_backfill_face_quality(task_id: str) -> None:
         safe_commit(session)
         logger.info("Backfilling quality for %d face(s).", task.total)
 
-    set_task_progress(task_id, current_step="backfilling_face_quality")
+    def _is_cancelled() -> bool:
+        with Session(db.engine) as s:
+            t = s.get(ProcessingTask, task_id)
+            return bool(t and t.status == Status.CANCELLED)
 
-    processed = 0
-    last_id = 0
-    batch_size = 200
-    while True:
+    # This mutates Face.det_score/frontality in bulk, which the clustering
+    # seed gate reads; without the shared lock it could run concurrently
+    # with clustering (or scan/process_media) and race on those rows.
+    with heavy_writer(
+        name="backfill_face_quality", cancelled=_is_cancelled
+    ) as acquired:
+        if not acquired:
+            with Session(db.engine) as session:
+                task = session.get(ProcessingTask, task_id)
+                if task:
+                    task.status = Status.CANCELLED
+                    task.finished_at = datetime.now(UTC)
+                    session.add(task)
+                    safe_commit(session)
+            clear_task_progress(task_id)
+            return
+
+        set_task_progress(task_id, current_step="backfilling_face_quality")
+
+        processed = 0
+        last_id = 0
+        batch_size = 200
+        while True:
+            with Session(db.engine) as session:
+                task = session.get(ProcessingTask, task_id)
+                if not task or task.status == Status.CANCELLED:
+                    logger.info("backfill_face_quality cancelled.")
+                    break
+
+                faces = session.exec(
+                    select(Face)
+                    .where(Face.det_score.is_(None), Face.id > last_id)
+                    .order_by(Face.id)
+                    .limit(batch_size)
+                ).all()
+                if not faces:
+                    break
+                last_id = faces[-1].id
+
+                for face in faces:
+                    det_score = 0.0
+                    frontality = 0.0
+                    thumb = (
+                        settings.general.thumb_dir / face.thumbnail_path
+                        if face.thumbnail_path
+                        else None
+                    )
+                    if thumb is not None and thumb.exists():
+                        img = cv2.imread(os.fspath(thumb))
+                        if img is not None and img.size > 0:
+                            # Thumbnails are tight crops where the face fills the
+                            # frame — beyond SCRFD's trained anchor scales, so
+                            # detection fails on perfectly good faces. Padding the
+                            # crop by 40% per side restores detection (measured:
+                            # 0/60 -> 60/60 on confirmed faces) and puts scores on
+                            # the same scale as full-image pipeline detections.
+                            pad_y = int(img.shape[0] * 0.4)
+                            pad_x = int(img.shape[1] * 0.4)
+                            img = cv2.copyMakeBorder(
+                                img,
+                                pad_y,
+                                pad_y,
+                                pad_x,
+                                pad_x,
+                                cv2.BORDER_CONSTANT,
+                                value=(114, 114, 114),
+                            )
+                            try:
+                                bboxes, kpss = detector.detect(
+                                    img, metric="default"
+                                )
+                            except Exception as exc:
+                                logger.debug(
+                                    "Quality re-detection failed for face %s: %s",
+                                    face.id,
+                                    exc,
+                                )
+                                bboxes, kpss = np.empty((0, 5)), None
+                            if bboxes is not None and len(bboxes) > 0:
+                                # thumbnails are single-face crops; take the
+                                # largest detection
+                                areas = (bboxes[:, 2] - bboxes[:, 0]) * (
+                                    bboxes[:, 3] - bboxes[:, 1]
+                                )
+                                best = int(np.argmax(areas))
+                                det_score = float(bboxes[best, 4])
+                                if kpss is not None and len(kpss) > best:
+                                    frontality = (
+                                        FaceProcessor._estimate_frontality(
+                                            kpss[best]
+                                        )
+                                        or 0.0
+                                    )
+                    face.det_score = det_score
+                    face.frontality = frontality
+                    session.add(face)
+
+                processed += len(faces)
+                with_task = session.get(ProcessingTask, task_id)
+                if with_task:
+                    with_task.processed = processed
+                    session.add(with_task)
+                safe_commit(session)
+                set_task_progress(
+                    task_id,
+                    current_step="backfilling_face_quality",
+                    current_item=f"{processed} faces rated",
+                )
+
         with Session(db.engine) as session:
             task = session.get(ProcessingTask, task_id)
-            if not task or task.status == Status.CANCELLED:
-                logger.info("backfill_face_quality cancelled.")
-                break
-
-            faces = session.exec(
-                select(Face)
-                .where(Face.det_score.is_(None), Face.id > last_id)
-                .order_by(Face.id)
-                .limit(batch_size)
-            ).all()
-            if not faces:
-                break
-            last_id = faces[-1].id
-
-            for face in faces:
-                det_score = 0.0
-                frontality = 0.0
-                thumb = (
-                    settings.general.thumb_dir / face.thumbnail_path
-                    if face.thumbnail_path
-                    else None
+            if task:
+                task.status = (
+                    Status.CANCELLED
+                    if task.status == Status.CANCELLED
+                    else Status.COMPLETED
                 )
-                if thumb is not None and thumb.exists():
-                    img = cv2.imread(os.fspath(thumb))
-                    if img is not None and img.size > 0:
-                        # Thumbnails are tight crops where the face fills the
-                        # frame — beyond SCRFD's trained anchor scales, so
-                        # detection fails on perfectly good faces. Padding the
-                        # crop by 40% per side restores detection (measured:
-                        # 0/60 -> 60/60 on confirmed faces) and puts scores on
-                        # the same scale as full-image pipeline detections.
-                        pad_y = int(img.shape[0] * 0.4)
-                        pad_x = int(img.shape[1] * 0.4)
-                        img = cv2.copyMakeBorder(
-                            img,
-                            pad_y,
-                            pad_y,
-                            pad_x,
-                            pad_x,
-                            cv2.BORDER_CONSTANT,
-                            value=(114, 114, 114),
-                        )
-                        try:
-                            bboxes, kpss = detector.detect(img, metric="default")
-                        except Exception as exc:
-                            logger.debug(
-                                "Quality re-detection failed for face %s: %s",
-                                face.id,
-                                exc,
-                            )
-                            bboxes, kpss = np.empty((0, 5)), None
-                        if bboxes is not None and len(bboxes) > 0:
-                            # thumbnails are single-face crops; take the
-                            # largest detection
-                            areas = (bboxes[:, 2] - bboxes[:, 0]) * (
-                                bboxes[:, 3] - bboxes[:, 1]
-                            )
-                            best = int(np.argmax(areas))
-                            det_score = float(bboxes[best, 4])
-                            if kpss is not None and len(kpss) > best:
-                                frontality = (
-                                    FaceProcessor._estimate_frontality(kpss[best])
-                                    or 0.0
-                                )
-                face.det_score = det_score
-                face.frontality = frontality
-                session.add(face)
-
-            processed += len(faces)
-            with_task = session.get(ProcessingTask, task_id)
-            if with_task:
-                with_task.processed = processed
-                session.add(with_task)
-            safe_commit(session)
-            set_task_progress(
-                task_id,
-                current_step="backfilling_face_quality",
-                current_item=f"{processed} faces rated",
-            )
-
-    with Session(db.engine) as session:
-        task = session.get(ProcessingTask, task_id)
-        if task:
-            task.status = (
-                Status.CANCELLED
-                if task.status == Status.CANCELLED
-                else Status.COMPLETED
-            )
-            task.finished_at = datetime.now(timezone.utc)
-            session.add(task)
-            safe_commit(session)
+                task.finished_at = datetime.now(UTC)
+                session.add(task)
+                safe_commit(session)
     clear_task_progress(task_id)
     logger.info("backfill_face_quality: rated %d face(s).", processed)
 
@@ -185,7 +212,8 @@ def _extract_frame_rgb(media_path: str, timestamp: float) -> np.ndarray | None:
     """Extract a single video frame at the given timestamp as an RGB ndarray."""
     try:
         out, _ = (
-            ffmpeg.input(media_path, ss=timestamp)
+            ffmpeg
+            .input(media_path, ss=timestamp)
             .output("pipe:", vframes=1, format="image2", vcodec="mjpeg")
             .run(capture_stdout=True, quiet=True)
         )
@@ -195,7 +223,12 @@ def _extract_frame_rgb(media_path: str, timestamp: float) -> np.ndarray | None:
             return None
         return cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
     except Exception as exc:
-        logger.debug("Frame extraction failed at %.2fs from %s: %s", timestamp, media_path, exc)
+        logger.debug(
+            "Frame extraction failed at %.2fs from %s: %s",
+            timestamp,
+            media_path,
+            exc,
+        )
         return None
 
 
@@ -218,7 +251,7 @@ def run_backfill_face_timestamps(task_id: str) -> None:
             return
 
         task.status = Status.RUNNING
-        task.started_at = datetime.now(timezone.utc)
+        task.started_at = datetime.now(UTC)
         session.add(task)
         safe_commit(session)
 
@@ -292,7 +325,11 @@ def run_backfill_face_timestamps(task_id: str) -> None:
 
             for scene in scenes:
                 # Only unmatched faces still need timestamps
-                remaining = [(bb, f) for bb, f in null_face_bboxes if f.id not in updated_ids]
+                remaining = [
+                    (bb, f)
+                    for bb, f in null_face_bboxes
+                    if f.id not in updated_ids
+                ]
                 if not remaining:
                     break
 
@@ -341,7 +378,9 @@ def run_backfill_face_timestamps(task_id: str) -> None:
             # Faces that could not be matched via re-detection get a sentinel of -1.0
             # so they no longer appear as NULL in subsequent backfill runs without being
             # incorrectly placed in any scene (all scene filters require timestamp >= 0).
-            still_unmatched = [f for _, f in null_face_bboxes if f.id not in updated_ids]
+            still_unmatched = [
+                f for _, f in null_face_bboxes if f.id not in updated_ids
+            ]
             for face in still_unmatched:
                 face.timestamp = -1.0
                 session.add(face)
@@ -361,9 +400,11 @@ def run_backfill_face_timestamps(task_id: str) -> None:
 
         session.refresh(task)
         task.status = (
-            Status.CANCELLED if task.status == Status.CANCELLED else Status.COMPLETED
+            Status.CANCELLED
+            if task.status == Status.CANCELLED
+            else Status.COMPLETED
         )
-        task.finished_at = datetime.now(timezone.utc)
+        task.finished_at = datetime.now(UTC)
         session.add(task)
         safe_commit(session)
         clear_task_progress(task_id)

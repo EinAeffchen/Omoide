@@ -6,13 +6,12 @@ import sys
 import threading
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Literal
 from urllib.parse import quote
 
 import cv2
-import ffmpeg
 import imagehash
 import numpy as np
 import piexif
@@ -66,9 +65,9 @@ def _coerce_vector_array(value: Any) -> np.ndarray | None:
 
     if isinstance(value, np.ndarray):
         arr = value.astype(np.float32, copy=False)
-    elif isinstance(value, memoryview):
-        arr = np.frombuffer(value, dtype=np.float32)
-    elif isinstance(value, (bytes, bytearray)):
+    elif isinstance(value, memoryview) or isinstance(
+        value, (bytes, bytearray)
+    ):
         arr = np.frombuffer(value, dtype=np.float32)
     elif isinstance(value, str):
         try:
@@ -690,9 +689,7 @@ def save_thumbnail_image(
     try:
         img.convert("RGB").save(thumb_path, format="JPEG")
     except Exception as exc:
-        logger.warning(
-            "Failed to save thumbnail for %s: %s", media.path, exc
-        )
+        logger.warning("Failed to save thumbnail for %s: %s", media.path, exc)
         return None, f"Unable to save thumbnail: {exc}"
     return (
         to_posix_str(thumb_path.relative_to(settings.general.thumb_dir)),
@@ -738,7 +735,8 @@ def generate_thumbnail(media: Media) -> tuple[str | None, str | None]:
                 )
             except subprocess.TimeoutExpired:
                 logger.error(
-                    "ffmpeg timed out generating thumbnail for %s (20s)", filepath
+                    "ffmpeg timed out generating thumbnail for %s (20s)",
+                    filepath,
                 )
                 return None, "ffmpeg timed out while generating thumbnail"
             except subprocess.CalledProcessError as e:
@@ -760,8 +758,13 @@ def generate_thumbnail(media: Media) -> tuple[str | None, str | None]:
             if thumb_path.exists():
                 break
         else:
-            logger.error("ffmpeg failed to generate thumbnail for %s", filepath)
-            return None, last_error or "ffmpeg did not produce a thumbnail file"
+            logger.error(
+                "ffmpeg failed to generate thumbnail for %s", filepath
+            )
+            return (
+                None,
+                last_error or "ffmpeg did not produce a thumbnail file",
+            )
         if not thumb_path.exists():
             return None, "ffmpeg did not produce a thumbnail file"
     else:
@@ -790,7 +793,9 @@ def generate_thumbnail(media: Media) -> tuple[str | None, str | None]:
                     try:
                         heif_file = pillow_heif.open_heif(filepath)
                         img_obj = heif_file[0].to_pillow()
-                        img_obj = _apply_thumbnail_orientation(img_obj, filepath)
+                        img_obj = _apply_thumbnail_orientation(
+                            img_obj, filepath
+                        )
                         img_obj.thumbnail((360, -1))
                         img_obj.convert("RGB").save(thumb_path, format="JPEG")
                     except Exception as heic_exc:
@@ -799,7 +804,10 @@ def generate_thumbnail(media: Media) -> tuple[str | None, str | None]:
                             filepath,
                             heic_exc,
                         )
-                        return None, f"Unable to save HEIC thumbnail: {heic_exc}"
+                        return (
+                            None,
+                            f"Unable to save HEIC thumbnail: {heic_exc}",
+                        )
                 else:
                     logger.warning(
                         "Failed to save thumbnail for %s: %s",
@@ -1061,7 +1069,12 @@ def extract_scene_frame_and_thumbnail(
             stderr=subprocess.PIPE,
         )
     except Exception as exc:
-        logger.warning("Frame extraction failed at %.2fs for %s: %s", start_time, media.path, exc)
+        logger.warning(
+            "Frame extraction failed at %.2fs for %s: %s",
+            start_time,
+            media.path,
+            exc,
+        )
         return None, None
 
     if result.returncode != 0 or not result.stdout:
@@ -1095,7 +1108,9 @@ def extract_scene_frame_and_thumbnail(
 
     cv2.imwrite(str(thumb_file), thumb_bgr)
     frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-    thumb_relative = to_posix_str(thumb_file.relative_to(settings.general.thumb_dir))
+    thumb_relative = to_posix_str(
+        thumb_file.relative_to(settings.general.thumb_dir)
+    )
     return thumb_relative, frame_rgb
 
 
@@ -1247,7 +1262,7 @@ def update_exif_gps(path: str, lon: float, lat: float):
 
 def complete_task(session: Session, task: ProcessingTask):
     task.status = "completed"
-    task.finished_at = datetime.now(timezone.utc)
+    task.finished_at = datetime.now(UTC)
     session.add(task)
     safe_commit(session)
 
@@ -1520,6 +1535,11 @@ def delete_file(session: Session, media_id: int):
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
+    # Captured before delete_record() deletes and commits the row — accessing
+    # attributes on `media` afterward raises ObjectDeletedError since the row
+    # backing it no longer exists to refresh from.
+    thumbnail_path = media.thumbnail_path
+
     delete_record(media_id, session)
 
     # delete original file
@@ -1530,11 +1550,12 @@ def delete_file(session: Session, media_id: int):
     except OSError as exc:
         logger.warning("Failed to delete original file %s: %s", orig, exc)
 
-    # delete thumbnail
-    if not media.thumbnail_path:
-        thumb = settings.general.thumb_dir / f"{media.id}.jpg"
+    # delete thumbnail (delete_record() already removes it; this is a no-op
+    # safety net in case that step was skipped)
+    if not thumbnail_path:
+        thumb = settings.general.thumb_dir / f"{media_id}.jpg"
     else:
-        thumb = settings.general.thumb_dir / media.thumbnail_path
+        thumb = settings.general.thumb_dir / thumbnail_path
     try:
         thumb.unlink()
     except FileNotFoundError:

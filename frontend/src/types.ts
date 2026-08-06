@@ -12,6 +12,7 @@ export interface Media {
   faces: Face[];
   thumbnail_path?: string;
   extracted_scenes: boolean;
+  is_favorite: boolean;
 }
 
 export interface MediaFolderPreview {
@@ -151,7 +152,12 @@ export type TaskType =
   | "backfill_face_quality"
   | "build_events"
   | "geocode_places";
-export type TaskStatus = "pending" | "running" | "completed" | "cancelled";
+export type TaskStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "cancelled"
+  | "failed";
 
 export interface MemoryGroup {
   year: number;
@@ -270,6 +276,7 @@ export interface MediaPreview {
   height?: number;
   views: number;
   inserted_at: string;
+  is_favorite: boolean;
 }
 
 export interface MediaDuplicate extends MediaPreview {
@@ -662,6 +669,12 @@ export interface AppConfig {
   duplicates: {
     duplicate_auto_handling: string;
     duplicate_auto_keep_rule: string;
+  };
+  events: {
+    events_enabled: boolean;
+    event_gap_hours: number;
+    event_min_media: number;
+    preserve_renamed_on_rebuild: boolean;
   };
   video: {
     auto_scene_detection: boolean;

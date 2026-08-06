@@ -37,13 +37,13 @@ export function FaceAppearanceStrip({ faces, onSeekRequest }: Props) {
             clickable
             onClick={() => onSeekRequest(face.timestamp ?? 0)}
             avatar={
-              <Avatar
-                src={
-                  face.thumbnail_path
-                    ? `${API}/thumbnails/${encodeFilePath(face.thumbnail_path)}`
-                    : undefined
-                }
-              />
+              face.thumbnail_path ? (
+                <Avatar
+                  src={`${API}/thumbnails/${encodeFilePath(
+                    face.thumbnail_path
+                  )}`}
+                />
+              ) : undefined
             }
             icon={face.thumbnail_path ? undefined : <PlayArrowIcon />}
             label={formatTime(face.timestamp ?? 0)}

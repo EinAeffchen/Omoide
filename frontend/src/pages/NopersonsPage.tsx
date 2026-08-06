@@ -79,7 +79,7 @@ const NopersonsPage: React.FC = () => {
     ({ action, mediaIds, selectAll }: { action: BulkResolveAction; mediaIds?: number[]; selectAll?: boolean }) =>
       selectAll
         ? resolveNoPersons({ action, select_all: true, media_type: mediaType || undefined, scope })
-        : resolveNoPersons({ action, media_ids: mediaIds }),
+        : resolveNoPersons({ action, media_ids: mediaIds, media_type: mediaType || undefined, scope }),
     [mediaType, scope]
   );
 

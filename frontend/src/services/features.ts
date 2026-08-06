@@ -151,6 +151,32 @@ export const getEventMedia = async (
   );
 };
 
+export const updateEvent = async (
+  id: number,
+  title: string
+): Promise<EventItem> =>
+  jsonOrThrow(
+    await fetch(`${API}/api/events/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    }),
+    "rename event"
+  );
+
+export const convertEventToAlbum = async (
+  id: number,
+  name?: string
+): Promise<Album> =>
+  jsonOrThrow(
+    await fetch(`${API}/api/events/${id}/convert-to-album`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: name ?? null }),
+    }),
+    "convert event to album"
+  );
+
 // ---------- places ----------
 
 export const getPlaces = async (): Promise<PlaceCountry[]> =>

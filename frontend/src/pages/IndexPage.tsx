@@ -32,10 +32,16 @@ import FolderCard from "../components/FolderCard";
 import { MediaSkeleton } from "../components/MediaSkeleton";
 import { EmptyState } from "../components/EmptyState";
 import { MemoriesRail } from "../components/MemoriesRail";
+import { FavoritesStripWidget } from "../components/home/FavoritesStripWidget";
+import { HighlightsStripWidget } from "../components/home/HighlightsStripWidget";
+import { AlbumsPreviewWidget } from "../components/home/AlbumsPreviewWidget";
+import { StatisticsSnapshotWidget } from "../components/home/StatisticsSnapshotWidget";
 import { MEDIA_SORT_LABELS } from "../components/MediaListPage";
 import { getMediaFolders, getMediaList } from "../services/media";
 import { getCameras } from "../services/features";
 import { useTaskCompletionVersion } from "../TaskEventsContext";
+import { useHomeWidgets } from "../hooks/useHomeWidgets";
+import { HomeWidgetId } from "../homeWidgets";
 import { CameraCount, MediaFolderListing } from "../types";
 
 const breakpointColumnsObj = {
@@ -76,6 +82,11 @@ export default function IndexPage() {
   );
   const [isFolderLoading, setIsFolderLoading] = useState(false);
   const [folderError, setFolderError] = useState<string | null>(null);
+
+  const { widgets } = useHomeWidgets();
+  const recentMediaEnabled = widgets.some(
+    (w) => w.id === "recent_media" && w.enabled
+  );
 
   const updateParams = useCallback(
     (updates: Record<string, string | null>) => {
@@ -132,10 +143,12 @@ export default function IndexPage() {
   // fetchInitial skips lists that already have content, so back-navigation
   // restores the cached list (and scroll position) instantly.
   useEffect(() => {
+    if (!recentMediaEnabled) return;
     fetchInitial(mediaListKey, () =>
       getMediaList(null, sortOrder, tags, folderParam, recursive, camera)
     );
   }, [
+    recentMediaEnabled,
     mediaListKey,
     fetchInitial,
     sortOrder,
@@ -146,12 +159,13 @@ export default function IndexPage() {
   ]);
 
   useEffect(() => {
-    if (inView && hasMore && !isLoading && !listError) {
+    if (recentMediaEnabled && inView && hasMore && !isLoading && !listError) {
       loadMore(mediaListKey, (cursor) =>
         getMediaList(cursor, sortOrder, tags, folderParam, recursive, camera)
       ).catch(console.error);
     }
   }, [
+    recentMediaEnabled,
     inView,
     hasMore,
     isLoading,
@@ -166,7 +180,7 @@ export default function IndexPage() {
   ]);
 
   const loadFolders = useCallback(async () => {
-    if (viewMode !== "folders") {
+    if (!recentMediaEnabled || viewMode !== "folders") {
       return;
     }
     setIsFolderLoading(true);
@@ -181,7 +195,7 @@ export default function IndexPage() {
     } finally {
       setIsFolderLoading(false);
     }
-  }, [viewMode, currentFolder]);
+  }, [recentMediaEnabled, viewMode, currentFolder]);
 
   useEffect(() => {
     void loadFolders();
@@ -290,16 +304,8 @@ export default function IndexPage() {
   const breadcrumbItems = folderListing?.breadcrumbs ?? [];
   const directCount = folderListing?.direct_media_count ?? 0;
 
-  return (
-    <Container
-      maxWidth="xl"
-      sx={{
-        minHeight: "100vh",
-        py: 4,
-        px: { xs: 2, sm: 3, md: 4 },
-      }}
-    >
-      <MemoriesRail />
+  const recentMediaSection = (
+    <>
       <Box
         display="flex"
         justifyContent="space-between"
@@ -313,7 +319,7 @@ export default function IndexPage() {
           bgcolor: "background.paper",
           boxShadow: (theme) => theme.shadows[1],
           backdropFilter: "blur(12px)",
-          background: (theme) => 
+          background: (theme) =>
             `linear-gradient(to right bottom, ${theme.palette.background.paper}, ${theme.palette.background.default})`,
         }}
       >
@@ -323,8 +329,8 @@ export default function IndexPage() {
           exclusive
           onChange={handleViewModeChange}
           aria-label="View mode"
-          sx={{ 
-            '& .MuiToggleButton-root': { 
+          sx={{
+            '& .MuiToggleButton-root': {
                 border: 'none',
                 borderRadius: 2,
                 mx: 0.5,
@@ -337,7 +343,7 @@ export default function IndexPage() {
                         bgcolor: 'primary.dark',
                     }
                 }
-            } 
+            }
           }}
         >
           <ToggleButton value="grid" aria-label="grid view" sx={{ gap: 1 }}>
@@ -640,6 +646,32 @@ export default function IndexPage() {
         </Box>
       )}
       {hasMore && !listError && <Box ref={loaderRef} sx={{ height: "10px" }} />}
+    </>
+  );
+
+  const widgetContent: Record<HomeWidgetId, React.ReactNode> = {
+    on_this_day: <MemoriesRail />,
+    recent_media: recentMediaSection,
+    favorites_strip: <FavoritesStripWidget />,
+    highlights_strip: <HighlightsStripWidget />,
+    albums_preview: <AlbumsPreviewWidget />,
+    statistics_snapshot: <StatisticsSnapshotWidget />,
+  };
+
+  return (
+    <Container
+      maxWidth="xl"
+      sx={{
+        minHeight: "100vh",
+        py: 4,
+        px: { xs: 2, sm: 3, md: 4 },
+      }}
+    >
+      {widgets
+        .filter((w) => w.enabled)
+        .map((w) => (
+          <React.Fragment key={w.id}>{widgetContent[w.id]}</React.Fragment>
+        ))}
       {/* Scroll to Top FAB */}
       <Fade in={showScrollTop}>
         <Box

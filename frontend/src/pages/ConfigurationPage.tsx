@@ -11,6 +11,8 @@ import {
   getProfileHealth,
 } from "../services/config";
 import { runProcessor } from "../services/taskActions";
+import { useHomeWidgets } from "../hooks/useHomeWidgets";
+import { HOME_WIDGETS, HomeWidgetId } from "../homeWidgets";
 import {
   AppConfig,
   MediaDirectory,
@@ -21,6 +23,14 @@ import { IconButton } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
 import FolderOpenIcon from "@mui/icons-material/FolderOpen";
+import ArrowUpwardIcon from "@mui/icons-material/ArrowUpward";
+import ArrowDownwardIcon from "@mui/icons-material/ArrowDownward";
+import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
+import PhotoLibraryIcon from "@mui/icons-material/PhotoLibrary";
+import FavoriteIcon from "@mui/icons-material/Favorite";
+import StarIcon from "@mui/icons-material/Star";
+import PhotoAlbumIcon from "@mui/icons-material/PhotoAlbum";
+import InsightsIcon from "@mui/icons-material/Insights";
 import { addExistingProfile } from "../services/config";
 import {
   Button,
@@ -63,6 +73,15 @@ import {
   ListItemSecondaryAction,
 } from "@mui/material";
 import { getVersionUpdateInfo } from "../services/version";
+
+const HOME_WIDGET_ICONS: Record<HomeWidgetId, React.ReactNode> = {
+  on_this_day: <AutoAwesomeIcon fontSize="small" />,
+  recent_media: <PhotoLibraryIcon fontSize="small" />,
+  favorites_strip: <FavoriteIcon fontSize="small" />,
+  highlights_strip: <StarIcon fontSize="small" />,
+  albums_preview: <PhotoAlbumIcon fontSize="small" />,
+  statistics_snapshot: <InsightsIcon fontSize="small" />,
+};
 
 type FacePresetKey = "strict" | "normal" | "loose";
 
@@ -231,6 +250,11 @@ export default function ConfigurationPage() {
     "presets" | "manual"
   >("presets");
   const [runningProcessor, setRunningProcessor] = useState<string | null>(null);
+  const {
+    widgets: homeWidgets,
+    toggle: toggleHomeWidget,
+    move: moveHomeWidget,
+  } = useHomeWidgets();
   const [savedMediaDirPaths, setSavedMediaDirPaths] = useState<string[]>([]);
   const [acknowledgedRemovedMediaDirPaths, setAcknowledgedRemovedMediaDirPaths] =
     useState<Set<string>>(new Set());
@@ -1002,6 +1026,69 @@ export default function ConfigurationPage() {
       label: "General",
       content: (
         <Grid container spacing={2}>
+          <Grid size={{ xs: 12 }}>
+            <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+              Homepage Widgets
+            </Typography>
+            <Typography variant="body2" sx={{ mb: 1 }}>
+              Choose what shows on your homepage, and in what order. This only
+              affects this browser, not other devices or users.
+            </Typography>
+            <Paper variant="outlined">
+              <List dense disablePadding>
+                {homeWidgets.map((widget, index) => {
+                  const def = HOME_WIDGETS.find((w) => w.id === widget.id);
+                  if (!def) return null;
+                  return (
+                    <ListItem
+                      key={widget.id}
+                      divider={index < homeWidgets.length - 1}
+                      sx={{ py: 1 }}
+                    >
+                      <ListItemIcon sx={{ minWidth: 40 }}>
+                        {HOME_WIDGET_ICONS[widget.id]}
+                      </ListItemIcon>
+                      <ListItemText
+                        primary={
+                          <FormControlLabel
+                            control={
+                              <Switch
+                                checked={widget.enabled}
+                                onChange={(e) =>
+                                  toggleHomeWidget(widget.id, e.target.checked)
+                                }
+                              />
+                            }
+                            label={def.label}
+                          />
+                        }
+                        secondary={def.description}
+                        secondaryTypographyProps={{ sx: { ml: 6 } }}
+                      />
+                      <ListItemSecondaryAction>
+                        <IconButton
+                          size="small"
+                          aria-label={`Move ${def.label} up`}
+                          disabled={index === 0}
+                          onClick={() => moveHomeWidget(widget.id, -1)}
+                        >
+                          <ArrowUpwardIcon fontSize="small" />
+                        </IconButton>
+                        <IconButton
+                          size="small"
+                          aria-label={`Move ${def.label} down`}
+                          disabled={index === homeWidgets.length - 1}
+                          onClick={() => moveHomeWidget(widget.id, 1)}
+                        >
+                          <ArrowDownwardIcon fontSize="small" />
+                        </IconButton>
+                      </ListItemSecondaryAction>
+                    </ListItem>
+                  );
+                })}
+              </List>
+            </Paper>
+          </Grid>
           {!isBinary && (
             <>
               <Grid size={{ xs: 12, sm: 6 }}>
@@ -1183,6 +1270,96 @@ export default function ConfigurationPage() {
               margin="normal"
               type="number"
               helperText="Maximum people to load when rendering the relationship graph"
+            />
+          </Grid>
+        </Grid>
+      ),
+    },
+    {
+      label: "Events",
+      content: (
+        <Grid container spacing={2}>
+          <Grid size={{ xs: 12 }}>
+            <FormGroup>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={config.events.events_enabled}
+                    onChange={(e) =>
+                      handleValueChange(
+                        "events",
+                        "events_enabled",
+                        e.target.checked
+                      )
+                    }
+                  />
+                }
+                label="Enable Events tab"
+              />
+              <Typography
+                variant="caption"
+                sx={{ ml: 6, mt: -1, display: "block" }}
+              >
+                Shows the Events tab and lets the library be clustered into
+                trips and moments.
+              </Typography>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={config.events.preserve_renamed_on_rebuild}
+                    onChange={(e) =>
+                      handleValueChange(
+                        "events",
+                        "preserve_renamed_on_rebuild",
+                        e.target.checked
+                      )
+                    }
+                  />
+                }
+                label="Preserve renamed events on rebuild"
+              />
+              <Typography
+                variant="caption"
+                sx={{ ml: 6, mt: -1, display: "block" }}
+              >
+                When "Rebuild events" runs again, try to match renamed events
+                to their new cluster by media overlap and keep the custom
+                title. When off, a rebuild always wipes every title.
+              </Typography>
+            </FormGroup>
+          </Grid>
+          <Grid size={{ xs: 12, sm: 6 }}>
+            <TextField
+              label="Gap Between Events (hours)"
+              value={config.events.event_gap_hours}
+              onChange={(e) =>
+                handleValueChange(
+                  "events",
+                  "event_gap_hours",
+                  parseFloat(e.target.value)
+                )
+              }
+              fullWidth
+              margin="normal"
+              type="number"
+              helperText="A new event starts when consecutive media are further apart than this"
+            />
+          </Grid>
+          <Grid size={{ xs: 12, sm: 6 }}>
+            <TextField
+              label="Minimum Media per Event"
+              value={config.events.event_min_media}
+              onChange={(e) =>
+                handleValueChange(
+                  "events",
+                  "event_min_media",
+                  parseInt(e.target.value, 10)
+                )
+              }
+              fullWidth
+              margin="normal"
+              type="number"
+              helperText="Clusters smaller than this are discarded as noise"
             />
           </Grid>
         </Grid>

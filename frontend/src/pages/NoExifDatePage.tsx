@@ -65,7 +65,7 @@ const NoExifDatePage: React.FC = () => {
     ({ action, mediaIds, selectAll }: { action: BulkResolveAction; mediaIds?: number[]; selectAll?: boolean }) =>
       selectAll
         ? resolveNoExifDate({ action, select_all: true, media_type: mediaType || undefined })
-        : resolveNoExifDate({ action, media_ids: mediaIds }),
+        : resolveNoExifDate({ action, media_ids: mediaIds, media_type: mediaType || undefined }),
     [mediaType]
   );
 

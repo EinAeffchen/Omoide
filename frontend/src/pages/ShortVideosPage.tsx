@@ -71,7 +71,7 @@ const ShortVideosPage: React.FC = () => {
     ({ action, mediaIds, selectAll }: { action: BulkResolveAction; mediaIds?: number[]; selectAll?: boolean }) =>
       selectAll
         ? resolveShortVideos({ action, select_all: true, max_duration: maxDuration })
-        : resolveShortVideos({ action, media_ids: mediaIds }),
+        : resolveShortVideos({ action, media_ids: mediaIds, max_duration: maxDuration }),
     [maxDuration]
   );
 

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from sqlmodel import Session, func, select
 
 import app.database as db
 from app.concurrency import heavy_writer
+from app.config import settings
 from app.database import safe_commit
 from app.logger import logger
 from app.models import (
@@ -17,14 +18,11 @@ from app.models import (
     Media,
     ProcessingTask,
 )
+
 from .state import clear_task_progress, set_task_progress
 
 __all__ = ["run_build_events", "run_geocode_places"]
 
-# A new event starts when consecutive media are further apart than this.
-EVENT_GAP = timedelta(hours=6)
-# Clusters smaller than this are noise, not an "event".
-EVENT_MIN_MEDIA = 3
 GEOCODE_BATCH = 500
 
 
@@ -38,7 +36,7 @@ def _get_task(session: Session, task_id: str) -> ProcessingTask | None:
 def _start_task(session: Session, task: ProcessingTask) -> None:
     task.status = "running"
     task.processed = 0
-    task.started_at = datetime.now(timezone.utc)
+    task.started_at = datetime.now(UTC)
     session.add(task)
     safe_commit(session)
 
@@ -46,7 +44,7 @@ def _start_task(session: Session, task: ProcessingTask) -> None:
 def _finish_task(session: Session, task: ProcessingTask, status: str) -> None:
     session.refresh(task)
     task.status = status if task.status != "cancelled" else "cancelled"
-    task.finished_at = datetime.now(timezone.utc)
+    task.finished_at = datetime.now(UTC)
     session.add(task)
     safe_commit(session)
 
@@ -69,99 +67,149 @@ def _event_title(cities: Counter, countries: Counter) -> str | None:
 def run_build_events(task_id: str) -> None:
     """Cluster the whole library into time-based events.
 
-    Media are sorted by taken date; a gap larger than EVENT_GAP starts a new
-    event. Existing events are rebuilt from scratch, so re-running after new
-    scans or geocoding always produces a consistent result.
+    Media are sorted by taken date; a gap larger than
+    settings.events.event_gap_hours starts a new event. Existing events are
+    rebuilt from scratch, so re-running after new scans or geocoding always
+    produces a consistent result (unless preserve_renamed_on_rebuild carries
+    a custom title over to the best-matching new cluster).
     """
-    with heavy_writer(name="build_events", cancelled=lambda: _is_cancelled(task_id)):
-        with Session(db.engine) as session:
-            task = _get_task(session, task_id)
-            if not task:
-                return
-            _start_task(session, task)
-            set_task_progress(task_id, current_step="clustering", current_item=None)
+    with heavy_writer(
+        name="build_events", cancelled=lambda: _is_cancelled(task_id)
+    ), Session(db.engine) as session:
+        task = _get_task(session, task_id)
+        if not task:
+            return
+        _start_task(session, task)
+        set_task_progress(
+            task_id, current_step="clustering", current_item=None
+        )
 
-            rows = session.exec(
-                select(
-                    Media.id,
-                    Media.created_at,
-                    ExifData.city,
-                    ExifData.country,
-                )
-                .join(ExifData, ExifData.media_id == Media.id, isouter=True)
-                .where(
-                    Media.processing_error.is_(None),
-                    Media.missing_since.is_(None),
-                )
-                .order_by(Media.created_at.asc(), Media.id.asc())
-            ).all()
+        event_gap = timedelta(hours=settings.events.event_gap_hours)
+        event_min_media = settings.events.event_min_media
 
-            task.total = len(rows)
-            session.add(task)
-            safe_commit(session)
-
-            clusters: list[list[tuple]] = []
-            current: list[tuple] = []
-            prev_time: datetime | None = None
-            for row in rows:
-                taken = row[1]
-                if prev_time is not None and taken - prev_time > EVENT_GAP:
-                    clusters.append(current)
-                    current = []
-                current.append(row)
-                prev_time = taken
-
-            if current:
-                clusters.append(current)
-
-            # Rebuild from scratch.
-            for link in session.exec(select(EventMediaLink)).all():
-                session.delete(link)
-            for event in session.exec(select(Event)).all():
-                session.delete(event)
-            session.flush()
-
-            created = 0
-            processed = 0
-            for cluster in clusters:
-                processed += len(cluster)
-                if len(cluster) < EVENT_MIN_MEDIA:
-                    continue
-                if _is_cancelled(task_id):
-                    logger.info("build_events cancelled.")
-                    break
-                cities = Counter(
-                    row[2] for row in cluster if row[2] is not None
-                )
-                countries = Counter(
-                    row[3] for row in cluster if row[3] is not None
-                )
-                event = Event(
-                    title=_event_title(cities, countries),
-                    start_at=cluster[0][1],
-                    end_at=cluster[-1][1],
-                    media_count=len(cluster),
-                    cover_media_id=cluster[0][0],
-                )
-                session.add(event)
-                session.flush()
-                for row in cluster:
-                    session.add(
-                        EventMediaLink(event_id=event.id, media_id=row[0])
-                    )
-                created += 1
-                task.processed = processed
-                if created % 50 == 0:
-                    session.add(task)
-                    safe_commit(session)
-
-            task.processed = processed
-            session.add(task)
-            safe_commit(session)
-            logger.info(
-                "build_events: %d events from %d media.", created, len(rows)
+        rows = session.exec(
+            select(
+                Media.id,
+                Media.created_at,
+                ExifData.city,
+                ExifData.country,
             )
-            _finish_task(session, task, "completed")
+            .join(ExifData, ExifData.media_id == Media.id, isouter=True)
+            .where(
+                Media.processing_error.is_(None),
+                Media.missing_since.is_(None),
+            )
+            .order_by(Media.created_at.asc(), Media.id.asc())
+        ).all()
+
+        task.total = len(rows)
+        session.add(task)
+        safe_commit(session)
+
+        clusters: list[list[tuple]] = []
+        current: list[tuple] = []
+        prev_time: datetime | None = None
+        for row in rows:
+            taken = row[1]
+            if prev_time is not None and taken - prev_time > event_gap:
+                clusters.append(current)
+                current = []
+            current.append(row)
+            prev_time = taken
+
+        if current:
+            clusters.append(current)
+
+        # Snapshot renamed events (by media membership) so a rebuild can
+        # carry their custom title over to whichever new cluster is the
+        # best match, instead of losing it to the full wipe below.
+        renamed_snapshots: list[tuple[str, set[int]]] = []
+        if settings.events.preserve_renamed_on_rebuild:
+            custom_events = session.exec(
+                select(Event).where(Event.title_is_custom.is_(True))
+            ).all()
+            for old_event in custom_events:
+                if not old_event.title:
+                    continue
+                media_ids = set(
+                    session.exec(
+                        select(EventMediaLink.media_id).where(
+                            EventMediaLink.event_id == old_event.id
+                        )
+                    ).all()
+                )
+                if media_ids:
+                    renamed_snapshots.append((old_event.title, media_ids))
+
+        # Rebuild from scratch.
+        for link in session.exec(select(EventMediaLink)).all():
+            session.delete(link)
+        for event in session.exec(select(Event)).all():
+            session.delete(event)
+        session.flush()
+
+        created = 0
+        processed = 0
+        for cluster in clusters:
+            processed += len(cluster)
+            if len(cluster) < event_min_media:
+                continue
+            if _is_cancelled(task_id):
+                logger.info("build_events cancelled.")
+                break
+            cities = Counter(
+                row[2] for row in cluster if row[2] is not None
+            )
+            countries = Counter(
+                row[3] for row in cluster if row[3] is not None
+            )
+            title = _event_title(cities, countries)
+            title_is_custom = False
+            if renamed_snapshots:
+                cluster_ids = {row[0] for row in cluster}
+                best_title: str | None = None
+                best_ratio = 0.0
+                for old_title, old_ids in renamed_snapshots:
+                    overlap = len(cluster_ids & old_ids)
+                    if overlap == 0:
+                        continue
+                    ratio = overlap / min(len(cluster_ids), len(old_ids))
+                    if ratio > best_ratio:
+                        best_ratio = ratio
+                        best_title = old_title
+                # Require a clear majority overlap so a cluster that only
+                # shares a handful of media with an old event doesn't
+                # steal its title.
+                if best_title is not None and best_ratio > 0.5:
+                    title = best_title
+                    title_is_custom = True
+            event = Event(
+                title=title,
+                title_is_custom=title_is_custom,
+                start_at=cluster[0][1],
+                end_at=cluster[-1][1],
+                media_count=len(cluster),
+                cover_media_id=cluster[0][0],
+            )
+            session.add(event)
+            session.flush()
+            for row in cluster:
+                session.add(
+                    EventMediaLink(event_id=event.id, media_id=row[0])
+                )
+            created += 1
+            task.processed = processed
+            if created % 50 == 0:
+                session.add(task)
+                safe_commit(session)
+
+        task.processed = processed
+        session.add(task)
+        safe_commit(session)
+        logger.info(
+            "build_events: %d events from %d media.", created, len(rows)
+        )
+        _finish_task(session, task, "completed")
     clear_task_progress(task_id)
 
 
@@ -171,7 +219,7 @@ def _fail_task(task_id: str, message: str) -> None:
         task = _get_task(session, task_id)
         if task:
             task.status = "failed"
-            task.finished_at = datetime.now(timezone.utc)
+            task.finished_at = datetime.now(UTC)
             session.add(task)
             safe_commit(session)
     clear_task_progress(task_id)
@@ -183,7 +231,8 @@ def run_geocode_places(task_id: str) -> None:
         import reverse_geocoder as rg
     except ImportError:
         _fail_task(
-            task_id, "reverse_geocoder is not installed; cannot geocode places."
+            task_id,
+            "reverse_geocoder is not installed; cannot geocode places.",
         )
         return
 
@@ -202,59 +251,62 @@ def run_geocode_places(task_id: str) -> None:
 
     with heavy_writer(
         name="geocode_places", cancelled=lambda: _is_cancelled(task_id)
-    ):
-        with Session(db.engine) as session:
-            task = _get_task(session, task_id)
-            if not task:
-                return
-            _start_task(session, task)
-            set_task_progress(task_id, current_step="geocoding", current_item=None)
+    ), Session(db.engine) as session:
+        task = _get_task(session, task_id)
+        if not task:
+            return
+        _start_task(session, task)
+        set_task_progress(
+            task_id, current_step="geocoding", current_item=None
+        )
 
-            pending_filter = (
-                ExifData.lat.is_not(None),
-                ExifData.lon.is_not(None),
-                ExifData.city.is_(None),
-            )
-            pending_stmt = select(ExifData).where(*pending_filter)
-            task.total = int(
-                session.exec(
-                    select(func.count()).select_from(ExifData).where(*pending_filter)
-                ).one()
-            )
+        pending_filter = (
+            ExifData.lat.is_not(None),
+            ExifData.lon.is_not(None),
+            ExifData.city.is_(None),
+        )
+        pending_stmt = select(ExifData).where(*pending_filter)
+        task.total = int(
+            session.exec(
+                select(func.count())
+                .select_from(ExifData)
+                .where(*pending_filter)
+            ).one()
+        )
+        session.add(task)
+        safe_commit(session)
+        logger.info(
+            "geocode_places: %d locations pending; loading dataset...",
+            task.total,
+        )
+
+        processed = 0
+        while True:
+            if _is_cancelled(task_id):
+                logger.info("geocode_places cancelled.")
+                break
+            batch = session.exec(pending_stmt.limit(GEOCODE_BATCH)).all()
+            if not batch:
+                break
+            coords = [(row.lat, row.lon) for row in batch]
+            # mode=1: single-process K-D tree lookup (Windows-safe).
+            # verbose=False: rg prints progress to stdout otherwise, which
+            # is useless in windowed/frozen builds.
+            results = rg.search(coords, mode=1, verbose=False)
+            for row, place in zip(batch, results):
+                row.city = place.get("name") or "Unknown"
+                row.country = place.get("cc")
+                session.add(row)
+            processed += len(batch)
+            task.processed = processed
             session.add(task)
             safe_commit(session)
-            logger.info(
-                "geocode_places: %d locations pending; loading dataset...",
-                task.total,
+            set_task_progress(
+                task_id,
+                current_step="geocoding",
+                current_item=f"{processed}/{task.total} locations",
             )
 
-            processed = 0
-            while True:
-                if _is_cancelled(task_id):
-                    logger.info("geocode_places cancelled.")
-                    break
-                batch = session.exec(pending_stmt.limit(GEOCODE_BATCH)).all()
-                if not batch:
-                    break
-                coords = [(row.lat, row.lon) for row in batch]
-                # mode=1: single-process K-D tree lookup (Windows-safe).
-                # verbose=False: rg prints progress to stdout otherwise, which
-                # is useless in windowed/frozen builds.
-                results = rg.search(coords, mode=1, verbose=False)
-                for row, place in zip(batch, results):
-                    row.city = place.get("name") or "Unknown"
-                    row.country = place.get("cc")
-                    session.add(row)
-                processed += len(batch)
-                task.processed = processed
-                session.add(task)
-                safe_commit(session)
-                set_task_progress(
-                    task_id,
-                    current_step="geocoding",
-                    current_item=f"{processed}/{task.total} locations",
-                )
-
-            logger.info("geocode_places: geocoded %d locations.", processed)
-            _finish_task(session, task, "completed")
+        logger.info("geocode_places: geocoded %d locations.", processed)
+        _finish_task(session, task, "completed")
     clear_task_progress(task_id)

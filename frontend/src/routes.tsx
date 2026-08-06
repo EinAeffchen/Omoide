@@ -7,6 +7,7 @@ import { Layout } from "./components/Layout";
 import TagDetailPage from "./pages/TagDetailPage";
 import ImagesPage from "./pages/ImagesPage";
 import VideosPage from "./pages/VideosPage";
+import FavoritesPage from "./pages/FavoritesPage";
 import PeoplePage from "./pages/PeoplePage";
 import TagsPage from "./pages/TagPage";
 import SearchPage from "./pages/SearchResultPage";
@@ -20,6 +21,7 @@ import LowResolutionPage from "./pages/LowResolutionPage";
 import NoExifDatePage from "./pages/NoExifDatePage";
 import BrokenMediaPage from "./pages/BrokenMediaPage";
 import { WriteModeBoundary } from "./components/ReadOnlyBoundary";
+import { MaintenanceShell } from "./components/MaintenanceShell";
 
 const PersonDetailPage = lazy(() => import("./pages/PersonDetailPage"));
 const MapPage = lazy(() => import("./pages/MapPage"));
@@ -79,6 +81,7 @@ export const AppRoutes = () => {
             }
           />
           <Route path="/videos" element={<VideosPage />} />
+          <Route path="/favorites" element={<FavoritesPage />} />
           <Route path="/people" element={<PeoplePage />} />
           <Route path="/person/:id" element={<PersonDetailPage />} />
           <Route path="/tag/:id" element={<TagDetailPage />} />
@@ -93,17 +96,21 @@ export const AppRoutes = () => {
           <Route
             path="/blur"
             element={
-              <WriteModeBoundary description="Blurry image review is disabled while the system is in read-only mode.">
-                <BlurryPage />
-              </WriteModeBoundary>
+              <MaintenanceShell>
+                <WriteModeBoundary description="Blurry image review is disabled while the system is in read-only mode.">
+                  <BlurryPage />
+                </WriteModeBoundary>
+              </MaintenanceShell>
             }
           />
           <Route
             path="/duplicates"
             element={
-              <WriteModeBoundary description="Duplicate review actions are disabled while the system is in read-only mode.">
-                <DuplicatesPage />
-              </WriteModeBoundary>
+              <MaintenanceShell>
+                <WriteModeBoundary description="Duplicate review actions are disabled while the system is in read-only mode.">
+                  <DuplicatesPage />
+                </WriteModeBoundary>
+              </MaintenanceShell>
             }
           />
           <Route
@@ -117,9 +124,11 @@ export const AppRoutes = () => {
           <Route
             path="/missing"
             element={
-              <WriteModeBoundary description="Missing file review is disabled while the system is in read-only mode.">
-                <MissingFilesPage />
-              </WriteModeBoundary>
+              <MaintenanceShell>
+                <WriteModeBoundary description="Missing file review is disabled while the system is in read-only mode.">
+                  <MissingFilesPage />
+                </WriteModeBoundary>
+              </MaintenanceShell>
             }
           />
           <Route
@@ -133,41 +142,51 @@ export const AppRoutes = () => {
           <Route
             path="/untagged"
             element={
-              <WriteModeBoundary description="Untagged media review is disabled while the system is in read-only mode.">
-                <UntaggedPage />
-              </WriteModeBoundary>
+              <MaintenanceShell>
+                <WriteModeBoundary description="Untagged media review is disabled while the system is in read-only mode.">
+                  <UntaggedPage />
+                </WriteModeBoundary>
+              </MaintenanceShell>
             }
           />
           <Route
             path="/shortvideos"
             element={
-              <WriteModeBoundary description="Short video review is disabled while the system is in read-only mode.">
-                <ShortVideosPage />
-              </WriteModeBoundary>
+              <MaintenanceShell>
+                <WriteModeBoundary description="Short video review is disabled while the system is in read-only mode.">
+                  <ShortVideosPage />
+                </WriteModeBoundary>
+              </MaintenanceShell>
             }
           />
           <Route
             path="/lowresolution"
             element={
-              <WriteModeBoundary description="Low-resolution media review is disabled while the system is in read-only mode.">
-                <LowResolutionPage />
-              </WriteModeBoundary>
+              <MaintenanceShell>
+                <WriteModeBoundary description="Low-resolution media review is disabled while the system is in read-only mode.">
+                  <LowResolutionPage />
+                </WriteModeBoundary>
+              </MaintenanceShell>
             }
           />
           <Route
             path="/noexifdate"
             element={
-              <WriteModeBoundary description="No-EXIF-date review is disabled while the system is in read-only mode.">
-                <NoExifDatePage />
-              </WriteModeBoundary>
+              <MaintenanceShell>
+                <WriteModeBoundary description="No-EXIF-date review is disabled while the system is in read-only mode.">
+                  <NoExifDatePage />
+                </WriteModeBoundary>
+              </MaintenanceShell>
             }
           />
           <Route
             path="/broken"
             element={
-              <WriteModeBoundary description="Broken media review is disabled while the system is in read-only mode.">
-                <BrokenMediaPage />
-              </WriteModeBoundary>
+              <MaintenanceShell>
+                <WriteModeBoundary description="Broken media review is disabled while the system is in read-only mode.">
+                  <BrokenMediaPage />
+                </WriteModeBoundary>
+              </MaintenanceShell>
             }
           />
         </Route>

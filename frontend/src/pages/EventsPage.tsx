@@ -15,7 +15,7 @@ import TheatersIcon from "@mui/icons-material/Theaters";
 import AutorenewIcon from "@mui/icons-material/Autorenew";
 import { Link } from "react-router-dom";
 import { useInView } from "react-intersection-observer";
-import { API } from "../config";
+import config, { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
 import { EmptyState } from "../components/EmptyState";
 import { getEvents, startBuildEvents } from "../services/features";
@@ -83,6 +83,14 @@ export default function EventsPage() {
       setError(err instanceof Error ? err.message : "Failed to start task");
     }
   };
+
+  if (!config.EVENTS_ENABLED) {
+    return (
+      <Typography variant="h5" color="text.primary" gutterBottom>
+        Events disabled!
+      </Typography>
+    );
+  }
 
   return (
     <Container maxWidth="xl" sx={{ minHeight: "100vh", py: 4 }}>

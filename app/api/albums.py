@@ -50,6 +50,7 @@ def _cover_thumbnail(session: Session, album: Album) -> str | None:
         .where(
             AlbumMediaLink.album_id == album.id,
             Media.thumbnail_path.is_not(None),
+            Media.missing_since.is_(None),
         )
         .order_by(AlbumMediaLink.created_at.desc())
         .limit(1)
@@ -85,9 +86,7 @@ def list_albums(session: Session = Depends(get_session)):
 
 
 @router.post("", response_model=AlbumRead)
-def create_album(
-    body: AlbumCreate, session: Session = Depends(get_session)
-):
+def create_album(body: AlbumCreate, session: Session = Depends(get_session)):
     album = Album(name=body.name.strip(), description=body.description)
     session.add(album)
     safe_commit(session)
@@ -142,6 +141,11 @@ def delete_album(album_id: int, session: Session = Depends(get_session)):
         select(AlbumMediaLink).where(AlbumMediaLink.album_id == album_id)
     ).all():
         session.delete(link)
+    # Flush the link deletes before the album delete: SQLAlchemy only orders
+    # cross-mapper deletes via a declared relationship(), which these models
+    # don't have, so without this the album delete can be emitted first and
+    # trip the foreign key constraint.
+    session.flush()
     session.delete(album)
     safe_commit(session)
     return {"status": "deleted"}
@@ -213,6 +217,7 @@ def list_album_media(
         .where(
             AlbumMediaLink.album_id == album_id,
             Media.processing_error.is_(None),
+            Media.missing_since.is_(None),
         )
         .order_by(Media.created_at.desc(), Media.id.desc())
     )

@@ -13,7 +13,7 @@ from app.schemas.media import MediaPreview
 
 router = APIRouter()
 
-_BROWSABLE = lambda: (  # noqa: E731 - shared filter for user-facing media
+_BROWSABLE = lambda: (
     Media.processing_error.is_(None),
     Media.missing_since.is_(None),
     Media.thumbnail_path.is_not(None),
@@ -86,11 +86,14 @@ def get_highlights(
         + func.min(func.coalesce(Media.views, 0), 5) * 0.4
     )
 
+    year_start = datetime(year, 1, 1)
+    year_end = datetime(year + 1, 1, 1)
     rows = session.exec(
         select(Media)
         .where(
             *_BROWSABLE(),
-            func.strftime("%Y", Media.created_at) == str(year),
+            Media.created_at >= year_start,
+            Media.created_at < year_end,
         )
         .order_by(score.desc(), Media.created_at.desc(), Media.id.desc())
         .limit(limit)

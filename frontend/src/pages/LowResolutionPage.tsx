@@ -88,7 +88,12 @@ const LowResolutionPage: React.FC = () => {
             max_pixels: Math.round(maxMp * 1_000_000),
             media_type: mediaType || undefined,
           })
-        : resolveLowRes({ action, media_ids: mediaIds }),
+        : resolveLowRes({
+            action,
+            media_ids: mediaIds,
+            max_pixels: Math.round(maxMp * 1_000_000),
+            media_type: mediaType || undefined,
+          }),
     [maxMp, mediaType]
   );
 

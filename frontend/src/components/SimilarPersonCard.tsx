@@ -95,7 +95,6 @@ export default function SimilarPersonCard({
             checked={selected}
             onChange={handleToggle}
             onClick={(event) => {
-              event.preventDefault();
               event.stopPropagation();
             }}
             sx={{

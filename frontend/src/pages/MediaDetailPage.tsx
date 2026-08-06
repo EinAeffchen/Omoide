@@ -491,6 +491,7 @@ export default function MediaDetailPage() {
                     media={detail.media}
                     onOpenDialog={setDialogType}
                     isBinary={isBinary}
+                    onFavoriteChange={handleMediaUpdate}
                     onOpenFolder={async (mediaId) => {
                       try {
                         await openMediaFolder(mediaId);

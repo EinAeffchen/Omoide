@@ -39,6 +39,18 @@ export const getVideos = async (
   return response.json();
 };
 
+export const getFavorites = async (
+  cursor: string | null,
+  sortOrder: "newest" | "latest"
+): Promise<CursorPage<Media>> => {
+  const params = new URLSearchParams();
+  if (cursor) params.append("cursor", cursor);
+  params.append("sort", sortOrder);
+  const response = await fetch(`${API}/api/media/favorites?${params.toString()}`);
+  if (!response.ok) throw new Error("Failed to fetch favorites");
+  return response.json();
+};
+
 export const getMapMedia = async (): Promise<MediaLocation[]> => {
   const response = await fetch(`${API}/api/media/map`);
   if (!response.ok) throw new Error("Failed to fetch map media");

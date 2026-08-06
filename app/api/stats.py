@@ -83,7 +83,8 @@ def get_stats(session: Session = Depends(get_session)):
     totals = StatsTotals(
         media=_scalar(session, select(func.count(Media.id))),
         images=_scalar(
-            session, select(func.count(Media.id)).where(Media.duration.is_(None))
+            session,
+            select(func.count(Media.id)).where(Media.duration.is_(None)),
         ),
         videos=_scalar(session, select(func.count(Media.id)).where(is_video)),
         favorites=_scalar(
@@ -101,10 +102,7 @@ def get_stats(session: Session = Depends(get_session)):
             session,
             select(func.count(ExifData.id)).where(ExifData.lat.is_not(None)),
         ),
-        persons=_scalar(
-            session,
-            select(func.count(Person.id)).where(Person.name.is_not(None)),
-        ),
+        persons=_scalar(session, select(func.count(Person.id))),
         faces=_scalar(session, select(func.count(Face.id))),
         tags=_scalar(session, select(func.count(Tag.id))),
         albums=_scalar(session, select(func.count(Album.id))),
@@ -117,9 +115,7 @@ def get_stats(session: Session = Depends(get_session)):
         for year, images, videos in session.exec(
             select(
                 year_expr.label("year"),
-                func.sum(
-                    func.iif(Media.duration.is_(None), 1, 0)
-                ),
+                func.sum(func.iif(Media.duration.is_(None), 1, 0)),
                 func.sum(func.iif(is_video, 1, 0)),
             )
             .group_by("year")

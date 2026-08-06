@@ -119,7 +119,7 @@ const BrokenMediaPage: React.FC = () => {
       });
       if (pendingAction.selectAll) {
         await fetchBroken(null, false);
-      } else {
+      } else if (result.removed > 0) {
         removeLocalItems(ids, result.removed);
       }
       setPendingAction(null);

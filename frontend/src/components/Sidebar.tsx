@@ -20,24 +20,19 @@ import PeopleIcon from "@mui/icons-material/People";
 import FaceIcon from "@mui/icons-material/Face";
 import MapIcon from "@mui/icons-material/Map";
 import AddLocationIcon from "@mui/icons-material/AddLocation";
-import BlurOnIcon from "@mui/icons-material/BlurOn";
-import ContentCopyIcon from "@mui/icons-material/ContentCopy";
-import BrokenImageIcon from "@mui/icons-material/BrokenImage";
 import SettingsIcon from "@mui/icons-material/Settings";
 import PersonOffIcon from "@mui/icons-material/PersonOff";
-import LabelOffIcon from "@mui/icons-material/LabelOff";
-import VideocamOffIcon from "@mui/icons-material/VideocamOff";
-import PhotoSizeSelectSmallIcon from "@mui/icons-material/PhotoSizeSelectSmall";
-import EventBusyIcon from "@mui/icons-material/EventBusy";
-import ReportProblemIcon from "@mui/icons-material/ReportProblem";
 import CheckBoxOutlineBlankIcon from "@mui/icons-material/CheckBoxOutlineBlank";
 import CheckBoxIcon from "@mui/icons-material/CheckBox";
 import PhotoAlbumIcon from "@mui/icons-material/PhotoAlbum";
 import StarIcon from "@mui/icons-material/Star";
+import FavoriteIcon from "@mui/icons-material/Favorite";
 import TheatersIcon from "@mui/icons-material/Theaters";
 import PublicIcon from "@mui/icons-material/Public";
 import InsightsIcon from "@mui/icons-material/Insights";
+import BuildIcon from "@mui/icons-material/Build";
 import config from "../config";
+import { MAINTENANCE_PATHS } from "./MaintenanceShell";
 
 const DRAWER_WIDTH = 280;
 
@@ -72,6 +67,7 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
       items: [
         { label: "Images", to: "/images", icon: <PhotoLibraryIcon /> },
         { label: "Videos", to: "/videos", icon: <MovieIcon /> },
+        { label: "Favorites", to: "/favorites", icon: <FavoriteIcon /> },
         { label: "Albums", to: "/albums", icon: <PhotoAlbumIcon /> },
         { label: "Events", to: "/events", icon: <TheatersIcon /> },
         { label: "Highlights", to: "/highlights", icon: <StarIcon /> },
@@ -99,33 +95,17 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
       ],
     },
     {
-      label: "Maintenance",
-      items: [
-        { label: "Duplicates", to: "/duplicates", icon: <ContentCopyIcon /> },
-        { label: "Missing Files", to: "/missing", icon: <BrokenImageIcon /> },
-        { label: "Blurry Images", to: "/blur", icon: <BlurOnIcon /> },
-        { label: "Untagged Media", to: "/untagged", icon: <LabelOffIcon /> },
-        {
-          label: "Short Videos",
-          to: "/shortvideos",
-          icon: <VideocamOffIcon />,
-        },
-        {
-          label: "Low Resolution",
-          to: "/lowresolution",
-          icon: <PhotoSizeSelectSmallIcon />,
-        },
-        { label: "No EXIF Date", to: "/noexifdate", icon: <EventBusyIcon /> },
-        { label: "Broken Media", to: "/broken", icon: <ReportProblemIcon /> },
-      ],
-    },
-    {
       label: "System",
       items: [
         {
           label: "Statistics",
           to: "/statistics",
           icon: <InsightsIcon />,
+        },
+        {
+          label: "Maintenance",
+          to: "/duplicates",
+          icon: <BuildIcon />,
         },
         {
           label: "Configuration",
@@ -141,23 +121,18 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
     "/geotagger",
     "/duplicates",
     "/configuration",
-    "/missing",
-    "/blur",
     "/nopersons",
-    "/untagged",
-    "/shortvideos",
-    "/lowresolution",
-    "/noexifdate",
-    "/broken",
   ];
   const pathsToExcludeInPeopleDisabled: string[] = [
     "/people",
     "/orphanfaces",
     "/nopersons",
   ];
+  const pathsToExcludeInEventsDisabled: string[] = ["/events"];
   const shouldHidePath = (path: string) =>
     (config.PRESENTATION_MODE && pathsToExcludeInReadOnly.includes(path)) ||
-    (!config.ENABLE_PEOPLE && pathsToExcludeInPeopleDisabled.includes(path));
+    (!config.ENABLE_PEOPLE && pathsToExcludeInPeopleDisabled.includes(path)) ||
+    (!config.EVENTS_ENABLED && pathsToExcludeInEventsDisabled.includes(path));
 
   const navSections: NavSection[] = RAW_SECTIONS.map((section) => ({
     ...section,
@@ -173,6 +148,7 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
     if (pathname.startsWith("/event/")) return "/events";
     if (pathname.startsWith("/places/")) return "/places";
     if (pathname.startsWith("/medium/")) return null;
+    if (MAINTENANCE_PATHS.includes(pathname)) return "/duplicates";
     return pathname;
   })();
 

@@ -87,7 +87,7 @@ const BlurryPage: React.FC = () => {
     ({ action, mediaIds, selectAll }: { action: BulkResolveAction; mediaIds?: number[]; selectAll?: boolean }) =>
       selectAll
         ? resolveBlurry({ action, select_all: true, threshold, media_type: mediaType || undefined })
-        : resolveBlurry({ action, media_ids: mediaIds }),
+        : resolveBlurry({ action, media_ids: mediaIds, threshold, media_type: mediaType || undefined }),
     [threshold, mediaType]
   );
 

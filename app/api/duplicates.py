@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import Session, delete, select
 
 from app.database import get_session
+from app.logger import logger
 from app.models import (
     Blacklist,
     DuplicateGroup,
@@ -19,11 +20,13 @@ from app.models import (
 )
 from app.schemas.duplicates import (
     DuplicateFolderStat,
-    DuplicateGroup as DuplicateGroupSchema,
     DuplicatePage,
     DuplicateStats,
     DuplicateTypeSummary,
     ResolveDuplicatesRequest,
+)
+from app.schemas.duplicates import (
+    DuplicateGroup as DuplicateGroupSchema,
 )
 from app.schemas.media import MediaPreview
 from app.utils import delete_file, delete_record
@@ -44,7 +47,9 @@ def get_duplicates(
     limit: int = Query(10, ge=1, le=50),
     sort_by: Literal["count", "size"] = Query("count"),
     media_type: Literal["image", "video"] | None = Query(None),
-    min_count: int = Query(2, ge=2, description="Minimum number of items in a duplicate group"),
+    min_count: int = Query(
+        2, ge=2, description="Minimum number of items in a duplicate group"
+    ),
 ):
     """
     Returns a paginated list of duplicate groups. Supports sorting by item count or
@@ -70,25 +75,43 @@ def get_duplicates(
             .subquery()
         )
         query = (
-            select(DuplicateGroup, counts_subquery.c.item_count, size_subquery.c.total_size)
-            .join(counts_subquery, DuplicateGroup.id == counts_subquery.c.group_id)
+            select(
+                DuplicateGroup,
+                counts_subquery.c.item_count,
+                size_subquery.c.total_size,
+            )
+            .join(
+                counts_subquery,
+                DuplicateGroup.id == counts_subquery.c.group_id,
+            )
             .join(size_subquery, DuplicateGroup.id == size_subquery.c.group_id)
             .options(
-                selectinload(DuplicateGroup.media_links).selectinload(DuplicateMedia.media)
+                selectinload(DuplicateGroup.media_links).selectinload(
+                    DuplicateMedia.media
+                )
             )
             .where(counts_subquery.c.item_count >= min_count)
-            .order_by(size_subquery.c.total_size.desc(), DuplicateGroup.id.asc())
+            .order_by(
+                size_subquery.c.total_size.desc(), DuplicateGroup.id.asc()
+            )
         )
         sort_col = size_subquery.c.total_size
     else:
         query = (
             select(DuplicateGroup, counts_subquery.c.item_count)
-            .join(counts_subquery, DuplicateGroup.id == counts_subquery.c.group_id)
+            .join(
+                counts_subquery,
+                DuplicateGroup.id == counts_subquery.c.group_id,
+            )
             .options(
-                selectinload(DuplicateGroup.media_links).selectinload(DuplicateMedia.media)
+                selectinload(DuplicateGroup.media_links).selectinload(
+                    DuplicateMedia.media
+                )
             )
             .where(counts_subquery.c.item_count >= min_count)
-            .order_by(counts_subquery.c.item_count.desc(), DuplicateGroup.id.asc())
+            .order_by(
+                counts_subquery.c.item_count.desc(), DuplicateGroup.id.asc()
+            )
         )
         sort_col = counts_subquery.c.item_count
 
@@ -97,7 +120,8 @@ def get_duplicates(
             select(DuplicateMedia.group_id)
             .join(Media, Media.id == DuplicateMedia.media_id)
             .where(
-                Media.duration.is_(None) if media_type == "image"
+                Media.duration.is_(None)
+                if media_type == "image"
                 else Media.duration.isnot(None)
             )
             .distinct()
@@ -162,16 +186,15 @@ def get_duplicates(
 
 
 @router.get("/stats", response_model=DuplicateStats)
-def get_duplicate_stats(session: Session = Depends(get_session)) -> DuplicateStats:
-    data_stmt = (
-        select(
-            DuplicateMedia.group_id,
-            Media.path,
-            Media.size,
-            Media.duration,
-        )
-        .join(Media, Media.id == DuplicateMedia.media_id)
-    )
+def get_duplicate_stats(
+    session: Session = Depends(get_session),
+) -> DuplicateStats:
+    data_stmt = select(
+        DuplicateMedia.group_id,
+        Media.path,
+        Media.size,
+        Media.duration,
+    ).join(Media, Media.id == DuplicateMedia.media_id)
 
     rows = session.exec(data_stmt).all()
     if not rows:
@@ -188,7 +211,9 @@ def get_duplicate_stats(session: Session = Depends(get_session)) -> DuplicateSta
     for group_id, *_ in rows:
         group_counts[group_id] += 1
 
-    active_group_ids = {gid for gid, count in group_counts.items() if count > 1}
+    active_group_ids = {
+        gid for gid, count in group_counts.items() if count > 1
+    }
     if not active_group_ids:
         return DuplicateStats(
             total_groups=0,
@@ -202,7 +227,9 @@ def get_duplicate_stats(session: Session = Depends(get_session)) -> DuplicateSta
     total_items = 0
     total_size = 0
     group_sizes: dict[int, list[int]] = defaultdict(list)
-    folder_totals: dict[str, dict[str, int]] = defaultdict(lambda: {"items": 0, "size": 0})
+    folder_totals: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"items": 0, "size": 0}
+    )
     folder_groups: dict[str, set[int]] = defaultdict(set)
     folder_labels: dict[str, str] = {}
     type_items = {"image": 0, "video": 0}
@@ -216,7 +243,9 @@ def get_duplicate_stats(session: Session = Depends(get_session)) -> DuplicateSta
             folder_display = Path(path_value).parent.as_posix()
         except Exception:
             folder_display = str(path_value)
-        folder_key = folder_display.casefold() if os.name == "nt" else folder_display
+        folder_key = (
+            folder_display.casefold() if os.name == "nt" else folder_display
+        )
         return (folder_key, folder_display)
 
     for group_id, media_path, media_size, media_duration in rows:
@@ -241,7 +270,9 @@ def get_duplicate_stats(session: Session = Depends(get_session)) -> DuplicateSta
 
     total_groups = len(active_group_ids)
     total_reclaimable = sum(
-        max(sum(sizes) - max(sizes), 0) for sizes in group_sizes.values() if sizes
+        max(sum(sizes) - max(sizes), 0)
+        for sizes in group_sizes.values()
+        if sizes
     )
 
     type_breakdown = [
@@ -264,7 +295,9 @@ def get_duplicate_stats(session: Session = Depends(get_session)) -> DuplicateSta
         )
         for folder_key, totals in folder_totals.items()
     ]
-    folder_entries.sort(key=lambda entry: (entry.items, entry.size_bytes), reverse=True)
+    folder_entries.sort(
+        key=lambda entry: (entry.items, entry.size_bytes), reverse=True
+    )
 
     return DuplicateStats(
         total_groups=total_groups,
@@ -274,8 +307,6 @@ def get_duplicate_stats(session: Session = Depends(get_session)) -> DuplicateSta
         type_breakdown=type_breakdown,
         top_folders=folder_entries[:5],
     )
-
-
 
 
 @router.post("/resolve")
@@ -300,6 +331,7 @@ def resolve_duplicate_group(
             detail="Duplicate group must contain at least two items.",
         )
 
+    skipped_read_only = 0
     if request.action == "MARK_NOT_DUPLICATE":
         sorted_ids = sorted(all_media_ids_in_group)
         existing_pairs = {
@@ -341,7 +373,18 @@ def resolve_duplicate_group(
         # 2. Perform the requested action on all other media items
         for media in media_to_process:
             if request.action == "DELETE_FILES":
-                delete_file(session, media.id)
+                try:
+                    delete_file(session, media.id)
+                except HTTPException as exc:
+                    if exc.status_code == 403:
+                        logger.warning(
+                            "Skipping delete for media id=%s: %s",
+                            media.id,
+                            exc.detail,
+                        )
+                        skipped_read_only += 1
+                        continue
+                    raise
 
             elif request.action == "DELETE_RECORDS":
                 delete_record(media.id, session)
@@ -368,4 +411,10 @@ def resolve_duplicate_group(
 
     session.commit()
 
-    return {"message": f"Group {request.group_id} resolved successfully."}
+    message = f"Group {request.group_id} resolved successfully."
+    if skipped_read_only:
+        message += (
+            f" {skipped_read_only} file(s) were kept because they live on a"
+            " read-only media directory."
+        )
+    return {"message": message, "skipped_read_only": skipped_read_only}

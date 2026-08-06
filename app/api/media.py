@@ -6,7 +6,15 @@ from pathlib import Path
 from typing import Annotated
 from urllib.parse import quote
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    status,
+)
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import and_, case, func, or_, text, tuple_, union_all
 from sqlalchemy.orm import aliased, selectinload
@@ -15,10 +23,19 @@ from sqlmodel import Session, col, select
 from app.config import settings
 from app.database import get_session, safe_commit, safe_execute
 from app.logger import logger
-from app.models import ExifData, Face, Media, Person, PersonMediaLink, Scene, Tag
+from app.models import (
+    ExifData,
+    Face,
+    Media,
+    Person,
+    PersonMediaLink,
+    Scene,
+    Tag,
+)
 from app.schemas.face import FaceRead
 from app.schemas.media import (
     CursorPage,
+    FavoriteUpdate,
     GeoUpdate,
     MediaDetail,
     MediaFolderBreadcrumb,
@@ -251,7 +268,9 @@ def get_missing_geo(
             cursor_datetime = datetime.fromisoformat(val_str)
             cursor_id = int(id_str)
         except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid cursor format.")
+            raise HTTPException(
+                status_code=400, detail="Invalid cursor format."
+            )
         stmt = stmt.where(
             or_(
                 Media.inserted_at < cursor_datetime,
@@ -279,7 +298,9 @@ def list_media(
     tags: list[str] | None = Query(
         None, description="Filter by tag name(s), comma-separated"
     ),
-    person_id: int | None = Query(None, description="Filter by detected person ID"),
+    person_id: int | None = Query(
+        None, description="Filter by detected person ID"
+    ),
     folder: str | None = Query(
         None,
         description=(
@@ -353,12 +374,16 @@ def list_media(
             q = q.where(
                 or_(
                     sort_col < prev_cursor_val,
-                    and_(sort_col == prev_cursor_val, Media.id < prev_cursor_id),
+                    and_(
+                        sort_col == prev_cursor_val, Media.id < prev_cursor_id
+                    ),
                 )
             )
     if person_id:
         media_links_union = union_all(
-            select(Face.media_id.label("media_id")).where(Face.person_id == person_id),
+            select(Face.media_id.label("media_id")).where(
+                Face.person_id == person_id
+            ),
             select(PersonMediaLink.media_id.label("media_id")).where(
                 PersonMediaLink.person_id == person_id
             ),
@@ -435,7 +460,8 @@ def list_media_folders(
     previews_by_folder: dict[str, list[MediaFolderPreview]] = {}
     if preview_limit > 0 and folder_rows:
         row_number = (
-            func.row_number()
+            func
+            .row_number()
             .over(
                 partition_by=first_seg,
                 order_by=(Media.created_at.desc(), Media.id.desc()),
@@ -465,7 +491,13 @@ def list_media_folders(
             .where(preview_subq.c.rn <= preview_limit)
             .order_by(preview_subq.c.folder_name, preview_subq.c.rn)
         ).all()
-        for media_id, media_path, filename, thumbnail_path, folder_name in preview_rows:
+        for (
+            media_id,
+            media_path,
+            filename,
+            thumbnail_path,
+            folder_name,
+        ) in preview_rows:
             previews_by_folder.setdefault(folder_name, []).append(
                 MediaFolderPreview(
                     id=media_id,
@@ -573,7 +605,9 @@ def list_images(
         ),
     ),
 ):
-    stmt = select(Media).where(Media.duration.is_(None), col(Media.processing_error).is_(None))  # images have no duration
+    stmt = select(Media).where(
+        Media.duration.is_(None), col(Media.processing_error).is_(None)
+    )  # images have no duration
 
     if sort == "newest":
         sort_col = Media.created_at
@@ -597,7 +631,9 @@ def list_images(
             stmt = stmt.where(
                 or_(
                     sort_col < prev_cursor_val,
-                    and_(sort_col == prev_cursor_val, Media.id < prev_cursor_id),
+                    and_(
+                        sort_col == prev_cursor_val, Media.id < prev_cursor_id
+                    ),
                 )
             )
 
@@ -623,7 +659,9 @@ def list_videos(
         ),
     ),
 ):
-    stmt = select(Media).where(Media.duration != None, col(Media.processing_error).is_(None))  # videos have a duration
+    stmt = select(Media).where(
+        Media.duration != None, col(Media.processing_error).is_(None)
+    )  # videos have a duration
     stmt = stmt.order_by(Media.inserted_at.desc(), Media.id.desc())
     if cursor:
         try:
@@ -631,7 +669,9 @@ def list_videos(
             prev_cursor_val = datetime.fromisoformat(val_str)
             prev_cursor_id = int(id_str)
         except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid cursor format.")
+            raise HTTPException(
+                status_code=400, detail="Invalid cursor format."
+            )
         stmt = stmt.where(
             or_(
                 Media.inserted_at < prev_cursor_val,
@@ -648,6 +688,64 @@ def list_videos(
     else:
         next_cursor = None
     return CursorPage(items=results, next_cursor=next_cursor)
+
+
+@router.get(
+    "/favorites", response_model=CursorPage, summary="List favorite media"
+)
+def list_favorites(
+    limit: int = Query(50, ge=1, le=200),
+    session: Session = Depends(get_session),
+    sort: Annotated[str, Query(enum=["newest", "latest"])] = "newest",
+    cursor: str | None = Query(
+        None,
+        description=(
+            "encoded as `<value>_<id>`; e.g. `2025-05-05T12:34:56.789012_1234` or"
+            " `2500_1234`"
+        ),
+    ),
+):
+    stmt = select(Media).where(
+        Media.is_favorite == True, col(Media.processing_error).is_(None)
+    )
+
+    if sort == "newest":
+        sort_col = Media.created_at
+        parse_val_from_cursor = lambda val_str: datetime.fromisoformat(val_str)
+    elif sort == "latest":
+        sort_col = Media.inserted_at
+        parse_val_from_cursor = lambda val_str: datetime.fromisoformat(val_str)
+    else:
+        raise ValueError(f"Unsupported sort option: {sort}")
+
+    stmt = stmt.order_by(sort_col.desc(), Media.id.desc())
+
+    if cursor:
+        try:
+            val_str, id_str = cursor.split("_", 1)
+            prev_cursor_val = parse_val_from_cursor(val_str)
+            prev_cursor_id = int(id_str)
+        except ValueError:
+            logger.warning("Warning: Invalid cursor format: %s", cursor)
+        else:
+            stmt = stmt.where(
+                or_(
+                    sort_col < prev_cursor_val,
+                    and_(
+                        sort_col == prev_cursor_val, Media.id < prev_cursor_id
+                    ),
+                )
+            )
+
+    medias = session.exec(stmt.limit(limit)).all()
+    if len(medias) == limit:
+        last = medias[-1]
+        v = getattr(last, "created_at" if sort == "newest" else "inserted_at")
+        val_token = v.isoformat()
+        next_cursor = f"{val_token}_{last.id}"
+    else:
+        next_cursor = None
+    return CursorPage(items=medias, next_cursor=next_cursor)
 
 
 @router.post("/{media_id}/open-folder", status_code=204)
@@ -698,7 +796,6 @@ def open_media_folder(
         _open_in_file_browser(parent, resolved_file)
     except Exception as e:
         raise HTTPException(500, f"Failed to open folder: {e}")
-    return
 
 
 @router.post("/{media_id}/open-file", status_code=204)
@@ -744,7 +841,6 @@ def open_media_file(
             subprocess.Popen(["xdg-open", str(resolved_file)])
     except Exception as e:
         raise HTTPException(500, f"Failed to open file: {e}")
-    return
 
 
 @router.get("/{media_id}/neighbors", response_model=MediaNeighbors)
@@ -784,12 +880,14 @@ def get_neighbors(
         q = q.where(Media.id.in_(select(media_links_union.c.media_id)))
 
     previous_query = (
-        q.where(tuple_(sort_col, Media.id) > (original_sort_value, original.id))
+        q
+        .where(tuple_(sort_col, Media.id) > (original_sort_value, original.id))
         .order_by(sort_col.asc(), Media.id.asc())
         .limit(1)
     )
     next_query = (
-        q.where(tuple_(sort_col, Media.id) < (original_sort_value, original.id))
+        q
+        .where(tuple_(sort_col, Media.id) < (original_sort_value, original.id))
         .order_by(sort_col.desc(), Media.id.desc())
         .limit(1)
     )
@@ -845,7 +943,9 @@ def get_media(media_id: int, session: Session = Depends(get_session)):
                 )
             )
     manual_person_ids = session.exec(
-        select(PersonMediaLink.person_id).where(PersonMediaLink.media_id == media_id)
+        select(PersonMediaLink.person_id).where(
+            PersonMediaLink.media_id == media_id
+        )
     ).all()
     if manual_person_ids:
         manual_persons = session.exec(
@@ -867,7 +967,9 @@ def get_media(media_id: int, session: Session = Depends(get_session)):
             )
     orphans = safe_execute(
         session,
-        select(Face).where(Face.media_id == media_id, Face.person_id.is_(None)),
+        select(Face).where(
+            Face.media_id == media_id, Face.person_id.is_(None)
+        ),
     ).all()
     return MediaDetail(media=media, persons=persons, orphans=orphans)
 
@@ -881,7 +983,9 @@ def scenes_vtt(
     media_id: int, request: Request, session: Session = Depends(get_session)
 ):
     scenes = session.exec(
-        select(Scene).where(Scene.media_id == media_id).order_by(Scene.start_time)
+        select(Scene)
+        .where(Scene.media_id == media_id)
+        .order_by(Scene.start_time)
     ).all()
     if not scenes:
         if request.method == "HEAD":
@@ -937,7 +1041,9 @@ def delete_media_record(
 
 @router.get("/exif/{media_id}", response_model=ExifData)
 def read_exif(media_id: int, session=Depends(get_session)):
-    ex = session.exec(select(ExifData).where(ExifData.media_id == media_id)).first()
+    ex = session.exec(
+        select(ExifData).where(ExifData.media_id == media_id)
+    ).first()
     if not ex:
         raise HTTPException(404, "No EXIF data")
     return ex
@@ -979,7 +1085,9 @@ def get_similar_media(media_id: int, k: int = 8, session=Depends(get_session)):
         return []
 
     media_ids = [row.media_id for row in rows]
-    media_objs = session.exec(select(Media).where(Media.id.in_(media_ids))).all()
+    media_objs = session.exec(
+        select(Media).where(Media.id.in_(media_ids))
+    ).all()
     id_to_obj = {m.id: m for m in media_objs}
     ordered = [id_to_obj[mid] for mid in media_ids if mid in id_to_obj]
     return [MediaPreview.model_validate(m) for m in ordered]
@@ -988,7 +1096,9 @@ def get_similar_media(media_id: int, k: int = 8, session=Depends(get_session)):
 @router.get("/{media_id}/scenes", response_model=list[SceneRead])
 def get_scenes(media_id: int, session: Session = Depends(get_session)):
     scenes = session.exec(
-        select(Scene).where(Scene.media_id == media_id).order_by(Scene.start_time)
+        select(Scene)
+        .where(Scene.media_id == media_id)
+        .order_by(Scene.start_time)
     ).all()
 
     # Gather faces with timestamps to map persons to scenes
@@ -1049,7 +1159,11 @@ def get_scenes(media_id: int, session: Session = Depends(get_session)):
     return result
 
 
-@router.post("/{media_id}/scenes", response_model=SceneRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{media_id}/scenes",
+    response_model=SceneRead,
+    status_code=status.HTTP_201_CREATED,
+)
 def create_scene(
     media_id: int,
     data: SceneCreate,
@@ -1067,7 +1181,9 @@ def create_scene(
     if data.end_time is None:
         next_scene = session.exec(
             select(Scene)
-            .where(Scene.media_id == media_id, Scene.start_time > data.start_time)
+            .where(
+                Scene.media_id == media_id, Scene.start_time > data.start_time
+            )
             .order_by(col(Scene.start_time))
             .limit(1)
         ).first()
@@ -1087,7 +1203,9 @@ def create_scene(
     safe_commit(session)
     session.refresh(scene)
 
-    thumb_relative, _ = extract_scene_frame_and_thumbnail(media, float(data.start_time))
+    thumb_relative, _ = extract_scene_frame_and_thumbnail(
+        media, float(data.start_time)
+    )
     if thumb_relative:
         scene.thumbnail_path = thumb_relative
         session.add(scene)
@@ -1117,7 +1235,9 @@ def create_scene(
     )
 
 
-@router.delete("/{media_id}/scenes/{scene_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{media_id}/scenes/{scene_id}", status_code=status.HTTP_204_NO_CONTENT
+)
 def delete_scene(
     media_id: int,
     scene_id: int,
@@ -1146,7 +1266,9 @@ def update_geolocation(
             detail="Not allowed in settings.general.presentation_mode mode.",
         )
     media = session.exec(
-        select(Media).options(selectinload(Media.exif)).where(Media.id == media_id)
+        select(Media)
+        .options(selectinload(Media.exif))
+        .where(Media.id == media_id)
     ).first()
     if not media:
         raise HTTPException(404, "Media not found")
@@ -1164,5 +1286,23 @@ def update_geolocation(
     update_exif_gps(media.path, data.longitude, data.latitude)
     session.add(media)
     session.commit()
+    session.refresh(media)
+    return media
+
+
+@router.patch("/{media_id}/favorite", response_model=MediaRead)
+def update_favorite(
+    media_id: int,
+    data: FavoriteUpdate,
+    session: Session = Depends(get_session),
+):
+    if settings.general.presentation_mode:
+        raise HTTPException(403, "Not allowed in presentation mode")
+    media = session.get(Media, media_id)
+    if not media:
+        raise HTTPException(404, "Media not found")
+    media.is_favorite = data.is_favorite
+    session.add(media)
+    safe_commit(session)
     session.refresh(media)
     return media

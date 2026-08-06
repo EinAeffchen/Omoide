@@ -111,7 +111,12 @@ def list_place_media(
         )
         .order_by(Media.created_at.desc(), Media.id.desc())
     )
-    if country and country != "Unknown":
+    if country == "Unknown":
+        # The UI uses this label for rows whose country was not resolved.
+        # Treat it as NULL, not as an omitted filter, otherwise cities with
+        # the same name in other countries are mixed into the result.
+        q = q.where(ExifData.country.is_(None))
+    elif country:
         q = q.where(ExifData.country == country)
     if cursor:
         try:

@@ -197,7 +197,9 @@ const MissingFilesPage: React.FC = () => {
         deleted > 0 ? `Removed ${deleted} media record(s)` : "No items matched",
         deleted > 0 ? "success" : "warning"
       );
-      removeLocalItems(ids, deleted);
+      if (deleted > 0) {
+        removeLocalItems(ids, deleted);
+      }
       setPendingBulk(null);
     } catch (err) {
       showFeedback(
@@ -222,7 +224,9 @@ const MissingFilesPage: React.FC = () => {
           : "No items matched",
         cleared > 0 ? "success" : "warning"
       );
-      removeLocalItems(ids, cleared);
+      if (cleared > 0) {
+        removeLocalItems(ids, cleared);
+      }
     } catch (err) {
       showFeedback(
         err instanceof Error ? err.message : "Failed to reset missing status",

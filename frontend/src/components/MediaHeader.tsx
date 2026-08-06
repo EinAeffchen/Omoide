@@ -4,10 +4,11 @@ import {
   IconButton,
   Tooltip,
 } from "@mui/material";
-import { Vrpano, Delete, DeleteForever, FolderOpen, OpenInNew } from "@mui/icons-material";
+import { Vrpano, Delete, DeleteForever, FolderOpen, OpenInNew, Favorite, FavoriteBorder } from "@mui/icons-material";
 import { Media } from "../types";
 import config from "../config";
 import { BinaryNavigationControls } from "./BinaryNavigationControls";
+import { setMediaFavorite } from "../services/mediaActions";
 const ERROR_COLOR = "error.main";
 
 interface MediaHeaderProps {
@@ -16,6 +17,7 @@ interface MediaHeaderProps {
   isBinary?: boolean;
   onOpenFolder?: (mediaId: number) => void;
   onOpenFile?: (mediaId: number) => void;
+  onFavoriteChange?: (media: Media) => void;
 }
 
 export function MediaHeader({
@@ -24,9 +26,19 @@ export function MediaHeader({
   isBinary = false,
   onOpenFolder,
   onOpenFile,
+  onFavoriteChange,
 }: MediaHeaderProps) {
   const filename = media ? media.filename : "File not found!";
   const isVideo = typeof media?.duration === "number";
+
+  const handleToggleFavorite = () => {
+    if (!media) return;
+    const next = !media.is_favorite;
+    onFavoriteChange?.({ ...media, is_favorite: next });
+    setMediaFavorite(media.id, next).catch(() => {
+      onFavoriteChange?.({ ...media, is_favorite: !next });
+    });
+  };
 
   return (
     <Box
@@ -69,6 +81,17 @@ export function MediaHeader({
         }}
       >
         <BinaryNavigationControls variant="overlay" />
+        {!config.PRESENTATION_MODE && media && (
+          <Tooltip title={media.is_favorite ? "Remove favorite" : "Mark as favorite"}>
+            <IconButton
+              onClick={handleToggleFavorite}
+              size="small"
+              sx={{ color: media.is_favorite ? ERROR_COLOR : undefined }}
+            >
+              {media.is_favorite ? <Favorite /> : <FavoriteBorder />}
+            </IconButton>
+          </Tooltip>
+        )}
         {!config.PRESENTATION_MODE && isBinary && media && (
           <>
             <Tooltip title="Open file">

@@ -81,11 +81,12 @@ export function useCursorList<T extends { id: number }>(
       hasMore &&
       !isLoading &&
       !inFlightRef.current &&
+      !error &&
       nextCursorRef.current
     ) {
       fetchPage(nextCursorRef.current, true);
     }
-  }, [inView, hasMore, isLoading, fetchPage]);
+  }, [inView, hasMore, isLoading, error, fetchPage]);
 
   const toggleSelected = useCallback((id: number) => {
     setSelectedIds((prev) => {

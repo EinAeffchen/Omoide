@@ -1,13 +1,13 @@
 from datetime import datetime
 
-from sqlmodel import SQLModel, Field
-from pydantic import ConfigDict, BaseModel
+from pydantic import BaseModel, ConfigDict
+from sqlmodel import Field, SQLModel
 
+from app.models import Face, Person
 from app.schemas.face import FaceRead
 from app.schemas.person import PersonRead, PersonReadSimple
-from app.schemas.scene import PersonInScene, SceneCreate, SceneRead
+from app.schemas.scene import SceneRead
 from app.schemas.tag import TagSimple
-from app.models import Face, Person, Media
 
 
 class MediaRead(SQLModel):
@@ -27,6 +27,7 @@ class MediaRead(SQLModel):
     tags: list[TagSimple]
     extracted_scenes: bool
     thumbnail_path: str | None = None
+    is_favorite: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -43,6 +44,7 @@ class MediaPreview(SQLModel):
     created_at: datetime
     thumbnail_path: str | None
     size: int | None
+    is_favorite: bool = False
 
 
 class MediaLocation(SQLModel):
@@ -74,6 +76,10 @@ class MediaNeighbors(SQLModel):
 class GeoUpdate(SQLModel):
     latitude: float
     longitude: float
+
+
+class FavoriteUpdate(SQLModel):
+    is_favorite: bool
 
 
 class CursorPage(BaseModel):

@@ -65,7 +65,7 @@ const UntaggedPage: React.FC = () => {
     ({ action, mediaIds, selectAll }: { action: BulkResolveAction; mediaIds?: number[]; selectAll?: boolean }) =>
       selectAll
         ? resolveUntagged({ action, select_all: true, media_type: mediaType || undefined })
-        : resolveUntagged({ action, media_ids: mediaIds }),
+        : resolveUntagged({ action, media_ids: mediaIds, media_type: mediaType || undefined }),
     [mediaType]
   );
 

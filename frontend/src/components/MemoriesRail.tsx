@@ -1,10 +1,13 @@
 import React, { useEffect, useState } from "react";
-import { Box, Chip, Typography } from "@mui/material";
+import { Box, Chip, IconButton, Typography } from "@mui/material";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
+import ExpandLessIcon from "@mui/icons-material/ExpandLess";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import { Link, useLocation } from "react-router-dom";
 import { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
 import { getMemories } from "../services/features";
+import { useLocalStorageBoolean } from "../hooks/useLocalStorageBoolean";
 import { Media, MemoryGroup } from "../types";
 
 const thumbUrl = (media: Media) =>
@@ -15,6 +18,10 @@ const thumbUrl = (media: Media) =>
 /** "On this day" strip shown on the index page when past-year media exist. */
 export function MemoriesRail() {
   const [groups, setGroups] = useState<MemoryGroup[]>([]);
+  const [collapsed, setCollapsed] = useLocalStorageBoolean(
+    "otd_collapsed",
+    false
+  );
   const location = useLocation();
 
   useEffect(() => {
@@ -43,23 +50,33 @@ export function MemoriesRail() {
         boxShadow: (theme) => theme.shadows[1],
       }}
     >
-      <Box display="flex" alignItems="center" gap={1} mb={1.5}>
+      <Box display="flex" alignItems="center" gap={1} mb={collapsed ? 0 : 1.5}>
         <AutoAwesomeIcon color="primary" fontSize="small" />
-        <Typography variant="subtitle1" fontWeight={700}>
+        <Typography variant="subtitle1" fontWeight={700} sx={{ flexGrow: 1 }}>
           On this day
         </Typography>
+        <IconButton
+          size="small"
+          onClick={() => setCollapsed(!collapsed)}
+          aria-label={collapsed ? "Expand" : "Minimize"}
+        >
+          {collapsed ? <ExpandMoreIcon /> : <ExpandLessIcon />}
+        </IconButton>
       </Box>
+      {!collapsed && (
       <Box
         sx={{
           display: "flex",
+          flexDirection: "column",
           gap: 2,
-          overflowX: "auto",
-          pb: 1,
-          "&::-webkit-scrollbar": { height: 6 },
+          maxHeight: 400,
+          overflowY: "auto",
+          pr: 0.5,
+          "&::-webkit-scrollbar": { width: 6 },
         }}
       >
         {groups.map((group) => (
-          <Box key={group.year} sx={{ flexShrink: 0 }}>
+          <Box key={group.year}>
             <Chip
               size="small"
               label={`${group.year} · ${currentYear - group.year} year${
@@ -67,7 +84,15 @@ export function MemoriesRail() {
               } ago`}
               sx={{ mb: 1, fontWeight: 600 }}
             />
-            <Box sx={{ display: "flex", gap: 1 }}>
+            <Box
+              sx={{
+                display: "flex",
+                gap: 1,
+                overflowX: "auto",
+                pb: 0.5,
+                "&::-webkit-scrollbar": { height: 6 },
+              }}
+            >
               {group.items.map((media) => (
                 <Link
                   key={media.id}
@@ -86,6 +111,7 @@ export function MemoriesRail() {
                       objectFit: "cover",
                       borderRadius: 2,
                       display: "block",
+                      flexShrink: 0,
                       transition: "transform 0.15s",
                       "&:hover": { transform: "scale(1.03)" },
                     }}
@@ -96,6 +122,7 @@ export function MemoriesRail() {
           </Box>
         ))}
       </Box>
+      )}
     </Box>
   );
 }

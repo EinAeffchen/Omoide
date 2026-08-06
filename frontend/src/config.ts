@@ -48,6 +48,19 @@ const config = {
     }
     return getBooleanEnv(window.runtimeConfig?.VITE_API_MEME_MODE);
   },
+
+  /**
+   * Checks if the Events tab/feature is enabled.
+   * Accesses the correct source based on the environment (dev vs. prod).
+   */
+  get EVENTS_ENABLED(): boolean {
+    if (import.meta.env.DEV) {
+      return getBooleanEnvDefaultTrue(import.meta.env.VITE_API_EVENTS_ENABLED);
+    }
+    return getBooleanEnvDefaultTrue(
+      window.runtimeConfig?.VITE_API_EVENTS_ENABLED
+    );
+  },
   get PERSON_RELATIONSHIP_MAX_NODES(): number {
     if (import.meta.env.DEV) {
       const raw = import.meta.env.VITE_PERSON_RELATIONSHIP_MAX_NODES;

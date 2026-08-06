@@ -37,10 +37,13 @@ export function CursorMediaGrid({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestSeq = useRef(0);
+  const inFlightRef = useRef(false);
 
   const loadPage = useCallback(
     async (fromCursor: string | null, replace: boolean) => {
+      if (inFlightRef.current) return;
       const seq = ++requestSeq.current;
+      inFlightRef.current = true;
       setIsLoading(true);
       setError(null);
       try {
@@ -58,13 +61,20 @@ export function CursorMediaGrid({
         setError(err instanceof Error ? err.message : "Failed to load media");
         setHasMore(false);
       } finally {
-        if (seq === requestSeq.current) setIsLoading(false);
+        if (seq === requestSeq.current) {
+          inFlightRef.current = false;
+          setIsLoading(false);
+        }
       }
     },
     [fetcher, onItemsChange]
   );
 
   useEffect(() => {
+    // Invalidate any previous list request. A new list must be allowed to
+    // start immediately even if the previous list is still resolving.
+    requestSeq.current += 1;
+    inFlightRef.current = false;
     setItems([]);
     setCursor(null);
     setHasMore(true);
@@ -73,7 +83,7 @@ export function CursorMediaGrid({
   }, [listKey, refreshToken, loadPage]);
 
   useEffect(() => {
-    if (inView && hasMore && !isLoading && !error) {
+    if (inView && hasMore && !isLoading && !inFlightRef.current && !error) {
       void loadPage(cursor, false);
     }
   }, [inView, hasMore, isLoading, error, cursor, loadPage]);

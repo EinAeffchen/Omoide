@@ -15,7 +15,11 @@ import appConfig, { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import PlayCircleOutlineIcon from "@mui/icons-material/PlayCircleOutline";
+import FavoriteIcon from "@mui/icons-material/Favorite";
+import FavoriteBorderIcon from "@mui/icons-material/FavoriteBorder";
 import { useSelection } from "../context/SelectionContext";
+import { setMediaFavorite } from "../services/mediaActions";
+import IconButton from "@mui/material/IconButton";
 
 function formatDuration(d?: number): string {
   if (d == null) return "";
@@ -87,6 +91,7 @@ export default function MediaCard({
   const hoverTimeoutRef = useRef<number | null>(null);
   const hasInitializedPlayerRef = useRef(false);
   const location = useLocation();
+  const [isFavorite, setIsFavorite] = useState(!!media?.is_favorite);
   const memeModeEnabled = appConfig.MEME_MODE;
   const isGif =
     media != null
@@ -137,6 +142,21 @@ export default function MediaCard({
     setPlayerUrl(null);
     hasInitializedPlayerRef.current = false;
   }, [mediaId, mediaUrl]);
+
+  useEffect(() => {
+    setIsFavorite(!!media?.is_favorite);
+  }, [mediaId, media?.is_favorite]);
+
+  const handleToggleFavorite = (event: React.MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (mediaId == null) return;
+    const next = !isFavorite;
+    setIsFavorite(next);
+    setMediaFavorite(mediaId, next).catch(() => {
+      setIsFavorite(!next);
+    });
+  };
 
   const handleMouseEnter = () => {
     hoverTimeoutRef.current = window.setTimeout(() => {
@@ -383,6 +403,29 @@ export default function MediaCard({
           </Box>
         </CardActionArea>
       </Link>
+
+      {media && !isSelecting && (
+        <IconButton
+          onClick={handleToggleFavorite}
+          size="small"
+          sx={{
+            position: "absolute",
+            top: 4,
+            right: 4,
+            zIndex: 20,
+            p: 0.5,
+            color: isFavorite ? "error.main" : "white",
+            bgcolor: "rgba(0,0,0,0.45)",
+            "&:hover": { bgcolor: "rgba(0,0,0,0.6)" },
+          }}
+        >
+          {isFavorite ? (
+            <FavoriteIcon fontSize="small" />
+          ) : (
+            <FavoriteBorderIcon fontSize="small" />
+          )}
+        </IconButton>
+      )}
 
       {isSelecting && (
         <Box

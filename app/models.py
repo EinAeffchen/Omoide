@@ -18,28 +18,34 @@ class Status(StrEnum):
 
 
 class TimelineEvent(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: int | None = Field(default=None, primary_key=True)
     title: str = Field(index=True)
-    description: Optional[str] = None
+    description: str | None = None
     event_date: date
 
     # For recurrence, a simple string is robust and easy to start with
     # e.g., "yearly", "monthly". We'll start with just "yearly".
-    recurrence: Optional[str] = Field(default=None)
+    recurrence: str | None = Field(default=None)
 
     person_id: int = Field(foreign_key="person.id", index=True)
     person: "Person" = Relationship(back_populates="timeline_events")
 
 
 class MediaTagLink(SQLModel, table=True):
-    media_id: int = Field(default=None, foreign_key="media.id", primary_key=True)
+    media_id: int = Field(
+        default=None, foreign_key="media.id", primary_key=True
+    )
     tag_id: int = Field(default=None, foreign_key="tag.id", primary_key=True)
     auto_score: float | None = Field(default=None)
 
 
 class PersonMediaLink(SQLModel, table=True):
-    person_id: int = Field(default=None, foreign_key="person.id", primary_key=True)
-    media_id: int = Field(default=None, foreign_key="media.id", primary_key=True)
+    person_id: int = Field(
+        default=None, foreign_key="person.id", primary_key=True
+    )
+    media_id: int = Field(
+        default=None, foreign_key="media.id", primary_key=True
+    )
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     person: "Person" = Relationship(back_populates="media_links")
@@ -52,7 +58,9 @@ class Blacklist(SQLModel, table=True):
 
 
 class PersonTagLink(SQLModel, table=True):
-    person_id: int = Field(default=None, foreign_key="person.id", primary_key=True)
+    person_id: int = Field(
+        default=None, foreign_key="person.id", primary_key=True
+    )
     tag_id: int = Field(default=None, foreign_key="tag.id", primary_key=True)
 
 
@@ -78,10 +86,14 @@ class Tag(SQLModel, table=True):
 class Face(SQLModel, table=True):
     id: int = Field(default=None, primary_key=True)
     media_id: int = Field(foreign_key="media.id", index=True)
-    person_id: int | None = Field(foreign_key="person.id", default=None, index=True)
+    person_id: int | None = Field(
+        foreign_key="person.id", default=None, index=True
+    )
     thumbnail_path: str | None = Field(default=None)
     bbox: list[int] = Field(sa_column=Column(JSON))
-    timestamp: float | None = Field(default=None, nullable=True)  # video frame time in seconds
+    timestamp: float | None = Field(
+        default=None, nullable=True
+    )  # video frame time in seconds
     # detector confidence (InsightFace det_score); NULL for faces extracted before this column existed
     det_score: float | None = Field(default=None, nullable=True)
     # 1.0 = frontal, 0.0 = extreme profile (estimated from the 5-point keypoints)
@@ -122,12 +134,18 @@ class Media(SQLModel, table=True):
 
     is_favorite: bool = Field(default=False)
     phash: str | None = Field(index=True)
-    laplacian_score: float | None = Field(default=None, nullable=True, index=True)
+    laplacian_score: float | None = Field(
+        default=None, nullable=True, index=True
+    )
     faces: list["Face"] = Relationship(back_populates="media")
     scenes: list["Scene"] = Relationship(back_populates="media")
-    tags: list[Tag] = Relationship(back_populates="media", link_model=MediaTagLink)
+    tags: list[Tag] = Relationship(
+        back_populates="media", link_model=MediaTagLink
+    )
     exif: "ExifData" = Relationship(back_populates="media")
-    duplicate_entries: list["DuplicateMedia"] = Relationship(back_populates="media")
+    duplicate_entries: list["DuplicateMedia"] = Relationship(
+        back_populates="media"
+    )
     person_links: list[PersonMediaLink] = Relationship(back_populates="media")
 
     class Config:
@@ -169,7 +187,9 @@ class Person(SQLModel, table=True):
         },
     )
     is_favorite: bool = Field(default=False)
-    profile_face_id: int | None = Field(foreign_key="face.id", default=None, index=True)
+    profile_face_id: int | None = Field(
+        foreign_key="face.id", default=None, index=True
+    )
     profile_face: Face | None = Relationship(
         sa_relationship_kwargs={
             "primaryjoin": "Person.profile_face_id==Face.id",
@@ -178,9 +198,13 @@ class Person(SQLModel, table=True):
             "lazy": "selectin",
         }
     )
-    tags: list[Tag] = Relationship(back_populates="persons", link_model=PersonTagLink)
+    tags: list[Tag] = Relationship(
+        back_populates="persons", link_model=PersonTagLink
+    )
     appearance_count: int = Field(default=None, index=True)
-    timeline_events: list["TimelineEvent"] = Relationship(back_populates="person")
+    timeline_events: list["TimelineEvent"] = Relationship(
+        back_populates="person"
+    )
     media_links: list[PersonMediaLink] = Relationship(back_populates="person")
 
     class Config:
@@ -188,11 +212,16 @@ class Person(SQLModel, table=True):
 
 
 class ProcessingTask(SQLModel, table=True):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()), primary_key=True
+    )
     task_type: str
     status: Status = Field(
         sa_column=sa.Column(
-            sa.Enum(Status, values_callable=lambda obj: [item.value for item in obj]),
+            sa.Enum(
+                Status,
+                values_callable=lambda obj: [item.value for item in obj],
+            ),
             default=Status.PENDING,
             nullable=False,
             index=True,
@@ -304,6 +333,9 @@ class Event(SQLModel, table=True):
     id: int = Field(default=None, primary_key=True)
     # place label ("Berlin" / "Berlin, DE"); date range lives in start/end
     title: str | None = Field(default=None)
+    # True once a user renames the event; lets "Rebuild events" carry the
+    # title over to the best-matching new cluster instead of overwriting it
+    title_is_custom: bool = Field(default=False)
     start_at: datetime = Field(index=True)
     end_at: datetime = Field(index=True)
     media_count: int = Field(default=0)

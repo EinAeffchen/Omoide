@@ -1,5 +1,5 @@
 import { API } from "../config";
-import { Task } from "../types";
+import { Media, Task } from "../types";
 
 export const convertMedia = async (mediaId: number): Promise<Task> => {
   const res = await fetch(`${API}/api/media/${mediaId}/converter`, {
@@ -41,4 +41,17 @@ export const openMediaFile = async (mediaId: number): Promise<void> => {
     const msg = await res.text().catch(() => "Failed to open file");
     throw new Error(msg || "Failed to open file");
   }
+};
+
+export const setMediaFavorite = async (
+  mediaId: number,
+  isFavorite: boolean
+): Promise<Media> => {
+  const res = await fetch(`${API}/api/media/${mediaId}/favorite`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ is_favorite: isFavorite }),
+  });
+  if (!res.ok) throw new Error("Failed to update favorite");
+  return res.json();
 };

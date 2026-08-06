@@ -100,7 +100,7 @@ from app.api import (
     untagged,
 )
 from app.api.processors import router as proc_router
-from app.config import settings, get_clip_bundle
+from app.config import get_clip_bundle, settings
 from app.database import ensure_vec_tables
 from app.ffmpeg import ensure_ffmpeg_available
 from app.logger import configure_file_logging, logger
@@ -258,7 +258,9 @@ def _prewarm_clip() -> None:
         get_clip_bundle()
         logger.info("OpenCLIP bundle pre-loaded")
     except Exception as exc:
-        logger.warning("OpenCLIP pre-warm failed (will retry on first use): %s", exc)
+        logger.warning(
+            "OpenCLIP pre-warm failed (will retry on first use): %s", exc
+        )
 
 
 @asynccontextmanager
@@ -266,7 +268,9 @@ async def lifespan(app: FastAPI):
     # Load the ML model
     load_processors()
     if settings.processors.image_embedding_processor_active:
-        threading.Thread(target=_prewarm_clip, daemon=True, name="clip-prewarm").start()
+        threading.Thread(
+            target=_prewarm_clip, daemon=True, name="clip-prewarm"
+        ).start()
     # Apply database migrations on startup (idempotent)
     try:
         _apply_migrations_once()
@@ -526,6 +530,9 @@ async def spa_catch_all(full_path: str):
             bool(settings.general.enable_people)
         ),
         "VITE_API_MEME_MODE": _bool_to_js(bool(settings.general.meme_mode)),
+        "VITE_API_EVENTS_ENABLED": _bool_to_js(
+            bool(settings.events.events_enabled)
+        ),
         "PERSON_RELATIONSHIP_MAX_NODES": str(
             settings.general.person_relationship_max_nodes
         ),

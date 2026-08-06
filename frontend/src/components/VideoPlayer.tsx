@@ -70,6 +70,7 @@ export function VideoWithPreview({
   const playerWrapperRef = useRef<any>(null);
   const playerRef = useRef<any>(null);
   const hoverRafRef = useRef<number | null>(null);
+  const hoverClientXRef = useRef(0);
   const [isReady, setIsReady] = useState(false);
 
   const PROGRESS_BAR_LEFT_OFFSET = 48;
@@ -119,12 +120,14 @@ export function VideoWithPreview({
   };
 
   const handleMouseMove = (e) => {
-    // Throttle hover updates to one per animation frame.
+    // Throttle hover updates to one per animation frame, but always use the
+    // latest cursor position — intermediate mousemove events within the same
+    // frame must not be dropped, or the preview lags behind the cursor.
+    hoverClientXRef.current = e.clientX;
     if (hoverRafRef.current !== null) return;
-    const clientX = e.clientX;
     hoverRafRef.current = window.requestAnimationFrame(() => {
       hoverRafRef.current = null;
-      updateHoverPreview(clientX);
+      updateHoverPreview(hoverClientXRef.current);
     });
   };
 

@@ -6,7 +6,7 @@ import sys
 import threading
 from enum import Enum
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Annotated, Any, TypeVar
 
 import yaml
 from pydantic import (
@@ -16,7 +16,6 @@ from pydantic import (
     computed_field,
     field_validator,
 )
-from typing_extensions import Annotated
 
 from app.logger import configure_file_logging, logger
 
@@ -38,9 +37,14 @@ def get_os_app_config_dir() -> Path:
       Linux   : $XDG_CONFIG_HOME/omoide   (e.g. ~/.config/omoide)
     """
     if sys.platform == "win32":
-        base = Path(os.getenv("APPDATA") or Path.home() / "AppData" / "Roaming")
+        base = Path(
+            os.getenv("APPDATA") or Path.home() / "AppData" / "Roaming"
+        )
     elif sys.platform == "darwin":
-        base = Path(os.getenv("XDG_CONFIG_HOME") or Path.home() / "Library" / "Application Support")
+        base = Path(
+            os.getenv("XDG_CONFIG_HOME")
+            or Path.home() / "Library" / "Application Support"
+        )
     else:
         base = Path(os.getenv("XDG_CONFIG_HOME") or Path.home() / ".config")
     d = base / "omoide"
@@ -117,14 +121,13 @@ def get_user_data_path() -> Path:
                 bs = bootstrap or {}
                 profiles = bs.get("profiles", [])
                 if not any(
-                    (isinstance(x, dict) and x.get("path") == str(p)) for x in profiles
+                    (isinstance(x, dict) and x.get("path") == str(p))
+                    for x in profiles
                 ):
-                    profiles.append(
-                        {
-                            "name": p.name or "Profile",
-                            "path": str(p),
-                        }
-                    )
+                    profiles.append({
+                        "name": p.name or "Profile",
+                        "path": str(p),
+                    })
                 bs["profiles"] = profiles
                 bs["active_profile"] = str(default_profile)
                 write_bootstrap(bs)
@@ -359,7 +362,9 @@ class GeneralSettings(BaseModel):
         normalized: list[dict[str, object]] = []
         for item in value:
             if isinstance(item, dict):
-                path_value = item.get("path") or item.get("dir") or item.get("value")
+                path_value = (
+                    item.get("path") or item.get("dir") or item.get("value")
+                )
                 if path_value is None:
                     continue
                 read_only = bool(item.get("read_only", False))
@@ -382,7 +387,10 @@ class GeneralSettings(BaseModel):
         if not IS_DOCKER:
             legacy_models_dir = self.omoide_dir / "models"
             try:
-                if legacy_models_dir.exists() and legacy_models_dir != self.models_dir:
+                if (
+                    legacy_models_dir.exists()
+                    and legacy_models_dir != self.models_dir
+                ):
                     migrated_any = False
                     for item in legacy_models_dir.iterdir():
                         dest = self.models_dir / item.name
@@ -408,7 +416,9 @@ class GeneralSettings(BaseModel):
                     except OSError:
                         pass
             except Exception as e:
-                logger.warning("Could not migrate legacy models directory: %s", e)
+                logger.warning(
+                    "Could not migrate legacy models directory: %s", e
+                )
         if IS_DOCKER:
             self.media_dirs = [MediaDirectory(path=Path("/app/media"))]
 
@@ -555,7 +565,7 @@ FACE_RECOGNITION_PRESETS: dict[
         "hdbscan_cluster_selection_epsilon": 0.07,
         "hdbscan_min_membership_probability": 0.40,
         "cw_threshold": 0.70,
-        "cw_k_neighbors":10,
+        "cw_k_neighbors": 10,
         "cw_iterations": 20,
         "cw_min_member_similarity": 0.55,
     },
@@ -580,7 +590,7 @@ FACE_RECOGNITION_PRESETS: dict[
         "hdbscan_cluster_selection_epsilon": 0.10,
         "hdbscan_min_membership_probability": 0.30,
         "cw_threshold": 0.65,
-        "cw_k_neighbors":10,
+        "cw_k_neighbors": 10,
         "cw_iterations": 20,
         "cw_min_member_similarity": 0.50,
     },
@@ -605,7 +615,7 @@ FACE_RECOGNITION_PRESETS: dict[
         "hdbscan_cluster_selection_epsilon": 0.11,
         "hdbscan_min_membership_probability": 0.20,
         "cw_threshold": 0.62,
-        "cw_k_neighbors":10,
+        "cw_k_neighbors": 10,
         "cw_iterations": 20,
         "cw_min_member_similarity": 0.45,
     },
@@ -624,7 +634,9 @@ class FaceRecognitionSettings(BaseModel):
     # requires a margin between best and second-best match (cosine space)
     existing_person_min_cosine_margin: float = 0.05
     # on processor re-run, treat detections with IoU above this threshold as duplicates
-    rerun_face_iou_dedupe_threshold: float = Field(default=0.70, ge=0.0, le=1.0)
+    rerun_face_iou_dedupe_threshold: float = Field(
+        default=0.70, ge=0.0, le=1.0
+    )
     # minimum size of a face in pixels to be detected. Base size for detection
     # is the original image, not a thumbnail!
     face_recognition_min_face_pixels: int = 1600
@@ -723,6 +735,20 @@ class DuplicateSettings(BaseModel):
     duplicate_auto_keep_rule: DuplicateKeepRule = DuplicateKeepRule.HIGHEST_RES
 
 
+class EventSettings(BaseModel):
+    """Controls the Events tab and the "Rebuild events" clustering task."""
+
+    # show/hide the Events tab and its endpoints in the UI
+    events_enabled: bool = True
+    # a new event starts when consecutive media are further apart than this
+    event_gap_hours: float = 6.0
+    # clusters smaller than this are noise, not an "event"
+    event_min_media: int = 3
+    # when rebuilding, try to match renamed events to their new cluster by
+    # media overlap and keep the custom title instead of the auto-generated one
+    preserve_renamed_on_rebuild: bool = True
+
+
 class VideoSettings(BaseModel):
     """These settings control the video processing. By default we automatically
     detect scenes in a video and retrieve thumbnails for the scene overlay
@@ -768,6 +794,7 @@ class AppSettings(BaseModel):
         default_factory=FaceRecognitionSettings
     )
     duplicates: DuplicateSettings = Field(default_factory=DuplicateSettings)
+    events: EventSettings = Field(default_factory=EventSettings)
     video: VideoSettings = Field(default_factory=VideoSettings)
     processors: ContentProcessorSettings = Field(
         default_factory=ContentProcessorSettings
@@ -941,7 +968,9 @@ def get_clip_bundle():
     with _clip_lock:
         if _clip_model is None:
             logger.info("Loading OpenCLIP bundle (lazy)...")
-            _clip_model, _clip_preprocess, _clip_tokenizer = get_model(settings)
+            _clip_model, _clip_preprocess, _clip_tokenizer = get_model(
+                settings
+            )
         return _clip_model, _clip_preprocess, _clip_tokenizer
 
 
@@ -1059,7 +1088,9 @@ def reload_settings():
         run_migrations()
         ensure_vec_tables()
     except Exception as e:
-        logger.warning("Could not reset database engine or run migrations: %s", e)
+        logger.warning(
+            "Could not reset database engine or run migrations: %s", e
+        )
 
     # Invalidate CLIP bundle to reflect possible AI model changes; will reload lazily
     _reset_clip_after_settings_change()
