@@ -29,6 +29,16 @@ class FaceProcessor(MediaProcessor):
     name = "faces"
     order = 20
 
+    # SCRFD's anchors expect background context around a face; when a face
+    # fills most of the frame it can fail to fire at all (see the backfill
+    # quality-rescoring fix in app/tasks/backfill.py, which measured
+    # 0/60 -> 60/60 detections after padding tight face crops by 40%). Retry
+    # with padding whenever detection finds nothing, or when a detected face
+    # dominates the frame enough that other faces sharing the shot could be
+    # suffering the same failure.
+    PADDED_RETRY_PAD_PCT = 0.3
+    PADDED_RETRY_AREA_FRACTION = 0.3
+
     @staticmethod
     def _iou(a: list, b: list) -> float:
         ix1, iy1 = max(a[0], b[0]), max(a[1], b[1])
@@ -48,6 +58,43 @@ class FaceProcessor(MediaProcessor):
             if not any(self._iou(fa.bbox, fb.bbox) > iou_threshold for fa in merged):
                 merged.append(fb)
         return merged
+
+    def _needs_padded_retry(self, faces: list, frame_h: int, frame_w: int) -> bool:
+        if not faces:
+            return True
+        frame_area = frame_h * frame_w
+        if frame_area <= 0:
+            return False
+        for f in faces:
+            x1, y1, x2, y2 = f.bbox
+            area = max(0.0, float(x2) - float(x1)) * max(0.0, float(y2) - float(y1))
+            if area / frame_area > self.PADDED_RETRY_AREA_FRACTION:
+                return True
+        return False
+
+    def _detect_with_padding_fallback(self, scene_det: np.ndarray, media_path) -> list:
+        """Re-run detection on a gray-padded copy of the frame and translate
+        the resulting boxes/keypoints back into scene_det's coordinate space."""
+        h, w = scene_det.shape[:2]
+        pad_x = int(w * self.PADDED_RETRY_PAD_PCT)
+        pad_y = int(h * self.PADDED_RETRY_PAD_PCT)
+        padded = cv2.copyMakeBorder(
+            scene_det, pad_y, pad_y, pad_x, pad_x, cv2.BORDER_CONSTANT, value=(114, 114, 114)
+        )
+        try:
+            retried = self.model.get(padded)
+        except Exception as e:
+            logger.exception(
+                "Padded-retry detection failed on media %s: %s", media_path, e
+            )
+            return []
+        offset_bbox = np.array([pad_x, pad_y, pad_x, pad_y], dtype=np.float32)
+        offset_kps = np.array([pad_x, pad_y], dtype=np.float32)
+        for f in retried:
+            f.bbox = np.asarray(f.bbox, dtype=np.float32) - offset_bbox
+            if f.kps is not None:
+                f.kps = np.asarray(f.kps, dtype=np.float32) - offset_kps
+        return retried
 
     @staticmethod
     def _estimate_frontality(kps) -> float | None:
@@ -285,6 +332,21 @@ class FaceProcessor(MediaProcessor):
                     "InsightFace failed on media %s scene: %s", media.path, e
                 )
                 continue
+
+            det_h, det_w = scene_det.shape[:2]
+            if self._needs_padded_retry(faces, det_h, det_w):
+                retried_faces = self._detect_with_padding_fallback(
+                    scene_det, media.path
+                )
+                if retried_faces:
+                    merged_faces = self._merge_faces(faces, retried_faces)
+                    if len(merged_faces) > len(faces):
+                        logger.debug(
+                            "Padded retry found %d additional face(s) in %s",
+                            len(merged_faces) - len(faces),
+                            media.path,
+                        )
+                    faces = merged_faces
 
             face_entries = self._parse_faces(faces, scene_det, media, timestamp=scene_timestamp)
             if existing_bboxes and face_entries:

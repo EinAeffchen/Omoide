@@ -46,11 +46,9 @@ from app.schemas.media import (
     MediaNeighbors,
     MediaPreview,
     MediaRead,
-    PersonInScene,
-    SceneCreate,
-    SceneRead,
 )
 from app.schemas.person import PersonRead
+from app.schemas.scene import PersonInScene, SceneCreate, SceneRead
 from app.utils import (
     delete_file,
     delete_record,

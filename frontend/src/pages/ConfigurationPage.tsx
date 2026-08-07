@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   getConfig,
   saveConfig,
@@ -11,8 +11,7 @@ import {
   getProfileHealth,
 } from "../services/config";
 import { runProcessor } from "../services/taskActions";
-import { useHomeWidgets } from "../hooks/useHomeWidgets";
-import { HOME_WIDGETS, HomeWidgetId } from "../homeWidgets";
+import { HOME_WIDGETS, HomeWidgetId, mergeHomeWidgets } from "../homeWidgets";
 import {
   AppConfig,
   MediaDirectory,
@@ -250,11 +249,22 @@ export default function ConfigurationPage() {
     "presets" | "manual"
   >("presets");
   const [runningProcessor, setRunningProcessor] = useState<string | null>(null);
-  const {
-    widgets: homeWidgets,
-    toggle: toggleHomeWidget,
-    move: moveHomeWidget,
-  } = useHomeWidgets();
+  const homeWidgets = useMemo(
+    () => mergeHomeWidgets(config?.general.home_widgets),
+    [config?.general.home_widgets]
+  );
+  const toggleHomeWidget = (id: HomeWidgetId, enabled: boolean) => {
+    const next = homeWidgets.map((w) => (w.id === id ? { ...w, enabled } : w));
+    handleValueChange("general", "home_widgets", next);
+  };
+  const moveHomeWidget = (id: HomeWidgetId, direction: -1 | 1) => {
+    const index = homeWidgets.findIndex((w) => w.id === id);
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= homeWidgets.length) return;
+    const next = [...homeWidgets];
+    [next[index], next[target]] = [next[target], next[index]];
+    handleValueChange("general", "home_widgets", next);
+  };
   const [savedMediaDirPaths, setSavedMediaDirPaths] = useState<string[]>([]);
   const [acknowledgedRemovedMediaDirPaths, setAcknowledgedRemovedMediaDirPaths] =
     useState<Set<string>>(new Set());
@@ -1026,69 +1036,6 @@ export default function ConfigurationPage() {
       label: "General",
       content: (
         <Grid container spacing={2}>
-          <Grid size={{ xs: 12 }}>
-            <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
-              Homepage Widgets
-            </Typography>
-            <Typography variant="body2" sx={{ mb: 1 }}>
-              Choose what shows on your homepage, and in what order. This only
-              affects this browser, not other devices or users.
-            </Typography>
-            <Paper variant="outlined">
-              <List dense disablePadding>
-                {homeWidgets.map((widget, index) => {
-                  const def = HOME_WIDGETS.find((w) => w.id === widget.id);
-                  if (!def) return null;
-                  return (
-                    <ListItem
-                      key={widget.id}
-                      divider={index < homeWidgets.length - 1}
-                      sx={{ py: 1 }}
-                    >
-                      <ListItemIcon sx={{ minWidth: 40 }}>
-                        {HOME_WIDGET_ICONS[widget.id]}
-                      </ListItemIcon>
-                      <ListItemText
-                        primary={
-                          <FormControlLabel
-                            control={
-                              <Switch
-                                checked={widget.enabled}
-                                onChange={(e) =>
-                                  toggleHomeWidget(widget.id, e.target.checked)
-                                }
-                              />
-                            }
-                            label={def.label}
-                          />
-                        }
-                        secondary={def.description}
-                        secondaryTypographyProps={{ sx: { ml: 6 } }}
-                      />
-                      <ListItemSecondaryAction>
-                        <IconButton
-                          size="small"
-                          aria-label={`Move ${def.label} up`}
-                          disabled={index === 0}
-                          onClick={() => moveHomeWidget(widget.id, -1)}
-                        >
-                          <ArrowUpwardIcon fontSize="small" />
-                        </IconButton>
-                        <IconButton
-                          size="small"
-                          aria-label={`Move ${def.label} down`}
-                          disabled={index === homeWidgets.length - 1}
-                          onClick={() => moveHomeWidget(widget.id, 1)}
-                        >
-                          <ArrowDownwardIcon fontSize="small" />
-                        </IconButton>
-                      </ListItemSecondaryAction>
-                    </ListItem>
-                  );
-                })}
-              </List>
-            </Paper>
-          </Grid>
           {!isBinary && (
             <>
               <Grid size={{ xs: 12, sm: 6 }}>
@@ -1271,6 +1218,76 @@ export default function ConfigurationPage() {
               type="number"
               helperText="Maximum people to load when rendering the relationship graph"
             />
+          </Grid>
+        </Grid>
+      ),
+    },
+    {
+      label: "Widgets",
+      content: (
+        <Grid container spacing={2}>
+          <Grid size={{ xs: 12 }}>
+            <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+              Homepage Widgets
+            </Typography>
+            <Typography variant="body2" sx={{ mb: 1 }}>
+              Choose what shows on your homepage, and in what order. Click
+              Save below to apply.
+            </Typography>
+            <Paper variant="outlined">
+              <List dense disablePadding>
+                {homeWidgets.map((widget, index) => {
+                  const def = HOME_WIDGETS.find((w) => w.id === widget.id);
+                  if (!def) return null;
+                  return (
+                    <ListItem
+                      key={widget.id}
+                      divider={index < homeWidgets.length - 1}
+                      sx={{ py: 1 }}
+                    >
+                      <ListItemIcon sx={{ minWidth: 40 }}>
+                        {HOME_WIDGET_ICONS[widget.id]}
+                      </ListItemIcon>
+                      <ListItemText
+                        primary={
+                          <FormControlLabel
+                            control={
+                              <Switch
+                                checked={widget.enabled}
+                                onChange={(e) =>
+                                  toggleHomeWidget(widget.id, e.target.checked)
+                                }
+                              />
+                            }
+                            label={def.label}
+                          />
+                        }
+                        secondary={def.description}
+                        secondaryTypographyProps={{ sx: { ml: 6 } }}
+                      />
+                      <ListItemSecondaryAction>
+                        <IconButton
+                          size="small"
+                          aria-label={`Move ${def.label} up`}
+                          disabled={index === 0}
+                          onClick={() => moveHomeWidget(widget.id, -1)}
+                        >
+                          <ArrowUpwardIcon fontSize="small" />
+                        </IconButton>
+                        <IconButton
+                          size="small"
+                          aria-label={`Move ${def.label} down`}
+                          disabled={index === homeWidgets.length - 1}
+                          onClick={() => moveHomeWidget(widget.id, 1)}
+                        >
+                          <ArrowDownwardIcon fontSize="small" />
+                        </IconButton>
+                      </ListItemSecondaryAction>
+                    </ListItem>
+                  );
+                })}
+              </List>
+            </Paper>
           </Grid>
         </Grid>
       ),

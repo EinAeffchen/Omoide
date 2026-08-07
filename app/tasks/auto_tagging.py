@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
-from datetime import datetime, timezone
 import threading
+from collections.abc import Sequence
+from datetime import UTC, datetime
 
 import numpy as np
 from sqlalchemy import select, text
@@ -13,8 +13,9 @@ from app.database import safe_commit
 from app.logger import logger
 from app.models import MediaTagLink, ProcessingTask, Tag
 from app.tagging import (
-    SIMILARITY_THRESHOLD,
+    CALIBRATION_SAMPLE_SIZE,
     build_tag_vector_map,
+    calibrate_tag_thresholds,
     sanitize_custom_tag_list,
 )
 from app.tasks.state import (
@@ -45,6 +46,17 @@ SELECT_CUSTOM_AUTOTAG_MEDIA_SQL = text(
       AND m.embeddings_created = 1
     """
 )
+SAMPLE_CUSTOM_AUTOTAG_EMBEDDINGS_SQL = text(
+    """
+    SELECT me.embedding AS embedding
+    FROM media AS m
+    JOIN media_embeddings AS me ON me.media_id = m.id
+    WHERE m.missing_since IS NULL
+      AND m.embeddings_created = 1
+    ORDER BY RANDOM()
+    LIMIT :limit
+    """
+)
 
 
 def _get_or_create_tag(
@@ -73,13 +85,16 @@ def run_custom_auto_tagging(task_id: str, tags: Sequence[str]) -> None:
     """Apply auto-tagging for the provided tag list across all media embeddings."""
     sanitized_tags = sanitize_custom_tag_list(tags)
     if not sanitized_tags:
-        logger.info("Auto-tagging task %s skipped: no tags to process.", task_id)
+        logger.info(
+            "Auto-tagging task %s skipped: no tags to process.", task_id
+        )
         return
 
     tag_vectors = build_tag_vector_map(sanitized_tags)
     if not tag_vectors:
         logger.info(
-            "Auto-tagging task %s skipped: failed to build tag vectors.", task_id
+            "Auto-tagging task %s skipped: failed to build tag vectors.",
+            task_id,
         )
         return
 
@@ -97,9 +112,12 @@ def run_custom_auto_tagging(task_id: str, tags: Sequence[str]) -> None:
             )
             return
 
-        total = session.exec(COUNT_CUSTOM_AUTOTAG_MEDIA_SQL).scalar_one_or_none() or 0
+        total = (
+            session.exec(COUNT_CUSTOM_AUTOTAG_MEDIA_SQL).scalar_one_or_none()
+            or 0
+        )
         task.status = "running"
-        task.started_at = datetime.now(timezone.utc)
+        task.started_at = datetime.now(UTC)
         task.processed = 0
         task.total = total
         session.add(task)
@@ -114,11 +132,28 @@ def run_custom_auto_tagging(task_id: str, tags: Sequence[str]) -> None:
 
         if total == 0:
             task.status = "completed"
-            task.finished_at = datetime.now(timezone.utc)
+            task.finished_at = datetime.now(UTC)
             session.add(task)
             safe_commit(session)
             clear_task_progress(task_id)
             return
+
+        sample_rows = session.exec(
+            SAMPLE_CUSTOM_AUTOTAG_EMBEDDINGS_SQL.bindparams(
+                limit=min(total, CALIBRATION_SAMPLE_SIZE)
+            )
+        ).all()
+        sample_vectors = [
+            vec
+            for row in sample_rows
+            if (vec := vector_from_stored(row[0])) is not None and vec.size > 0
+        ]
+        sample_matrix = (
+            np.stack(sample_vectors).astype(np.float32, copy=False)
+            if sample_vectors
+            else np.empty((0, tag_matrix.shape[1]), dtype=np.float32)
+        )
+        tag_thresholds = calibrate_tag_thresholds(tag_matrix, sample_matrix)
 
         tag_cache: dict[str, Tag] = {}
         pending_links = 0
@@ -151,16 +186,21 @@ def run_custom_auto_tagging(task_id: str, tags: Sequence[str]) -> None:
                     )
                     continue
 
-                scores = np.dot(tag_matrix, embedding.astype(np.float32, copy=False))
+                scores = np.dot(
+                    tag_matrix, embedding.astype(np.float32, copy=False)
+                )
                 try:
                     for idx, similarity in enumerate(scores):
-                        if float(similarity) <= SIMILARITY_THRESHOLD:
+                        if float(similarity) <= tag_thresholds[idx]:
                             continue
                         tag_name = ordered_tags[idx]
-                        tag_obj = _get_or_create_tag(session, tag_name, tag_cache)
-                        if session.get(
-                            MediaTagLink, (media_id, tag_obj.id)
-                        ) is None:
+                        tag_obj = _get_or_create_tag(
+                            session, tag_name, tag_cache
+                        )
+                        if (
+                            session.get(MediaTagLink, (media_id, tag_obj.id))
+                            is None
+                        ):
                             session.add(
                                 MediaTagLink(
                                     media_id=media_id,
@@ -196,10 +236,12 @@ def run_custom_auto_tagging(task_id: str, tags: Sequence[str]) -> None:
         except Exception as exc:
             session.rollback()
             logger.exception(
-                "Auto-tagging task %s encountered a fatal error: %s", task_id, exc
+                "Auto-tagging task %s encountered a fatal error: %s",
+                task_id,
+                exc,
             )
             task.status = "failed"
-            task.finished_at = datetime.now(timezone.utc)
+            task.finished_at = datetime.now(UTC)
             session.add(task)
             safe_commit(session)
             clear_task_progress(task_id)
@@ -210,7 +252,7 @@ def run_custom_auto_tagging(task_id: str, tags: Sequence[str]) -> None:
 
         if not cancelled:
             task.status = "completed"
-        task.finished_at = datetime.now(timezone.utc)
+        task.finished_at = datetime.now(UTC)
         session.add(task)
         safe_commit(session)
         clear_task_progress(task_id)
@@ -236,7 +278,10 @@ def schedule_custom_auto_tagging(tags: Sequence[str]) -> ProcessingTask | None:
             )
             return existing
 
-        total = session.exec(COUNT_CUSTOM_AUTOTAG_MEDIA_SQL).scalar_one_or_none() or 0
+        total = (
+            session.exec(COUNT_CUSTOM_AUTOTAG_MEDIA_SQL).scalar_one_or_none()
+            or 0
+        )
         if total == 0:
             logger.info(
                 "Auto-tagging task skipped: no embedded media available for tagging."

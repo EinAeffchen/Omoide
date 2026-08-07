@@ -100,7 +100,7 @@ from app.api import (
     untagged,
 )
 from app.api.processors import router as proc_router
-from app.config import get_clip_bundle, settings
+from app.config import get_clip_bundle, get_os_app_config_dir, settings
 from app.database import ensure_vec_tables
 from app.ffmpeg import ensure_ffmpeg_available
 from app.logger import configure_file_logging, logger
@@ -714,17 +714,23 @@ if __name__ == "__main__":
     # Register shutdown and enter UI loop immediately
     window.events.closed += shutdown
     preferred_gui = _preferred_webview_gui()
+    webview_storage_dir = get_os_app_config_dir() / "webview"
+    webview_storage_dir.mkdir(parents=True, exist_ok=True)
     try:
         if preferred_gui:
             webview.start(
                 _boot_and_switch,
                 gui=preferred_gui,
                 icon=window_icon,
+                private_mode=False,
+                storage_path=os.fspath(webview_storage_dir),
             )
         else:
             webview.start(
                 _boot_and_switch,
                 icon=window_icon,
+                private_mode=False,
+                storage_path=os.fspath(webview_storage_dir),
             )
     except RuntimeError as exc:
         # pywebview's import_winforms() only catches ImportError, so a

@@ -6,13 +6,20 @@ from cv2.typing import MatLike
 from PIL.ImageFile import ImageFile
 from sqlmodel import Session, select, text
 
+import app.database as db
 from app.api.tags import attach_tag_to_media, get_or_create_tag
 from app.config import get_clip_bundle, settings
 from app.database import safe_commit
 from app.logger import logger
 from app.models import Media, Scene
 from app.processors.base import MediaProcessor
-from app.tagging import build_tag_vector_map, sanitize_custom_tag_list
+from app.tagging import (
+    CALIBRATION_SAMPLE_SIZE,
+    SIMILARITY_THRESHOLD,
+    build_tag_vector_map,
+    calibrate_tag_thresholds,
+    sanitize_custom_tag_list,
+)
 from app.utils import vector_from_stored
 
 
@@ -129,6 +136,7 @@ class AutoTagger(MediaProcessor):
             self.tag_map = {}
             self._tag_names: list[str] = []
             self._tag_matrix: np.ndarray | None = None
+            self._tag_thresholds: np.ndarray | None = None
             return
 
         # Use shared CLIP and keep it warm to avoid re-init leaks
@@ -137,6 +145,7 @@ class AutoTagger(MediaProcessor):
         # Pre-stack vectors into a matrix for vectorized similarity scoring
         self._tag_names = list(self.tag_map.keys())
         self._tag_matrix = np.stack(list(self.tag_map.values())) if self._tag_names else None
+        self._tag_thresholds = self._calibrate_thresholds()
 
     def unload(self):
         """Used to load models into memory before use"""
@@ -144,6 +153,42 @@ class AutoTagger(MediaProcessor):
         self.tag_map = {}
         self._tag_names = []
         self._tag_matrix = None
+        self._tag_thresholds = None
+
+    def _calibrate_thresholds(self) -> np.ndarray | None:
+        """Sample existing embeddings to derive a per-tag similarity cutoff.
+
+        Runs once per load_model() (i.e. once per processing run), so
+        thresholds stay current as the library grows.
+        """
+        if self._tag_matrix is None:
+            return None
+
+        with Session(db.engine) as session:
+            rows = session.exec(
+                text(
+                    """
+                    SELECT me.embedding AS embedding
+                    FROM media AS m
+                    JOIN media_embeddings AS me ON me.media_id = m.id
+                    WHERE m.missing_since IS NULL
+                    ORDER BY RANDOM()
+                    LIMIT :limit
+                    """
+                ).bindparams(limit=CALIBRATION_SAMPLE_SIZE)
+            ).all()
+
+        sample_vectors = [
+            vec
+            for row in rows
+            if (vec := vector_from_stored(row[0])) is not None and vec.size > 0
+        ]
+        sample_matrix = (
+            np.stack(sample_vectors).astype(np.float32, copy=False)
+            if sample_vectors
+            else np.empty((0, self._tag_matrix.shape[1]), dtype=np.float32)
+        )
+        return calibrate_tag_thresholds(self._tag_matrix, sample_matrix)
 
     def _tag_to_vector(self, tag) -> np.ndarray:
         tokenized_text = self._tokenizer([tag])
@@ -213,10 +258,16 @@ class AutoTagger(MediaProcessor):
             return True
         tag_matrix = getattr(self, "_tag_matrix", None)
         tag_names = getattr(self, "_tag_names", None)
+        tag_thresholds = getattr(self, "_tag_thresholds", None)
         if tag_matrix is not None and tag_names:
             scores = tag_matrix @ media_embedding  # single matmul: (N,)
-            for tag, score in zip(tag_names, scores):
-                if score > 0.2:
+            thresholds = (
+                tag_thresholds
+                if tag_thresholds is not None
+                else np.full(len(tag_names), SIMILARITY_THRESHOLD, dtype=np.float32)
+            )
+            for tag, score, threshold in zip(tag_names, scores, thresholds):
+                if score > threshold:
                     tag_obj = get_or_create_tag(tag, session)
                     attach_tag_to_media(
                         media.id, tag_obj.id, session, score=float(score)
@@ -224,7 +275,7 @@ class AutoTagger(MediaProcessor):
         else:
             for tag, tag_vector in self.tag_map.items():
                 similarity_score = float(np.dot(media_embedding, tag_vector))
-                if similarity_score > 0.2:
+                if similarity_score > SIMILARITY_THRESHOLD:
                     tag_obj = get_or_create_tag(tag, session)
                     attach_tag_to_media(
                         media.id, tag_obj.id, session, score=similarity_score

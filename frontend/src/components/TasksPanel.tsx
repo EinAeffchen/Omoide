@@ -19,6 +19,8 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
+  FormControlLabel,
+  Switch,
 } from "@mui/material";
 import { TaskFailure, TaskType } from "../types";
 import {
@@ -88,6 +90,7 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
   const { activeTasks, forceRefresh, lastCompletedTasks } =
     useTaskEvents(isActive);
   const [processorsExpanded, setProcessorsExpanded] = useState(false);
+  const [forceReprocess, setForceReprocess] = useState(false);
   const [snack, setSnack] = useState<{
     open: boolean;
     msg: string;
@@ -246,9 +249,15 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
 
   const runProcessorAction = async (processorName: string, label: string) => {
     try {
-      await runProcessor(processorName);
+      await runProcessor(processorName, forceReprocess);
       await forceRefresh();
-      setSnack({ open: true, msg: `${label} started`, sev: "success" });
+      setSnack({
+        open: true,
+        msg: forceReprocess
+          ? `${label} started (reprocessing all files)`
+          : `${label} started`,
+        sev: "success",
+      });
     } catch (err: any) {
       setSnack({ open: true, msg: err?.message || "Failed to start processor", sev: "error" });
     }
@@ -602,9 +611,25 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
               {processorsExpanded ? <ExpandLessIcon fontSize="small" sx={{ color: "text.secondary" }} /> : <ExpandMoreIcon fontSize="small" sx={{ color: "text.secondary" }} />}
             </ListItemButton>
             <Collapse in={processorsExpanded} unmountOnExit>
-              <Typography variant="caption" color="text.secondary" sx={{ px: 2, pb: 1, display: "block" }}>
-                Runs on all unprocessed items. Use select mode to rerun on specific files.
+              <Typography variant="caption" color="text.secondary" sx={{ px: 2, display: "block" }}>
+                {forceReprocess
+                  ? "Will reprocess every file, including ones already run. Assigned faces are kept; only unassigned ones are redone."
+                  : "Runs on unprocessed items only. Use select mode to rerun on specific files."}
               </Typography>
+              <FormControlLabel
+                sx={{ px: 2, pb: 1 }}
+                control={
+                  <Switch
+                    size="small"
+                    checked={forceReprocess}
+                    onChange={(e) => setForceReprocess(e.target.checked)}
+                    disabled={isAnyProcessorRunning}
+                  />
+                }
+                label={
+                  <Typography variant="body2">Force reprocess all files</Typography>
+                }
+              />
               {PROCESSOR_ACTIONS.map((p) => (
                 <ListItem key={p.name} disablePadding>
                   <ListItemButton

@@ -214,6 +214,11 @@ class MediaDirectory(BaseModel):
     read_only: bool = False
 
 
+class HomeWidgetSetting(BaseModel):
+    id: str
+    enabled: bool = True
+
+
 class ReadOnlyMediaError(PermissionError):
     def __init__(self, target: Path, base: Path):
         self.target = target
@@ -314,6 +319,9 @@ class GeneralSettings(BaseModel):
     update_check_cache_minutes: int = 180
     # Timeout (seconds) for contacting the GitHub API.
     update_check_timeout_seconds: float = 5.0
+    # Homepage widget visibility + order (list order = display order).
+    # Empty means "use the built-in defaults".
+    home_widgets: list[HomeWidgetSetting] = Field(default_factory=list)
 
     data_dir: Path = Field(default_factory=get_user_data_path)
 

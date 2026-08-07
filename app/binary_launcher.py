@@ -52,6 +52,27 @@ def _bundle_base() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+def _webview_storage_dir() -> Path:
+    """OS-specific persistent storage dir for the webview (cookies, localStorage).
+
+    Mirrors app.config.get_os_app_config_dir(), reimplemented with pure
+    stdlib since this module must not import app.config before the window
+    is created.
+    """
+    if sys.platform == "win32":
+        base = Path(os.getenv("APPDATA") or Path.home() / "AppData" / "Roaming")
+    elif sys.platform == "darwin":
+        base = Path(
+            os.getenv("XDG_CONFIG_HOME")
+            or Path.home() / "Library" / "Application Support"
+        )
+    else:
+        base = Path(os.getenv("XDG_CONFIG_HOME") or Path.home() / ".config")
+    d = base / "omoide" / "webview"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 # ---------------------------------------------------------------------------
 # sqlite-vec env var — must be set before app.database is first imported
 # ---------------------------------------------------------------------------
@@ -228,11 +249,23 @@ def _boot_and_switch() -> None:
 
 _window.events.closed += _shutdown
 _preferred_gui = _preferred_webview_gui()
+_webview_storage_path = os.fspath(_webview_storage_dir())
 try:
     if _preferred_gui:
-        webview.start(_boot_and_switch, gui=_preferred_gui, icon=_resolve_window_icon())
+        webview.start(
+            _boot_and_switch,
+            gui=_preferred_gui,
+            icon=_resolve_window_icon(),
+            private_mode=False,
+            storage_path=_webview_storage_path,
+        )
     else:
-        webview.start(_boot_and_switch, icon=_resolve_window_icon())
+        webview.start(
+            _boot_and_switch,
+            icon=_resolve_window_icon(),
+            private_mode=False,
+            storage_path=_webview_storage_path,
+        )
 except RuntimeError as exc:
     if sys.platform.startswith("win"):
         import ctypes

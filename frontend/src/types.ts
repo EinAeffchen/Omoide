@@ -612,6 +612,7 @@ export interface AppConfig {
     update_check_repo: string | null;
     update_check_cache_minutes: number;
     update_check_timeout_seconds: number;
+    home_widgets: { id: string; enabled: boolean }[];
   };
   scan: {
     auto_scan: boolean;

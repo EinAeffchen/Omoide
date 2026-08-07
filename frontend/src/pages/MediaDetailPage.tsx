@@ -20,6 +20,7 @@ import { ArrowBackIosNew, ArrowForwardIos } from "@mui/icons-material";
 import CloseIcon from "@mui/icons-material/Close";
 
 import { useListStore } from "../stores/useListStore";
+import { useTaskCompletionVersion } from "../TaskEventsContext";
 
 import { ActionDialogs } from "../components/ActionDialogs";
 import { MediaDisplay } from "../components/MediaDisplay";
@@ -271,6 +272,21 @@ export default function MediaDetailPage() {
     }, 1500);
     return () => clearInterval(intervalId);
   }, [task?.id, task?.status, fetchDetail]);
+
+  // Per-media processor runs (started from the "Processors" tab) are fired
+  // and forgotten by that tab — reload the detail once one actually
+  // completes so newly detected faces/tags/exif show up without a manual
+  // refresh. Skip the version seen at mount so this doesn't refetch just
+  // because some unrelated processor run finished before this page opened.
+  const processorTaskVersion = useTaskCompletionVersion([
+    "run_processor_for_media",
+  ]);
+  const seenProcessorTaskVersionRef = useRef(processorTaskVersion);
+  useEffect(() => {
+    if (seenProcessorTaskVersionRef.current === processorTaskVersion) return;
+    seenProcessorTaskVersionRef.current = processorTaskVersion;
+    fetchDetail();
+  }, [processorTaskVersion, fetchDetail]);
 
   const handleTouchStart = (e: React.TouchEvent) =>
     setTouchStartX(e.targetTouches[0].clientX);

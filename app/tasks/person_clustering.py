@@ -4,7 +4,7 @@ import math
 import time
 from collections import deque
 from collections.abc import Iterable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import hdbscan
 import networkx as nx
@@ -1138,6 +1138,7 @@ def _load_person_prototype_matrix(
         {pid: vecs for pid, vecs in quality_grouped.items() if vecs}
     )
 
+
     proto_person_ids: list[int] = []
     proto_vectors: list[np.ndarray] = []
     for person_id, vecs in grouped.items():
@@ -1408,7 +1409,7 @@ def run_person_clustering(task_id: str) -> None:
             return
 
         task.status = "running"
-        task.started_at = datetime.now(timezone.utc)
+        task.started_at = datetime.now(UTC)
         # count only faces eligible to seed clusters so the progress bar
         # matches what the batch loop actually processes; the quality-excluded
         # remainder is accounted for separately in the matching phase
@@ -1429,7 +1430,7 @@ def run_person_clustering(task_id: str) -> None:
         with Session(db.engine) as session:
             task = session.get(ProcessingTask, task_id)
             if task and task.status == "cancelled" and task.finished_at is None:
-                task.finished_at = datetime.now(timezone.utc)
+                task.finished_at = datetime.now(UTC)
                 session.add(task)
                 safe_commit(session)
         clear_task_progress(task_id)
@@ -1440,7 +1441,7 @@ def run_person_clustering(task_id: str) -> None:
                 task = session.get(ProcessingTask, task_id)
                 if task:
                     task.status = "cancelled"
-                    task.finished_at = datetime.now(timezone.utc)
+                    task.finished_at = datetime.now(UTC)
                     session.add(task)
                     safe_commit(session)
             clear_task_progress(task_id)
