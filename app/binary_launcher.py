@@ -10,6 +10,7 @@ Only `webview` and the Python standard library are imported before
 """
 from __future__ import annotations
 
+import logging
 import os
 import socket
 import sys
@@ -73,6 +74,25 @@ def _webview_storage_dir() -> Path:
     return d
 
 
+def _boot_log_path() -> Path:
+    return _webview_storage_dir().parent / "boot.log"
+
+
+def _boot_log(msg: str) -> None:
+    """Append a timestamped breadcrumb to boot.log.
+
+    Diagnostic only, for tracing where the frozen binary gets stuck before
+    startup — before app.main is imported there is no other durable log
+    sink (stdout is discarded in a windowed build), so this writes directly
+    to a file using pure stdlib.
+    """
+    try:
+        with open(_boot_log_path(), "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}\n")
+    except Exception:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # sqlite-vec env var — must be set before app.database is first imported
 # ---------------------------------------------------------------------------
@@ -98,6 +118,8 @@ try:
 except Exception:
     pass
 
+_boot_log("launcher: starting (frozen=%s)" % getattr(sys, "frozen", False))
+
 # ---------------------------------------------------------------------------
 # WebView environment — must be set before `import webview`
 # ---------------------------------------------------------------------------
@@ -111,6 +133,12 @@ if sys.platform.startswith("win"):
         if _wv2_dir:
             os.environ.setdefault(
                 "WEBVIEW2_BROWSER_EXECUTABLE_FOLDER", str(_wv2_dir)
+            )
+            _boot_log(f"launcher: using bundled WebView2 runtime at {_wv2_dir}")
+        else:
+            _boot_log(
+                "launcher: no bundled WebView2 runtime found, "
+                "falling back to the system-installed Evergreen runtime"
             )
     _disable_gpu_raw = os.environ.get("OMOIDE_WEBVIEW_DISABLE_GPU")
     _disable_gpu = _disable_gpu_raw is None or _env_truthy(_disable_gpu_raw)
@@ -127,6 +155,22 @@ if sys.platform.startswith("win"):
 # ---------------------------------------------------------------------------
 
 import webview  # noqa: E402
+
+# pywebview logs its own errors (e.g. a WebView2/CoreWebView2 init failure)
+# via logging.getLogger('pywebview'), which by default has no handler and no
+# console to fall back to in a windowed build — the message would otherwise
+# vanish. Route it into the same boot.log so a native init failure/hang is
+# still visible.
+try:
+    _pywebview_handler = logging.FileHandler(_boot_log_path(), encoding="utf-8")
+    _pywebview_handler.setFormatter(
+        logging.Formatter("%(asctime)s pywebview %(levelname)s %(message)s")
+    )
+    _pywebview_logger = logging.getLogger("pywebview")
+    _pywebview_logger.addHandler(_pywebview_handler)
+    _pywebview_logger.setLevel(logging.DEBUG)
+except Exception:
+    pass
 
 # ---------------------------------------------------------------------------
 # Loading screen
@@ -194,12 +238,14 @@ def _resolve_window_icon() -> str | None:
 # Create window — happens immediately, no heavy code has run yet
 # ---------------------------------------------------------------------------
 
+_boot_log("launcher: creating loading window...")
 _window = webview.create_window(
     "omoide",
     html=_LOADING_HTML,
     width=1280,
     height=720,
 )
+_boot_log("launcher: loading window created")
 
 
 def _shutdown() -> None:
@@ -216,31 +262,52 @@ def _boot_and_switch() -> None:
     Imports the full application stack, runs migrations, starts the HTTP
     server, then switches the window to the running app.
     """
+    _boot_log("boot: background thread started")
+
     # This single import triggers the full app initialisation:
     # FastAPI, SQLAlchemy, all routers, settings load, etc.
+    _boot_log("boot: importing app.main (FastAPI, SQLAlchemy, routers, settings)...")
     import app.main as _main  # noqa: F401
+    _boot_log("boot: app.main imported")
 
+    _boot_log("boot: running database migrations...")
     try:
         _main.run_migrations()
+        _boot_log("boot: migrations complete")
     except Exception as exc:
-        print(f"Migrations warning: {exc}")
+        _boot_log(f"boot: migrations warning: {exc}")
 
+    _boot_log("boot: starting uvicorn server thread...")
     server_thread = threading.Thread(target=_main.run_server, daemon=True)
     server_thread.start()
 
     host, port = "127.0.0.1", 8123
-    deadline = time.time() + 120
+    _boot_log(f"boot: polling {host}:{port} for up to 120s...")
+    start = time.time()
+    deadline = start + 120
+    connected = False
     while time.time() < deadline:
         try:
             with socket.create_connection((host, port), timeout=0.5):
+                connected = True
                 break
         except OSError:
             time.sleep(0.25)
 
+    if connected:
+        _boot_log(f"boot: {host}:{port} answered after {time.time() - start:.1f}s")
+    else:
+        _boot_log(
+            f"boot: gave up waiting for {host}:{port} after "
+            f"{time.time() - start:.1f}s — server never answered"
+        )
+
+    _boot_log("boot: navigating window to app url...")
     try:
         _window.load_url(f"http://{host}:{port}")
-    except Exception:
-        pass
+        _boot_log("boot: navigation call returned")
+    except Exception as exc:
+        _boot_log(f"boot: navigation failed: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -250,6 +317,10 @@ def _boot_and_switch() -> None:
 _window.events.closed += _shutdown
 _preferred_gui = _preferred_webview_gui()
 _webview_storage_path = os.fspath(_webview_storage_dir())
+_boot_log(
+    f"launcher: entering GUI event loop (gui={_preferred_gui!r}, "
+    f"storage_path={_webview_storage_path})"
+)
 try:
     if _preferred_gui:
         webview.start(
@@ -267,6 +338,7 @@ try:
             storage_path=_webview_storage_path,
         )
 except RuntimeError as exc:
+    _boot_log(f"launcher: webview.start() raised RuntimeError: {exc}")
     if sys.platform.startswith("win"):
         import ctypes
         ctypes.windll.user32.MessageBoxW(

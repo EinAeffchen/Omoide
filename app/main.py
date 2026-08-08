@@ -265,25 +265,37 @@ def _prewarm_clip() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Load the ML model
+    # Each stage logs before it runs (not just on failure) so a hang shows up
+    # in omoide.log as "Starting X..." with no matching completion line,
+    # instead of leaving no trace at all — this is on the critical path that
+    # gates uvicorn's socket bind, which is what the frozen binary's loading
+    # screen polls for.
+    logger.info("lifespan: loading processors...")
     load_processors()
+    logger.info("lifespan: processors loaded")
     if settings.processors.image_embedding_processor_active:
         threading.Thread(
             target=_prewarm_clip, daemon=True, name="clip-prewarm"
         ).start()
     # Apply database migrations on startup (idempotent)
+    logger.info("lifespan: applying migrations...")
     try:
         _apply_migrations_once()
+        logger.info("lifespan: migrations applied")
     except Exception as e:
         logger.warning("Database migrations failed at startup: %s", e)
     # Ensure vec0 tables exist even if Alembic couldn't create them (binary mode).
+    logger.info("lifespan: ensuring vec0 tables...")
     try:
         ensure_vec_tables()
+        logger.info("lifespan: vec0 tables ensured")
     except Exception as e:
         logger.warning("Could not ensure vec0 tables: %s", e)
 
+    logger.info("lifespan: checking ffmpeg availability...")
     try:
         ensure_ffmpeg_available()
+        logger.info("lifespan: ffmpeg availability check done")
     except Exception as e:
         logger.warning("ffmpeg availability check failed: %s", e)
 
@@ -292,14 +304,19 @@ async def lifespan(app: FastAPI):
     # of the lifespan, causing uvicorn to set should_exit=True immediately
     # after binding the port — the server shuts down before serving any
     # requests and the webview window stays stuck on the loading screen.
+    logger.info("lifespan: cleaning up stale tasks...")
     try:
         _cleanup_tasks_on_startup()
+        logger.info("lifespan: stale task cleanup done")
     except Exception as e:
         logger.warning("Task cleanup on startup failed: %s", e)
+    logger.info("lifespan: configuring auto-scan job...")
     try:
         configure_auto_scan_job()
+        logger.info("lifespan: auto-scan job configured")
     except Exception as e:
         logger.warning("Auto-scan job setup failed: %s", e)
+    logger.info("lifespan: startup complete, serving requests")
     yield
     # On shutdown, clean up tasks so next run starts cleanly
     _cleanup_tasks_on_shutdown()
@@ -554,6 +571,7 @@ async def spa_catch_all(full_path: str):
 def run_server():
     """Runs the Uvicorn server."""
     global server
+    logger.info("run_server: starting uvicorn on 127.0.0.1:8123...")
     config = uvicorn.Config(app, host="127.0.0.1", port=8123)
     server = uvicorn.Server(config)
     server.run()
@@ -576,12 +594,12 @@ def run_migrations():
     Locates `alembic.ini` and the `alembic/` scripts whether running
     from source or from a PyInstaller bundle (sys._MEIPASS).
     """
-    print("Running database migrations...")
+    logger.info("Running database migrations...")
     try:
         _apply_migrations_once()
-        print("Migrations applied successfully.")
+        logger.info("Migrations applied successfully.")
     except Exception as e:
-        print(f"Error applying migrations: {e}")
+        logger.error("Error applying migrations: %s", e)
         raise
 
 
