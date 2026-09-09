@@ -17,9 +17,11 @@ import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import PlayCircleOutlineIcon from "@mui/icons-material/PlayCircleOutline";
 import FavoriteIcon from "@mui/icons-material/Favorite";
 import FavoriteBorderIcon from "@mui/icons-material/FavoriteBorder";
+import LinkOffIcon from "@mui/icons-material/LinkOff";
 import { useSelection } from "../context/SelectionContext";
 import { setMediaFavorite } from "../services/mediaActions";
 import IconButton from "@mui/material/IconButton";
+import Tooltip from "@mui/material/Tooltip";
 
 function formatDuration(d?: number): string {
   if (d == null) return "";
@@ -76,12 +78,16 @@ interface MediaCardProps {
   media: MediaPreview;
   mediaListKey?: string;
   navigationContext?: MediaNavigationContext;
+  onUnmatch?: () => void;
+  unmatchLabel?: string;
 }
 
 export default function MediaCard({
   media,
   mediaListKey,
   navigationContext,
+  onUnmatch,
+  unmatchLabel = "Unmatch from person",
 }: MediaCardProps) {
   const theme = useTheme();
   const { isSelecting, selectedIds, toggle } = useSelection();
@@ -405,26 +411,53 @@ export default function MediaCard({
       </Link>
 
       {media && !isSelecting && (
-        <IconButton
-          onClick={handleToggleFavorite}
-          size="small"
-          sx={{
-            position: "absolute",
-            top: 4,
-            right: 4,
-            zIndex: 20,
-            p: 0.5,
-            color: isFavorite ? "error.main" : "white",
-            bgcolor: "rgba(0,0,0,0.45)",
-            "&:hover": { bgcolor: "rgba(0,0,0,0.6)" },
-          }}
-        >
-          {isFavorite ? (
-            <FavoriteIcon fontSize="small" />
-          ) : (
-            <FavoriteBorderIcon fontSize="small" />
+        <>
+          <IconButton
+            onClick={handleToggleFavorite}
+            size="small"
+            sx={{
+              position: "absolute",
+              top: 4,
+              right: 4,
+              zIndex: 20,
+              p: 0.5,
+              color: isFavorite ? "error.main" : "white",
+              bgcolor: "rgba(0,0,0,0.45)",
+              "&:hover": { bgcolor: "rgba(0,0,0,0.6)" },
+            }}
+          >
+            {isFavorite ? (
+              <FavoriteIcon fontSize="small" />
+            ) : (
+              <FavoriteBorderIcon fontSize="small" />
+            )}
+          </IconButton>
+          {onUnmatch && (
+            <Tooltip title={unmatchLabel}>
+              <IconButton
+                aria-label={unmatchLabel}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onUnmatch();
+                }}
+                size="small"
+                sx={{
+                  position: "absolute",
+                  top: 36,
+                  right: 4,
+                  zIndex: 20,
+                  p: 0.5,
+                  color: "white",
+                  bgcolor: "rgba(0,0,0,0.45)",
+                  "&:hover": { bgcolor: "rgba(0,0,0,0.6)" },
+                }}
+              >
+                <LinkOffIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
           )}
-        </IconButton>
+        </>
       )}
 
       {isSelecting && (

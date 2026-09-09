@@ -128,14 +128,14 @@ def update_face_embedding(
             status_code=403,
             detail="Not allowed in settings.general.presentation_mode mode.",
         )
-    if not delete_face and person_id:
+    if not delete_face:
         sql = text(
             """
             UPDATE face_embeddings
             set person_id=:p_id
             WHERE face_id=:f_id
             """
-        ).bindparams(p_id=person_id, f_id=face_id)
+        ).bindparams(p_id=person_id if person_id is not None else -1, f_id=face_id)
     else:
         sql = text(
             """DELETE FROM face_embeddings

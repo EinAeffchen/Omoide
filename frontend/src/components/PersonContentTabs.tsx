@@ -283,6 +283,7 @@ export function PersonContentTabs({
             filterTags={filterTags}
             onFilterTagsChange={onFilterTagsChange}
             mediaListKey={mediaListKey}
+            onUnmatch={onDetachMedia}
           />
         </Suspense>
       </TabPanel>

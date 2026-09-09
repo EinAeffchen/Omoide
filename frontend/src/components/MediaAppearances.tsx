@@ -9,6 +9,7 @@ import { useListStore, defaultListState } from "../stores/useListStore";
 import { getPeople, getPersonMediaAppearances } from "../services/person";
 import { getTags } from "../services/tag";
 import { searchTags } from "../services/search";
+import config from "../config";
 
 const breakpointColumnsObj = {
   default: 6,
@@ -26,6 +27,7 @@ interface MediaAppearancesProps {
   filterTags: Tag[];
   onFilterTagsChange: (tags: Tag[]) => void;
   mediaListKey: string;
+  onUnmatch?: (mediaId: number) => Promise<void>;
 }
 export default function MediaAppearances({
   person,
@@ -34,6 +36,7 @@ export default function MediaAppearances({
   filterTags,
   onFilterTagsChange,
   mediaListKey,
+  onUnmatch,
 }: MediaAppearancesProps) {
   const [personOptions, setPersonOptions] = useState<PersonReadSimple[]>([]);
   const [tagOptions, setTagOptions] = useState<Tag[]>([]);
@@ -162,7 +165,16 @@ export default function MediaAppearances({
         {items &&
           items.map((media) => (
             <div key={media.id}>
-              <MediaCard media={media} mediaListKey={mediaListKey} />
+              <MediaCard
+                media={media}
+                mediaListKey={mediaListKey}
+                onUnmatch={
+                  !config.PRESENTATION_MODE && onUnmatch
+                    ? () => onUnmatch(media.id)
+                    : undefined
+                }
+                unmatchLabel={`Unmatch from ${person.name || `Person ${person.id}`}`}
+              />
             </div>
           ))}
       </Masonry>
