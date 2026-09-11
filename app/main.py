@@ -2,6 +2,7 @@ import io
 import json
 import logging
 import mimetypes
+import multiprocessing
 import os
 import sys
 import threading
@@ -9,6 +10,11 @@ import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
+
+# Keep the alternate PyInstaller entry point safe as well. On Windows a
+# multiprocessing worker re-executes the frozen application; this must happen
+# before importing Torch/OpenCLIP or creating a webview window.
+multiprocessing.freeze_support()
 
 from app.version import get_app_version
 
@@ -585,7 +591,10 @@ async def spa_catch_all(full_path: str):
 def run_server():
     """Runs the Uvicorn server."""
     global server
-    logger.info("run_server: starting uvicorn on 127.0.0.1:8123...")
+    logger.info(
+        "run_server: starting uvicorn on 127.0.0.1:8123... (pid=%s)",
+        os.getpid(),
+    )
     config = uvicorn.Config(app, host="127.0.0.1", port=8123)
     server = uvicorn.Server(config)
     server.run()
