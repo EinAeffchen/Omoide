@@ -77,6 +77,7 @@ export const usePersonDetailPage = () => {
     const initial = appConfig.PERSON_RELATIONSHIP_MAX_NODES;
     return Number.isFinite(initial) && initial > 0 ? initial : 100;
   });
+  const [canExportMedia, setCanExportMedia] = useState(false);
 
   const [filterPeople, setFilterPeople] = useState<PersonReadSimple[]>([]);
   const [filterTags, setFilterTags] = useState<Tag[]>([]);
@@ -280,6 +281,9 @@ export const usePersonDetailPage = () => {
         if (Number.isFinite(value) && value > 0) {
           setRelationshipMaxNodes(value);
         }
+        setCanExportMedia(
+          !cfg.general.is_docker && !cfg.general.presentation_mode,
+        );
       } catch (err) {
         if (!cancelled && import.meta.env.DEV) {
           console.warn("Failed to load relationship graph settings", err);
@@ -734,6 +738,7 @@ export const usePersonDetailPage = () => {
     similarPersons,
     suggestedFaces,
     relationshipGraph,
+    canExportMedia,
     relationshipDepth,
     isLoadingRelationships,
     hasLoadedRelationships,

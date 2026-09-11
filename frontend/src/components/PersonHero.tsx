@@ -23,8 +23,11 @@ interface PersonHeroProps {
   onDelete: () => void;
   onRefreshSimilar: () => void;
   onAutoSelectProfile: () => void;
+  onExportMedia: () => void;
   saving: boolean;
   autoSelectingProfile: boolean;
+  canExportMedia: boolean;
+  exportingMedia: boolean;
 }
 
 export function PersonHero({
@@ -34,8 +37,11 @@ export function PersonHero({
   onDelete,
   onRefreshSimilar,
   onAutoSelectProfile,
+  onExportMedia,
   saving,
   autoSelectingProfile,
+  canExportMedia,
+  exportingMedia,
 }: PersonHeroProps) {
   const theme = useTheme();
   const thumbUrl = person.profile_face?.thumbnail_path
@@ -103,6 +109,19 @@ export function PersonHero({
                   "Auto Profile"
                 )}
               </Button>
+              {canExportMedia && (
+                <Button
+                  variant="outlined"
+                  onClick={onExportMedia}
+                  disabled={saving || exportingMedia}
+                >
+                  {exportingMedia ? (
+                    <CircularProgress size={18} thickness={5} />
+                  ) : (
+                    "Export / Copy media…"
+                  )}
+                </Button>
+              )}
               <Button
                 variant="outlined"
                 color="error"

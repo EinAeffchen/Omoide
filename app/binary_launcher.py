@@ -126,14 +126,19 @@ _boot_log("launcher: starting (frozen=%s)" % getattr(sys, "frozen", False))
 
 os.environ["QT_API"] = "pyside6"
 _webview_gui_override = os.environ.get("OMOIDE_WEBVIEW_GUI")
+_webview2_runtime_path: str | None = None
 if sys.platform.startswith("win"):
     _gui_choice = (_webview_gui_override or "edgechromium").strip().lower()
     if _gui_choice == "edgechromium":
         _wv2_dir = _resolve_webview2_runtime_dir()
         if _wv2_dir:
-            os.environ.setdefault(
-                "WEBVIEW2_BROWSER_EXECUTABLE_FOLDER", str(_wv2_dir)
-            )
+            # pywebview does not read WEBVIEW2_BROWSER_EXECUTABLE_FOLDER.
+            # Its EdgeChromium backend instead passes this setting to
+            # CoreWebView2CreationProperties.BrowserExecutableFolder.  The
+            # system-installed Evergreen runtime hides this mistake during
+            # local development, whereas CI builds rely on the bundled fixed
+            # runtime and open a blank window without it.
+            _webview2_runtime_path = str(_wv2_dir)
             _boot_log(f"launcher: using bundled WebView2 runtime at {_wv2_dir}")
         else:
             _boot_log(
@@ -155,6 +160,9 @@ if sys.platform.startswith("win"):
 # ---------------------------------------------------------------------------
 
 import webview  # noqa: E402
+
+if _webview2_runtime_path:
+    webview.settings["WEBVIEW2_RUNTIME_PATH"] = _webview2_runtime_path
 
 # pywebview logs its own errors (e.g. a WebView2/CoreWebView2 init failure)
 # via logging.getLogger('pywebview'), which by default has no handler and no

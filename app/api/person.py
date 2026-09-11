@@ -1,5 +1,7 @@
 from collections import deque
 from datetime import date, datetime
+from pathlib import Path
+import shutil
 
 from fastapi import (
     APIRouter,
@@ -7,6 +9,7 @@ from fastapi import (
     Depends,
     HTTPException,
     Query,
+    Request,
     status,
 )
 from sqlalchemy import (
@@ -44,6 +47,7 @@ from app.schemas.person import (
     PersonBulkDeleteRequest,
     PersonBulkDeleteResponse,
     PersonDetail,
+    PersonMediaExportRequest,
     PersonRead,
     PersonReadSimple,
     PersonUpdate,
@@ -68,6 +72,49 @@ from app.utils import (
 )
 
 router = APIRouter()
+
+
+def _is_local_request(request: Request) -> bool:
+    try:
+        host = request.client.host if request.client else ""
+    except Exception:
+        return False
+    return host in {"127.0.0.1", "::1", "localhost"}
+
+
+def _resolve_media_source(path_value: str) -> Path | None:
+    """Resolve a stored media path against the configured media directories."""
+    raw_path = Path(path_value).expanduser()
+    candidates = [raw_path] if raw_path.is_absolute() else []
+    candidates.extend(
+        media_dir / raw_path
+        for media_dir, _read_only in settings.general.resolved_media_dirs()
+    )
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve(strict=False)
+        except (OSError, RuntimeError):
+            continue
+        if resolved.is_file():
+            return resolved
+    return None
+
+
+def _available_destination(destination_dir: Path, filename: str) -> Path:
+    """Return a non-existing destination path without overwriting a file."""
+    requested = Path(filename)
+    candidate = destination_dir / requested.name
+    if not candidate.exists():
+        return candidate
+
+    stem = requested.stem or "media"
+    suffix = requested.suffix
+    index = 1
+    while True:
+        candidate = destination_dir / f"{stem} ({index}){suffix}"
+        if not candidate.exists():
+            return candidate
+        index += 1
 
 
 # Timeline events
@@ -578,6 +625,121 @@ def get_appearances(
         next_cursor = f"{last_item.created_at.isoformat()}_{last_item.id}"
 
     return MediaCursorPage(next_cursor=next_cursor, items=items)
+
+
+@router.post("/{person_id}/export-media")
+def export_person_media(
+    person_id: int,
+    export: PersonMediaExportRequest,
+    request: Request,
+    session: Session = Depends(get_session),
+):
+    """Copy or move each unique original containing this person's appearance."""
+    if settings.general.presentation_mode:
+        raise HTTPException(
+            status_code=403,
+            detail="Exporting media is not available in presentation mode.",
+        )
+    if settings.general.is_docker:
+        raise HTTPException(
+            status_code=400,
+            detail="Exporting media is only available in the desktop app.",
+        )
+    if not settings.general.is_binary and not _is_local_request(request):
+        raise HTTPException(
+            status_code=400,
+            detail="Exporting media is only allowed in the desktop app or local session.",
+        )
+
+    person = session.get(Person, person_id)
+    if not person:
+        raise HTTPException(status_code=404, detail="Person not found")
+
+    try:
+        destination_dir = Path(export.destination_path).expanduser().resolve(
+            strict=True
+        )
+    except (OSError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail="Selected folder does not exist") from exc
+    if not destination_dir.is_dir():
+        raise HTTPException(status_code=400, detail="Selected path is not a folder")
+
+    media_ids = union_all(
+        select(Face.media_id.label("media_id")).where(Face.person_id == person_id),
+        select(PersonMediaLink.media_id.label("media_id")).where(
+            PersonMediaLink.person_id == person_id
+        ),
+    ).subquery()
+    media_items = session.exec(
+        select(Media)
+        .where(Media.id.in_(select(media_ids.c.media_id).distinct()))
+        .order_by(Media.id)
+    ).all()
+
+    completed = 0
+    skipped: list[dict[str, str]] = []
+    for media in media_items:
+        source_path = _resolve_media_source(media.path)
+        if source_path is None:
+            skipped.append({"filename": media.filename, "reason": "File not found"})
+            continue
+        if source_path.parent == destination_dir:
+            skipped.append(
+                {
+                    "filename": media.filename,
+                    "reason": "File is already in the selected folder",
+                }
+            )
+            continue
+        if export.mode == "move":
+            try:
+                settings.general.ensure_media_path_writable(source_path)
+            except PermissionError as exc:
+                skipped.append({"filename": media.filename, "reason": str(exc)})
+                continue
+
+        target_path = _available_destination(destination_dir, media.filename)
+        try:
+            if export.mode == "copy":
+                shutil.copy2(source_path, target_path)
+            else:
+                shutil.move(str(source_path), str(target_path))
+                old_path, old_filename = media.path, media.filename
+                media.path = str(target_path)
+                media.filename = target_path.name
+                session.add(media)
+                try:
+                    safe_commit(session)
+                except Exception:
+                    session.rollback()
+                    # Keep the database and filesystem in sync if persisting the
+                    # new path fails after the file has been moved.
+                    try:
+                        shutil.move(str(target_path), str(source_path))
+                    except Exception as rollback_exc:
+                        logger.error(
+                            "Failed to roll back moved media %s: %s",
+                            target_path,
+                            rollback_exc,
+                        )
+                    media.path, media.filename = old_path, old_filename
+                    raise
+            completed += 1
+        except Exception as exc:
+            logger.warning(
+                "Failed to %s media %s for person %s: %s",
+                export.mode,
+                source_path,
+                person_id,
+                exc,
+            )
+            skipped.append({"filename": media.filename, "reason": str(exc)})
+
+    return {
+        "mode": export.mode,
+        "completed": completed,
+        "skipped": skipped,
+    }
 
 
 @router.post(

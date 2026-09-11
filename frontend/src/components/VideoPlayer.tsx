@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Box, Button, CircularProgress, Typography } from "@mui/material";
-import DownloadIcon from "@mui/icons-material/Download";
+import { Box, CircularProgress, Typography } from "@mui/material";
 import ReactPlayer from "react-player";
 import { Media } from "../types";
 import { API } from "../config";
@@ -304,17 +303,10 @@ export function VideoWithPreview({
           <Typography variant="body1" align="center">
             This format cannot be played in the browser.
           </Typography>
-          <Button
-            variant="outlined"
-            color="inherit"
-            size="small"
-            startIcon={<DownloadIcon />}
-            component="a"
-            href={mediaUrl}
-            download={media.filename}
-          >
-            Download to play
-          </Button>
+          <Typography variant="body2" align="center" color="inherit">
+            Use the Open file button in the toolbar to play it in your default
+            application.
+          </Typography>
         </Box>
       )}
 

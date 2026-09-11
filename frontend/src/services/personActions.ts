@@ -17,6 +17,29 @@ export interface AddMediaAppearanceResult {
   added: boolean;
 }
 
+export interface PersonMediaExportResult {
+  mode: "copy" | "move";
+  completed: number;
+  skipped: { filename: string; reason: string }[];
+}
+
+export const exportPersonMedia = async (
+  personId: number,
+  destinationPath: string,
+  mode: "copy" | "move"
+): Promise<PersonMediaExportResult> => {
+  const res = await fetch(`${API}/api/person/${personId}/export-media`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ destination_path: destinationPath, mode }),
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({}));
+    throw new Error(error?.detail || `Failed to ${mode} media`);
+  }
+  return res.json();
+};
+
 export const updatePerson = async (
   personId: number,
   data: { name?: string; profile_face_id?: number }
