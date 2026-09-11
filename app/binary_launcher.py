@@ -90,7 +90,11 @@ def _webview_storage_dir() -> Path:
 
 
 def _boot_log_path() -> Path:
-    return _webview_storage_dir().parent / "boot.log"
+    # Keep early native-launch diagnostics alongside the normal application
+    # log, rather than in the application-data root.
+    log_dir = _webview_storage_dir().parent / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return log_dir / "boot.log"
 
 
 def _boot_log(msg: str) -> None:
@@ -146,15 +150,15 @@ _webview_gui_override = os.environ.get("OMOIDE_WEBVIEW_GUI")
 _webview2_runtime_path: str | None = None
 if sys.platform.startswith("win"):
     _gui_choice = (_webview_gui_override or "edgechromium").strip().lower()
-    if _gui_choice == "edgechromium":
+    if _gui_choice == "edgechromium" and _env_truthy(
+        os.environ.get("OMOIDE_USE_BUNDLED_WEBVIEW2")
+    ):
         _wv2_dir = _resolve_webview2_runtime_dir()
         if _wv2_dir:
-            # pywebview does not read WEBVIEW2_BROWSER_EXECUTABLE_FOLDER.
-            # Its EdgeChromium backend instead passes this setting to
-            # CoreWebView2CreationProperties.BrowserExecutableFolder.  The
-            # system-installed Evergreen runtime hides this mistake during
-            # local development, whereas CI builds rely on the bundled fixed
-            # runtime and open a blank window without it.
+            # An explicitly requested fixed runtime is configured through
+            # pywebview's supported EdgeChromium setting. By default the
+            # packaged app uses the system Evergreen runtime, matching local
+            # builds and avoiding CI's fixed-runtime incompatibilities.
             _webview2_runtime_path = str(_wv2_dir)
             _boot_log(
                 f"launcher: using bundled WebView2 runtime at {_wv2_dir}"
@@ -164,6 +168,8 @@ if sys.platform.startswith("win"):
                 "launcher: no bundled WebView2 runtime found, "
                 "falling back to the system-installed Evergreen runtime"
             )
+    elif _gui_choice == "edgechromium":
+        _boot_log("launcher: using system-installed Evergreen WebView2 runtime")
     _disable_gpu_raw = os.environ.get("OMOIDE_WEBVIEW_DISABLE_GPU")
     _disable_gpu = _disable_gpu_raw is None or _env_truthy(_disable_gpu_raw)
     if _gui_choice == "qt" and _disable_gpu:

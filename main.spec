@@ -99,7 +99,7 @@ datas = [
 ]
 if Path('app/GPU_BUILD').exists():
     datas.append(('app/GPU_BUILD', 'app'))
-if Path('webview2runtime').exists():
+if os.environ.get('OMOIDE_USE_BUNDLED_WEBVIEW2') and Path('webview2runtime').exists():
     datas.append(('webview2runtime', 'webview2runtime'))
 datas += collect_data_files('open_clip', include_py_files=True)
 # Offline reverse-geocoding dataset (~8 MB rg_cities1000.csv). Without it the

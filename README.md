@@ -119,10 +119,16 @@ cd frontend && npm ci && npm run build && cd ..
 uvicorn app.main:app --host 127.0.0.1 --port 8123
 ```
 
-To build a standalone binary:
+To build a standalone binary (the exact same build path used by GitHub
+Actions):
 ```bash
-pyinstaller main.spec
+uv run python scripts/build_desktop.py
 ```
+
+This command installs the frontend from `package-lock.json`, synchronizes the
+locked Python build environment, stamps the version, builds `main.spec`, and
+applies the Windows VC runtime workaround. Do not use the ignored legacy
+`local.spec` for release testing.
 
 ---
 

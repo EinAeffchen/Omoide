@@ -6,6 +6,9 @@ VERSION_FILE := app/VERSION
 VERSION := $(shell type $(subst /,\,$(VERSION_FILE)))
 DOCKER_TARGETS := docker-start docker-down push
 
+.PHONY: up build dev setup docker-start docker-down backup build-image \
+	build-release push alembic-generate alembic-upgrade alembic-downgrade
+
 ifneq (,$(filter $(DOCKER_TARGETS),$(MAKECMDGOALS)))
 	ifndef ENV_FILE
 		ENV_FILE := omoide.env
@@ -14,10 +17,13 @@ endif
 
 ifneq ($(strip $(wildcard $(ENV_FILE))),)
 	include $(ENV_FILE)
-	export $(shell grep -vE '^\s*#|^\s*$$' $(ENV_FILE) | cut -d= -f1)
+	# `export` works in GNU Make on Windows and Unix. The former grep/cut
+	# command was evaluated while Make parsed this file and prevented
+	# `make build` from running under Windows' default command shell.
+	export
 endif
 
-VENV		?= $(shell pwd)/venv
+VENV		?= $(CURDIR)/venv
 PIP			:= $(VENV)/bin/pip
 PYTHON		:= $(VENV)/bin/python
 
@@ -25,8 +31,7 @@ up:
 	uvicorn app.main:app --reload --log-level debug --host 0.0.0.0 --port 8000 
 
 build: 
-	cd frontend && npm install && npm run build
-	pyinstaller .\main.spec
+	uv run python scripts/build_desktop.py
 
 dev:
 	cd frontend && npm install && npm run dev

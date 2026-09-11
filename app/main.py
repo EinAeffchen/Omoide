@@ -52,11 +52,13 @@ _webview_gui_override = os.environ.get("OMOIDE_WEBVIEW_GUI")
 _webview2_runtime_path: str | None = None
 if sys.platform.startswith("win"):
     gui_choice = (_webview_gui_override or "edgechromium").strip().lower()
-    if gui_choice == "edgechromium":
+    if gui_choice == "edgechromium" and _env_truthy(
+        os.environ.get("OMOIDE_USE_BUNDLED_WEBVIEW2")
+    ):
         runtime_dir = _resolve_webview2_runtime_dir()
         if runtime_dir:
             # pywebview reads this through webview.settings after import;
-            # WebView2's environment variable is not consumed by pywebview.
+            # only use a fixed runtime when explicitly requested.
             _webview2_runtime_path = str(runtime_dir)
     disable_gpu_raw = os.environ.get("OMOIDE_WEBVIEW_DISABLE_GPU")
     disable_gpu = disable_gpu_raw is None or _env_truthy(disable_gpu_raw)

@@ -36,18 +36,6 @@ jobs:
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Build frontend
-        working-directory: frontend
-        run: |
-          npm ci
-          npm run build
-
-      - name: Cleanup frontend deps (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          rm -rf frontend/node_modules ~/.npm/_cacache || true
-
       - name: Setup Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
@@ -84,18 +72,6 @@ jobs:
           echo "OMOIDE_VERSION=${VERSION}" >> $GITHUB_ENV
           echo "APP_VERSION_SAFE=${SAFE_VERSION}" >> $GITHUB_ENV
 
-      - name: Stamp packaged version file
-        shell: bash
-        run: |
-          python - <<'PY'
-          import os
-          from pathlib import Path
-
-          version = os.environ["APP_VERSION"]
-          Path("app").mkdir(parents=True, exist_ok=True)
-          Path("app/VERSION").write_text(version, encoding="utf-8")
-          PY
-
       - name: Linux dependencies (Qt / WebEngine)
         if: runner.os == 'Linux'
         shell: bash
@@ -111,25 +87,6 @@ jobs:
             libx11-xcb1 fontconfig || true
           # Handle renamed package on newer Ubuntu
           sudo apt-get install -y libasound2 || sudo apt-get install -y libasound2t64
-
-      - name: Install Python dependencies (CPU)
-        if: matrix.flavor == 'cpu'
-        shell: bash
-        run: |
-          set -euo pipefail
-          uv sync --frozen --no-dev --extra build
-
-      - name: Install Python dependencies (GPU)
-        if: matrix.flavor == 'gpu'
-        shell: bash
-        run: |
-          set -euo pipefail
-          uv sync --frozen --no-dev --extra build
-          # Replace CPU torch/vision with CUDA wheels
-          UV_TORCH_BACKEND=cu121 uv pip install torch torchvision
-          # Swap to GPU ONNX runtime
-          uv pip uninstall -y onnxruntime || true
-          uv pip install onnxruntime-gpu==1.21.1
 
       - name: Set artifact metadata
         shell: bash
@@ -152,113 +109,16 @@ jobs:
           echo "APP_ARTIFACT_ARCHIVE=${APP_ARTIFACT_BASENAME}.app.zip" >> $GITHUB_ENV
           echo "APP_ARTIFACT_PATTERN=${APP_ARTIFACT_BASENAME}.app.zip" >> $GITHUB_ENV
 
+      - name: Build desktop artifact
+        env:
+          APP_VERSION: ${{ env.APP_VERSION }}
+          OMOIDE_VERSION: ${{ env.OMOIDE_VERSION }}
+        run: uv run python scripts/build_desktop.py
+
       - name: Show dependency versions (debug)
         run: |
           uv run python -V
           uv pip list
-
-      - name: Mark GPU build
-        if: matrix.flavor == 'gpu'
-        shell: bash
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          Path("app").mkdir(parents=True, exist_ok=True)
-          Path("app/GPU_BUILD").write_text("gpu", encoding="utf-8")
-          PY
-
-      - name: Fetch WebView2 fixed runtime (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $pkgUrl = "https://www.nuget.org/api/v2/package/WebView2.Runtime.X64"
-          $pkgPath = Join-Path $env:RUNNER_TEMP "webview2runtime.nupkg"
-          Invoke-WebRequest -Uri $pkgUrl -OutFile $pkgPath
-          $extractRoot = Join-Path $env:RUNNER_TEMP "webview2runtime_pkg"
-          if (Test-Path $extractRoot) { Remove-Item $extractRoot -Recurse -Force }
-          Expand-Archive -Path $pkgPath -DestinationPath $extractRoot
-          $runtimeExe = Get-ChildItem -Path $extractRoot -Recurse -Filter "msedgewebview2.exe" | Select-Object -First 1
-          if (-not $runtimeExe) {
-            throw "WebView2 runtime executable not found in package"
-          }
-          $runtimeRoot = $runtimeExe.Directory.FullName
-          $dest = Join-Path $PWD "webview2runtime"
-          if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
-          Copy-Item -Path $runtimeRoot -Destination $dest -Recurse
-          Write-Host "Bundled WebView2 runtime into $dest"
-
-      - name: Clean previous build artifacts
-        run: python -c "import shutil, pathlib; [shutil.rmtree(pathlib.Path(p), ignore_errors=True) for p in ('build','dist')]"
-
-      - name: Force clean build artifacts
-        if: runner.os == 'macOS'
-        run: |
-          rm -rf build dist
-
-      - name: Build binary with PyInstaller (macOS workaround)
-        env:
-          APP_VERSION: ${{ env.APP_VERSION }}
-          OMOIDE_VERSION: ${{ env.OMOIDE_VERSION }}
-        if: runner.os == 'macOS'
-        run: |
-          export PYINSTALLER_STRIP_SYMLINKS=1
-          uv run pyinstaller --clean --noconfirm main.spec
-
-      - name: Build binary with PyInstaller
-        if: runner.os != 'macOS'
-        env:
-          APP_VERSION: ${{ env.APP_VERSION }}
-          OMOIDE_VERSION: ${{ env.OMOIDE_VERSION }}
-        run: |
-          uv run pyinstaller --clean --noconfirm main.spec
-
-      - name: Bundle VC runtime (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          APP_ARTIFACT_PATH: ${{ env.APP_ARTIFACT_PATH }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $bundleScript = @'
-          import os
-          import pathlib
-          import shutil
-
-          try:
-              import sklearn  # type: ignore
-          except ImportError:
-              sklearn = None
-
-          dist_root = pathlib.Path(os.environ['APP_ARTIFACT_PATH']).resolve()
-          target_dir = dist_root / '_internal' / 'sklearn' / '.libs'
-          target_dir.mkdir(parents=True, exist_ok=True)
-
-          candidates = []
-          if sklearn is not None:
-              libs_dir = pathlib.Path(sklearn.__file__).resolve().parent / '.libs'
-              if libs_dir.exists():
-                  candidates.extend(libs_dir.glob('vcomp140*.dll'))
-
-          if not candidates:
-              system_root = pathlib.Path(os.environ.get('SystemRoot', r'C:\\Windows'))
-              for rel in ('System32', 'SysWOW64'):
-                  candidate = system_root / rel / 'vcomp140.dll'
-                  if candidate.exists():
-                      candidates.append(candidate)
-                      break
-
-          if not candidates:
-              raise SystemExit('Unable to locate vcomp140.dll for bundling.')
-
-          src = pathlib.Path(candidates[0])
-          dest = target_dir / 'vcomp140.dll'
-          shutil.copy2(src, dest)
-          print(f'Copied {src} -> {dest}')
-          '@
-          $tempPath = Join-Path $env:RUNNER_TEMP 'bundle_vcomp_runtime.py'
-          Set-Content -Path $tempPath -Value $bundleScript -Encoding UTF8
-          uv run python $tempPath
 
       - name: Set executable permissions (macOS)
         if: runner.os == 'macOS'
