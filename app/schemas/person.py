@@ -25,6 +25,7 @@ class PersonDetail(BaseModel):
     profile_face: ProfileFace | None
     tags: list[TagSimple]
     appearance_count: int
+    is_favorite: bool = False
 
 
 class PersonUpdate(BaseModel):
@@ -57,6 +58,7 @@ class PersonRead(SQLModel):
     name: str | None
     profile_face: FaceRead | None
     appearance_count: int | None
+    is_favorite: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 

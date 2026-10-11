@@ -53,6 +53,18 @@ export const updatePerson = async (
   return res.json();
 };
 
+export const setPersonFavorite = async (
+  personId: number,
+  isFavorite: boolean
+): Promise<void> => {
+  const res = await fetch(`${API}/api/person/${personId}/favorite`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ is_favorite: isFavorite }),
+  });
+  if (!res.ok) throw new Error("Failed to update favorite");
+};
+
 export const deletePerson = async (personId: number) => {
   const res = await fetch(`${API}/api/person/${personId}`, {
     method: "DELETE",

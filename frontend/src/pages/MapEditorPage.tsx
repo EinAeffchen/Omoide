@@ -301,6 +301,7 @@ export default function MapEditorPage() {
         <MapContainer
           center={[20, 0]}
           zoom={2}
+          className={theme.palette.mode === "dark" ? "map-dark-tiles" : undefined}
           style={{
             height: "100%",
             width: "100%",
@@ -308,12 +309,8 @@ export default function MapEditorPage() {
           }}
         >
           <TileLayer
-            url={
-              theme.palette.mode === "dark"
-                ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-                : "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            }
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           />
           <MapClickHandler
             selected={selectedMedia}

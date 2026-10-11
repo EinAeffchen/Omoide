@@ -8,12 +8,18 @@ import {
   ToggleButton,
   ToggleButtonGroup,
 } from "@mui/material";
+import Grid from "@mui/material/Grid";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useInView } from "react-intersection-observer";
 import Masonry from "react-masonry-css";
 import { useLocation, useSearchParams } from "react-router-dom";
 import MediaCard from "../components/MediaCard";
 import PersonCard from "../components/PersonCard";
+import {
+  PERSON_GRID_SIZES,
+  PersonThumbSizeToggle,
+  usePersonThumbSize,
+} from "../components/PersonThumbSize";
 import TagCard from "../components/TagCard";
 import { defaultListState, useListStore } from "../stores/useListStore";
 import {
@@ -23,7 +29,12 @@ import {
   SceneSearchResult,
   Tag,
 } from "../types";
-import { searchCombined, searchScenes, searchTags } from "../services/search";
+import {
+  searchCombined,
+  searchPersons,
+  searchScenes,
+  searchTags,
+} from "../services/search";
 import SceneResultCard from "../components/SceneResultCard";
 import { API } from "../config";
 
@@ -38,6 +49,7 @@ const breakpointColumnsObj = {
 };
 
 type MediaFilter = "all" | "image" | "video";
+type ListCategory = "person" | "tag" | "scene";
 
 function isMedia(item: MediaPreview | Person | Tag): item is MediaPreview {
   return item && "thumbnail_path" in item;
@@ -75,8 +87,10 @@ const emptyMediaState: MediaSearchState = {
 export default function SearchResultsPage() {
   const [searchParams] = useSearchParams();
   const rawCategory = searchParams.get("category");
-  const category: "media" | "tag" | "scene" =
-    rawCategory === "tag" || rawCategory === "scene" ? rawCategory : "media";
+  const category: "media" | ListCategory =
+    rawCategory === "person" || rawCategory === "tag" || rawCategory === "scene"
+      ? rawCategory
+      : "media";
   const query = searchParams.get("query") || "";
   const location = useLocation();
 
@@ -87,7 +101,7 @@ export default function SearchResultsPage() {
   } | null;
   const isImageSearch = preloadedState?.searchType === "image";
 
-  // ---- list-store state (tag + scene categories) -------------------------
+  // ---- list-store state (person + tag + scene categories) ----------------
   const listKey = useMemo(() => {
     if (category === "media" || !query) return "";
     const params = new URLSearchParams({ query });
@@ -160,14 +174,15 @@ export default function SearchResultsPage() {
       });
   }, [mediaState.hasMore, mediaState.isLoading, mediaState.nextCursor, query, orderBy]);
 
-  // ---- list-store fetch for tag / scene ----------------------------------
+  // ---- list-store fetch for person / tag / scene -------------------------
   useEffect(() => {
     if (!listKey) return;
     const fetcherMap = {
+      person: () => searchPersons(query, ITEMS_PER_PAGE),
       tag: () => searchTags(query, ITEMS_PER_PAGE),
       scene: () => searchScenes(query, ITEMS_PER_PAGE),
     } as const;
-    const fetcher = fetcherMap[category as "tag" | "scene"];
+    const fetcher = fetcherMap[category as ListCategory];
     if (fetcher) fetchInitial(listKey, fetcher);
   }, [listKey, category, query, fetchInitial, location.key]);
 
@@ -180,10 +195,12 @@ export default function SearchResultsPage() {
       loadMoreMedia();
     } else if (listHasMore && !listIsLoading) {
       const fetcherMap = {
+        person: (cursor?: string) =>
+          searchPersons(query, ITEMS_PER_PAGE, cursor),
         tag: (cursor?: string) => searchTags(query, ITEMS_PER_PAGE, cursor),
         scene: (cursor?: string) => searchScenes(query, ITEMS_PER_PAGE, cursor),
       } as const;
-      const fetcher = fetcherMap[category as "tag" | "scene"];
+      const fetcher = fetcherMap[category as ListCategory];
       if (fetcher) loadMore(listKey, fetcher);
     }
   }, [inView, category, listHasMore, listIsLoading, listKey, query, loadMore, loadMoreMedia]);
@@ -207,6 +224,7 @@ export default function SearchResultsPage() {
       : [];
 
   const [mediaFilter, setMediaFilter] = useState<MediaFilter>("all");
+  const [thumbSize, setThumbSize] = usePersonThumbSize();
   const filteredMediaItems = useMemo(() => {
     if (mediaFilter === "all") return rawMediaItems;
     if (mediaFilter === "video") return rawMediaItems.filter(isVideoMedia);
@@ -368,13 +386,30 @@ export default function SearchResultsPage() {
         </Box>
       )}
 
-      <Masonry
-        breakpointCols={breakpointColumnsObj}
-        className="my-masonry-grid"
-        columnClassName="my-masonry-grid_column"
-      >
-        {visibleItems.map(renderItem)}
-      </Masonry>
+      {category === "person" ? (
+        <>
+          {hasResults && (
+            <Box sx={{ mb: 3 }}>
+              <PersonThumbSizeToggle value={thumbSize} onChange={setThumbSize} />
+            </Box>
+          )}
+          <Grid container spacing={3} alignItems="stretch">
+            {(visibleItems as PersonReadSimple[]).map((person) => (
+              <Grid key={`person-${person.id}`} size={PERSON_GRID_SIZES[thumbSize]}>
+                <PersonCard person={person} size={thumbSize} />
+              </Grid>
+            ))}
+          </Grid>
+        </>
+      ) : (
+        <Masonry
+          breakpointCols={breakpointColumnsObj}
+          className="my-masonry-grid"
+          columnClassName="my-masonry-grid_column"
+        >
+          {visibleItems.map(renderItem)}
+        </Masonry>
+      )}
 
       {isLoading && (
         <Box textAlign="center" py={4}>

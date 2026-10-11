@@ -8,24 +8,65 @@ import {
   Stack,
   Snackbar,
   Alert,
+  TextField,
+  InputAdornment,
+  IconButton,
+  MenuItem,
 } from "@mui/material";
+import SearchIcon from "@mui/icons-material/Search";
+import ClearIcon from "@mui/icons-material/Clear";
 import Grid from "@mui/material/Grid";
 import { CursorResponse, useInfinite } from "../hooks/useInfinite";
 import PersonCard from "../components/PersonCard";
 import ConfirmDialog from "../components/ConfirmDialog";
+import {
+  PERSON_GRID_SIZES,
+  PersonThumbSizeToggle,
+  usePersonThumbSize,
+} from "../components/PersonThumbSize";
 import { PersonReadSimple } from "../types";
 import config from "../config";
-import { getPeople } from "../services/person";
+import { getPeople, PersonSort } from "../services/person";
+import { useLocalStoragePreference } from "../hooks/useLocalStoragePreference";
 import { deletePersonsBulk } from "../services/personActions";
 import { useTaskCompletionVersion } from "../TaskEventsContext";
 
+const SORT_OPTIONS: { value: PersonSort; label: string }[] = [
+  { value: "appearances_desc", label: "Most media" },
+  { value: "appearances_asc", label: "Fewest media" },
+  { value: "name_asc", label: "Name (A–Z)" },
+  { value: "name_desc", label: "Name (Z–A)" },
+  { value: "views_desc", label: "Most viewed" },
+  { value: "favorites", label: "Favorites first" },
+  { value: "newest", label: "Newest" },
+  { value: "oldest", label: "Oldest" },
+];
+const SORT_VALUES = SORT_OPTIONS.map((option) => option.value);
+
 export default function PeoplePage() {
+  const [nameFilter, setNameFilter] = useState("");
+  const [debouncedNameFilter, setDebouncedNameFilter] = useState("");
+  const [thumbSize, setThumbSize] = usePersonThumbSize();
+  const [sort, setSort] = useLocalStoragePreference<PersonSort>(
+    "peopleSort",
+    SORT_VALUES,
+    "appearances_desc",
+  );
+
+  useEffect(() => {
+    const handler = setTimeout(
+      () => setDebouncedNameFilter(nameFilter.trim()),
+      300,
+    );
+    return () => clearTimeout(handler);
+  }, [nameFilter]);
+
   const fetchPeople = useCallback(
     async (cursor?: string): Promise<CursorResponse<PersonReadSimple>> => {
-      const data = await getPeople(cursor);
+      const data = await getPeople(cursor, debouncedNameFilter, sort);
       return { items: data.items, next_cursor: data.next_cursor };
     },
-    [],
+    [debouncedNameFilter, sort],
   );
 
   const refreshKey = useTaskCompletionVersion([
@@ -53,7 +94,12 @@ export default function PeoplePage() {
     loading,
     error,
     loaderRef,
-  } = useInfinite<PersonReadSimple>(fetchPeople, [refreshKey, retryKey]);
+  } = useInfinite<PersonReadSimple>(fetchPeople, [
+    refreshKey,
+    retryKey,
+    debouncedNameFilter,
+    sort,
+  ]);
 
   useEffect(() => {
     setSelectedIds((previous) => {
@@ -79,14 +125,6 @@ export default function PeoplePage() {
       <Typography variant="h5" color="text.primary" gutterBottom>
         People disabled!
       </Typography>
-    );
-  }
-
-  if (loading && people.length === 0) {
-    return (
-      <Box textAlign="center" py={4}>
-        <CircularProgress color="secondary" />
-      </Box>
     );
   }
 
@@ -180,6 +218,13 @@ export default function PeoplePage() {
     }
   };
 
+  const handleFavoriteChange = (personId: number, isFavorite: boolean) =>
+    setItems((prev) =>
+      prev.map((person) =>
+        person.id === personId ? { ...person, is_favorite: isFavorite } : person,
+      ),
+    );
+
   const handleCloseSnackbar = () =>
     setSnackbar((prev) => ({ ...prev, open: false }));
 
@@ -200,7 +245,56 @@ export default function PeoplePage() {
         <Typography variant="h5" color="text.primary">
           People
         </Typography>
-        <Stack direction="row" spacing={1.5} alignItems="center">
+        <Stack
+          direction="row"
+          spacing={1.5}
+          alignItems="center"
+          useFlexGap
+          sx={{ flexWrap: "wrap", rowGap: 1 }}
+        >
+          <TextField
+            size="small"
+            placeholder="Filter by name..."
+            value={nameFilter}
+            onChange={(event) => setNameFilter(event.target.value)}
+            sx={{ minWidth: 220 }}
+            slotProps={{
+              input: {
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon fontSize="small" />
+                  </InputAdornment>
+                ),
+                endAdornment: nameFilter ? (
+                  <InputAdornment position="end">
+                    <IconButton
+                      size="small"
+                      aria-label="Clear filter"
+                      onClick={() => setNameFilter("")}
+                      edge="end"
+                    >
+                      <ClearIcon fontSize="small" />
+                    </IconButton>
+                  </InputAdornment>
+                ) : undefined,
+              },
+            }}
+          />
+          <TextField
+            select
+            size="small"
+            label="Sort by"
+            value={sort}
+            onChange={(event) => setSort(event.target.value as PersonSort)}
+            sx={{ minWidth: 170 }}
+          >
+            {SORT_OPTIONS.map((option) => (
+              <MenuItem key={option.value} value={option.value}>
+                {option.label}
+              </MenuItem>
+            ))}
+          </TextField>
+          <PersonThumbSizeToggle value={thumbSize} onChange={setThumbSize} />
           {selectionMode && (
             <Typography variant="body2" color="text.secondary">
               {selectedCount} selected
@@ -245,9 +339,11 @@ export default function PeoplePage() {
 
       <Grid container spacing={3} alignItems="stretch">
         {people.map((person) => (
-          <Grid key={person.id} size={{ xs: 6, sm: 4, md: 2, lg: 1.5 }}>
+          <Grid key={person.id} size={PERSON_GRID_SIZES[thumbSize]}>
             <PersonCard
               person={person}
+              size={thumbSize}
+              onFavoriteChange={handleFavoriteChange}
               selectable={selectionMode}
               selected={selectionMode && selectedIds.has(person.id)}
               onToggleSelect={handleToggleSelect}
@@ -255,6 +351,14 @@ export default function PeoplePage() {
           </Grid>
         ))}
       </Grid>
+
+      {!loading && !error && people.length === 0 && (
+        <Typography color="text.secondary" sx={{ py: 4, textAlign: "center" }}>
+          {debouncedNameFilter
+            ? `No people match "${debouncedNameFilter}".`
+            : "No people found."}
+        </Typography>
+      )}
 
       {loading && (
         <Box textAlign="center" py={2}>

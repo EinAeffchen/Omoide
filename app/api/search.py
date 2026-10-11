@@ -15,14 +15,14 @@ from app.database import get_session
 from app.logger import logger
 from app.models import Media, Person, Scene, Tag
 from app.schemas.media import MediaPreview
-from app.schemas.person import PersonRead, PersonReadSimple
+from app.schemas.person import PersonRead
 from app.schemas.search import (
     CombinedMediaSearchResult,
     CursorPage,
     SceneSearchResult,
 )
 from app.schemas.tag import TagRead
-from app.utils import vector_to_blob
+from app.utils import name_contains_all_terms, vector_to_blob
 
 router = APIRouter()
 
@@ -617,7 +617,7 @@ def search_scenes(
 @router.get(
     "/person",
     summary="Search people by name",
-    response_model=CursorPage[PersonReadSimple],
+    response_model=CursorPage[PersonRead],
 )
 def search_people(
     limit: int = 20,
@@ -625,10 +625,11 @@ def search_people(
     query: str = Query("", description="Person name query"),
     session: Session = Depends(get_session),
 ):
-    if not query:
+    name_clause = name_contains_all_terms(Person.name, query)
+    if name_clause is None:
         return CursorPage(items=[], next_cursor=None)
 
-    q = select(Person).where(Person.name.ilike(f"%{query}%"))
+    q = select(Person).where(name_clause)
 
     if cursor:
         try:
@@ -648,7 +649,7 @@ def search_people(
         last = people[-1]
         next_cursor = f"{last.appearance_count}_{last.id}"
     return CursorPage(
-        items=[PersonReadSimple.model_validate(p) for p in people],
+        items=[PersonRead.model_validate(p) for p in people],
         next_cursor=next_cursor,
     )
 

@@ -1,10 +1,21 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Link as RouterLink } from "react-router-dom";
-import { Box, Checkbox, Typography, useTheme } from "@mui/material";
+import {
+  Box,
+  Checkbox,
+  IconButton,
+  Tooltip,
+  Typography,
+  useTheme,
+} from "@mui/material";
+import FavoriteIcon from "@mui/icons-material/Favorite";
+import FavoriteBorderIcon from "@mui/icons-material/FavoriteBorder";
 import { alpha } from "@mui/material/styles";
 import type { PersonReadSimple } from "../types";
-import { API } from "../config";
+import config, { API } from "../config";
+import { setPersonFavorite } from "../services/personActions";
 import { encodeFilePath } from "../urlUtils";
+import type { PersonThumbSize } from "./PersonThumbSize";
 
 type PersonCardPerson = PersonReadSimple & { appearance_count?: number };
 
@@ -13,7 +24,19 @@ interface PersonCardProps {
   selectable?: boolean;
   selected?: boolean;
   onToggleSelect?: (personId: number) => void;
+  size?: PersonThumbSize;
+  onFavoriteChange?: (personId: number, isFavorite: boolean) => void;
 }
+
+const favoriteBadgeSx = {
+  position: "absolute",
+  top: 4,
+  right: 4,
+  zIndex: 2,
+  p: 0.5,
+  borderRadius: "50%",
+  bgcolor: "rgba(0,0,0,0.45)",
+} as const;
 
 const getInitials = (name = "") => {
   const parts = name.split(" ");
@@ -28,8 +51,25 @@ export default function PersonCard({
   selectable = false,
   selected = false,
   onToggleSelect,
+  size = "medium",
+  onFavoriteChange,
 }: PersonCardProps) {
   const theme = useTheme();
+  const [isFavorite, setIsFavorite] = useState(Boolean(person.is_favorite));
+
+  useEffect(() => {
+    setIsFavorite(Boolean(person.is_favorite));
+  }, [person.id, person.is_favorite]);
+
+  const handleToggleFavorite = (event: React.MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const next = !isFavorite;
+    setIsFavorite(next);
+    setPersonFavorite(person.id, next)
+      .then(() => onFavoriteChange?.(person.id, next))
+      .catch(() => setIsFavorite(!next));
+  };
   const isSelectable = Boolean(selectable);
   const isSelected = Boolean(selected);
   const fallbackName = person.name || "Unknown";
@@ -130,6 +170,36 @@ export default function PersonCard({
         </Box>
       )}
 
+      {!isSelectable && !config.PRESENTATION_MODE && (
+        <Tooltip title={isFavorite ? "Remove from favorites" : "Add to favorites"}>
+          <IconButton
+            onClick={handleToggleFavorite}
+            size="small"
+            aria-label={isFavorite ? "Remove from favorites" : "Add to favorites"}
+            aria-pressed={isFavorite}
+            sx={{
+              ...favoriteBadgeSx,
+              color: isFavorite ? "error.main" : "common.white",
+              "&:hover": { bgcolor: "rgba(0,0,0,0.6)" },
+            }}
+          >
+            {isFavorite ? (
+              <FavoriteIcon fontSize="small" />
+            ) : (
+              <FavoriteBorderIcon fontSize="small" />
+            )}
+          </IconButton>
+        </Tooltip>
+      )}
+      {!isSelectable && config.PRESENTATION_MODE && isFavorite && (
+        <Box
+          aria-label="Favorite"
+          sx={{ ...favoriteBadgeSx, display: "flex", color: "error.main" }}
+        >
+          <FavoriteIcon fontSize="small" />
+        </Box>
+      )}
+
       {!thumbUrl && (
         <Box
           sx={{
@@ -139,7 +209,10 @@ export default function PersonCard({
             height: "100%",
           }}
         >
-          <Typography variant="h4" fontWeight="bold">
+          <Typography
+            variant={size === "small" ? "h6" : size === "large" ? "h3" : "h4"}
+            fontWeight="bold"
+          >
             {getInitials(fallbackName)}
           </Typography>
         </Box>
@@ -157,10 +230,14 @@ export default function PersonCard({
           display: "flex",
           flexDirection: "column",
           justifyContent: "flex-end",
-          p: 1.5,
+          p: size === "small" ? 1 : 1.5,
         }}
       >
-        <Typography variant="subtitle1" fontWeight="bold" lineHeight={1.2}>
+        <Typography
+          variant={size === "small" ? "body2" : size === "large" ? "h6" : "subtitle1"}
+          fontWeight="bold"
+          lineHeight={1.2}
+        >
           {fallbackName}
         </Typography>
         <Typography

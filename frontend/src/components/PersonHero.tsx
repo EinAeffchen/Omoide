@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import {
   Box,
   Typography,
@@ -8,13 +8,18 @@ import {
   Paper,
   useTheme,
   CircularProgress,
+  IconButton,
+  Tooltip,
 } from "@mui/material";
+import FavoriteIcon from "@mui/icons-material/Favorite";
+import FavoriteBorderIcon from "@mui/icons-material/FavoriteBorder";
 import { alpha } from "@mui/material/styles";
 import Grid from "@mui/material/Grid";
 import { Person } from "../types";
 import { PersonEditForm } from "./PersonEditForm";
 import config, { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
+import { setPersonFavorite } from "../services/personActions";
 
 interface PersonHeroProps {
   person: Person;
@@ -44,6 +49,18 @@ export function PersonHero({
   exportingMedia,
 }: PersonHeroProps) {
   const theme = useTheme();
+  const [isFavorite, setIsFavorite] = useState(Boolean(person.is_favorite));
+
+  useEffect(() => {
+    setIsFavorite(Boolean(person.is_favorite));
+  }, [person.id, person.is_favorite]);
+
+  const handleToggleFavorite = () => {
+    const next = !isFavorite;
+    setIsFavorite(next);
+    setPersonFavorite(person.id, next).catch(() => setIsFavorite(!next));
+  };
+
   const thumbUrl = person.profile_face?.thumbnail_path
     ? `${API}/thumbnails/${encodeFilePath(
         person.profile_face.thumbnail_path
@@ -70,9 +87,31 @@ export function PersonHero({
 
         {/* Person Details and Actions */}
         <Grid size={{ xs: 12, sm: 8, md: 9 }}>
-          <Typography variant="h3" component="h1" fontWeight="bold">
-            {person.name || "Unnamed Person"}
-          </Typography>
+          <Stack direction="row" alignItems="center" spacing={1}>
+            <Typography variant="h3" component="h1" fontWeight="bold">
+              {person.name || "Unnamed Person"}
+            </Typography>
+            {config.PRESENTATION_MODE ? (
+              isFavorite && (
+                <FavoriteIcon color="error" aria-label="Favorite" />
+              )
+            ) : (
+              <Tooltip
+                title={isFavorite ? "Remove from favorites" : "Add to favorites"}
+              >
+                <IconButton
+                  onClick={handleToggleFavorite}
+                  aria-label={
+                    isFavorite ? "Remove from favorites" : "Add to favorites"
+                  }
+                  aria-pressed={isFavorite}
+                  sx={{ color: isFavorite ? "error.main" : "text.secondary" }}
+                >
+                  {isFavorite ? <FavoriteIcon /> : <FavoriteBorderIcon />}
+                </IconButton>
+              </Tooltip>
+            )}
+          </Stack>
           <Typography variant="body1" color="text.secondary" gutterBottom>
             {person.appearance_count
               ? `${person.appearance_count} appearances found`

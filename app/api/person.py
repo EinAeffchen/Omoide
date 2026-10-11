@@ -1,7 +1,10 @@
+import base64
 from collections import deque
 from datetime import date, datetime
+import json
 from pathlib import Path
 import shutil
+from typing import Literal
 
 from fastapi import (
     APIRouter,
@@ -13,7 +16,9 @@ from fastapi import (
     status,
 )
 from sqlalchemy import (
+    ColumnElement,
     and_,
+    case,
     desc,
     func,
     literal_column,
@@ -37,6 +42,7 @@ from app.models import (
     TimelineEvent,
 )
 from app.schemas.face import CursorPage as FaceCursorPage
+from app.schemas.media import FavoriteUpdate
 from app.schemas.person import (
     CursorPage,
     FaceRead,
@@ -66,6 +72,7 @@ from app.utils import (
     _distance_to_similarity,
     auto_select_profile_face,
     get_person_embedding,
+    name_contains_all_terms,
     recalculate_person_appearance_counts,
     remove_person,
     update_person_embedding,
@@ -307,47 +314,110 @@ def delete_person_event(
     return {"ok": True}  # Return nothing on 204
 
 
+PersonSort = Literal[
+    "appearances_desc",
+    "appearances_asc",
+    "name_asc",
+    "name_desc",
+    "views_desc",
+    "favorites",
+    "newest",
+    "oldest",
+]
+
+
+def _person_sort_keys(sort: PersonSort) -> list[tuple[ColumnElement, bool]]:
+    """Ordered (expression, ascending) keys for a person sort. Every key list
+    ends with Person.id so the ordering is total and keyset-paginatable."""
+    appearances = func.coalesce(Person.appearance_count, 0)
+    if sort == "appearances_asc":
+        return [(appearances, True), (Person.id, True)]
+    if sort in ("name_asc", "name_desc"):
+        ascending = sort == "name_asc"
+        name = func.trim(func.coalesce(Person.name, ""))
+        # Unnamed people always go last, regardless of direction.
+        unnamed = case((name == "", 1), else_=0)
+        return [
+            (unnamed, True),
+            (func.lower(name), ascending),
+            (Person.id, ascending),
+        ]
+    if sort == "views_desc":
+        return [
+            (func.coalesce(Person.views, 0), False),
+            (appearances, False),
+            (Person.id, False),
+        ]
+    if sort == "favorites":
+        return [
+            (case((Person.is_favorite.is_(True), 1), else_=0), False),
+            (appearances, False),
+            (Person.id, False),
+        ]
+    if sort == "newest":
+        return [(Person.id, False)]
+    if sort == "oldest":
+        return [(Person.id, True)]
+    return [(appearances, False), (Person.id, False)]
+
+
+def _keyset_after(keys: list[tuple[ColumnElement, bool]], values: list):
+    """Rows strictly after `values` in the (possibly mixed-direction) ordering."""
+    clauses = []
+    for i, (expr, ascending) in enumerate(keys):
+        prefix = [keys[j][0] == values[j] for j in range(i)]
+        step = expr > values[i] if ascending else expr < values[i]
+        clauses.append(and_(*prefix, step))
+    return or_(*clauses)
+
+
+def _encode_person_cursor(sort: str, values: list) -> str:
+    raw = json.dumps([sort, *values], separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(raw).decode()
+
+
+def _decode_person_cursor(cursor: str, sort: str, key_count: int) -> list:
+    try:
+        decoded = json.loads(base64.urlsafe_b64decode(cursor.encode()))
+    except (ValueError, TypeError):
+        raise HTTPException(400, "Invalid cursor format")
+    if (
+        not isinstance(decoded, list)
+        or len(decoded) != key_count + 1
+        or decoded[0] != sort
+    ):
+        raise HTTPException(400, "Cursor does not match the requested sort")
+    return decoded[1:]
+
+
 @router.get("/", response_model=CursorPage)
 def list_persons(
-    name: str | None = Query(None, description="Filter by substring match on name"),
+    name: str | None = Query(
+        None, description="Filter by partial match on name (all terms must match)"
+    ),
+    sort: PersonSort = Query("appearances_desc", description="Sort order"),
     cursor: str | None = Query(
-        None,
-        description=(
-            "encoded as `<id>`; e.g. `2025-05-05T12:34:56.789012_1234` or `2500_1234`"
-        ),
+        None, description="Opaque cursor from the previous page's `next_cursor`"
     ),
     limit: int = 50,
     session: Session = Depends(get_session),
 ):
-    before_count = None
-    before_id = None
-    if cursor:
-        try:
-            count, raw_id = cursor.split("_")
-            before_count = int(count)
-            before_id = int(raw_id)
-        except (ValueError, TypeError):
-            raise HTTPException(400, "Invalid cursor format")
-
-    q = select(Person)
+    keys = _person_sort_keys(sort)
+    q = select(Person, *(expr.label(f"k{i}") for i, (expr, _) in enumerate(keys)))
 
     if name:
-        q = q.where(Person.name.ilike(f"%{name}%"))
+        name_clause = name_contains_all_terms(Person.name, name)
+        if name_clause is not None:
+            q = q.where(name_clause)
 
-    if cursor and before_id is not None and before_count is not None:
-        q = q.where(
-            or_(
-                Person.appearance_count < before_count,
-                and_(
-                    Person.appearance_count == before_count,
-                    Person.id < before_id,
-                ),
-            )
-        )
+    if cursor:
+        after = _decode_person_cursor(cursor, sort, len(keys))
+        q = q.where(_keyset_after(keys, after))
 
-    q = q.order_by(Person.appearance_count.desc(), Person.id.desc())
-    q = q.limit(limit)
-    people_with_counts = session.exec(q).all()
+    q = q.order_by(
+        *(expr.asc() if ascending else expr.desc() for expr, ascending in keys)
+    )
+    rows = session.exec(q.limit(limit)).all()
     items = [
         PersonRead(
             **person.model_dump(),
@@ -357,13 +427,12 @@ def list_persons(
                 else None
             ),
         )
-        for person in people_with_counts
+        for person, *_ in rows
     ]
 
     next_cursor = None
-    if len(items) == limit:
-        last_person = people_with_counts[-1]
-        next_cursor = f"{last_person.appearance_count}_{last_person.id}"
+    if len(rows) == limit:
+        next_cursor = _encode_person_cursor(sort, list(rows[-1][1:]))
 
     return CursorPage(next_cursor=next_cursor, items=items)
 
@@ -831,6 +900,7 @@ def get_person(person_id: int, session: Session = Depends(get_session)):
         profile_face=profile_face,
         tags=person.tags,
         appearance_count=int(media_count or 0),
+        is_favorite=bool(person.is_favorite),
     )
 
 
@@ -859,6 +929,24 @@ def update_person(
     safe_commit(session)
     session.refresh(person)
     return person
+
+
+@router.patch("/{person_id}/favorite", response_model=PersonRead)
+def update_person_favorite(
+    person_id: int,
+    data: FavoriteUpdate,
+    session: Session = Depends(get_session),
+):
+    if settings.general.presentation_mode:
+        raise HTTPException(403, "Not allowed in presentation mode")
+    person = session.get(Person, person_id)
+    if not person:
+        raise HTTPException(404, "Person not found")
+    person.is_favorite = data.is_favorite
+    session.add(person)
+    safe_commit(session)
+    session.refresh(person)
+    return PersonRead.model_validate(person)
 
 
 @router.post("/{person_id}/profile_face", response_model=Person)

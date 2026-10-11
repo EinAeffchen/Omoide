@@ -2,6 +2,7 @@ import { API } from "../config";
 import {
   CombinedMediaSearchResult,
   CursorPage,
+  PersonReadSimple,
   SceneSearchResult,
   Tag,
 } from "../types";
@@ -29,6 +30,18 @@ export const searchTags = async (
   if (cursor) params.set("cursor", cursor);
   const response = await fetch(`${API}/api/search/tags?${params}`);
   if (!response.ok) throw new Error("Failed to search tags");
+  return response.json();
+};
+
+export const searchPersons = async (
+  query: string,
+  limit: number,
+  cursor?: string
+): Promise<CursorPage<PersonReadSimple>> => {
+  const params = new URLSearchParams({ query, limit: String(limit) });
+  if (cursor) params.set("cursor", cursor);
+  const response = await fetch(`${API}/api/search/person?${params}`);
+  if (!response.ok) throw new Error("Failed to search people");
   return response.json();
 };
 

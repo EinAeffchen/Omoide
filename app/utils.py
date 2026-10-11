@@ -26,7 +26,7 @@ from scenedetect import (
     open_video,
 )
 from scenedetect.video_splitter import TimecodePair
-from sqlalchemy import delete, distinct, func, or_, text, union_all
+from sqlalchemy import and_, delete, distinct, func, or_, text, union_all
 from sqlmodel import Session, delete, select, text, update
 
 from app.accelerators import get_ffmpeg_accel_config
@@ -1616,3 +1616,20 @@ def remove_person(person_id, session):
 def _distance_to_similarity(dist: float) -> float:
     similarity = (1.0 - (float(dist) * float(dist)) / 2.0) * 100.0
     return round(max(0.0, min(100.0, similarity)), 2)
+
+
+def name_contains_all_terms(column, query: str):
+    """Case-insensitive partial name match: every whitespace-separated term
+    must appear somewhere in ``column`` (so "emi" matches "Emily Stone" and
+    "Anna Emig", and "em st" matches "Emily Stone"). Returns None for a blank
+    query."""
+    terms = [t for t in query.split() if t]
+    if not terms:
+        return None
+    clauses = []
+    for term in terms:
+        escaped = (
+            term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        )
+        clauses.append(column.ilike(f"%{escaped}%", escape="\\"))
+    return and_(*clauses)

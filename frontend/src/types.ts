@@ -57,6 +57,7 @@ export interface PersonReadSimple {
   name?: string;
   profile_face: ProfileFace;
   appearance_count?: number;
+  is_favorite?: boolean;
 }
 
 export interface CombinedMediaSearchResult {
@@ -79,6 +80,7 @@ export interface Person {
   appearance_count: number;
   profile_face_id?: number;
   profile_face?: Face;
+  is_favorite?: boolean;
 }
 
 export interface PersonIndex {

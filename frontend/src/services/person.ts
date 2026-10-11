@@ -7,12 +7,30 @@ import {
   SimilarPersonWithDetails,
 } from "../types";
 
+export type PersonSort =
+  | "appearances_desc"
+  | "appearances_asc"
+  | "name_asc"
+  | "name_desc"
+  | "views_desc"
+  | "favorites"
+  | "newest"
+  | "oldest";
+
 export const getPeople = async (
-  cursor?: string
+  cursor?: string,
+  name?: string,
+  sort?: PersonSort
 ): Promise<{ items: PersonReadSimple[]; next_cursor: string | null }> => {
   const params = new URLSearchParams();
   if (cursor) {
     params.append("cursor", cursor);
+  }
+  if (name?.trim()) {
+    params.append("name", name.trim());
+  }
+  if (sort) {
+    params.append("sort", sort);
   }
   const response = await fetch(`${API}/api/person/?${params.toString()}`);
   if (!response.ok) throw new Error("Failed to fetch people");
