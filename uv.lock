@@ -954,7 +954,7 @@ wheels = [
 
 [[package]]
 name = "omoide"
-version = "0.7.2"
+version = "0.7.3"
 source = { virtual = "." }
 dependencies = [
     { name = "alembic" },
