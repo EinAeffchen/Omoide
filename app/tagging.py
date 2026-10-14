@@ -4,9 +4,8 @@ from collections.abc import Iterable, Sequence
 from typing import List
 
 import numpy as np
-import torch
 
-from app.config import get_clip_bundle
+from app.config import get_clip_encoder
 
 # Fallback flat cutoff used only when no per-tag calibration sample is
 # available yet (e.g. an empty library on first run).
@@ -31,13 +30,6 @@ CALIBRATION_SAMPLE_SIZE: int = 2000
 CALIBRATION_STD_MULTIPLIER: float = 2.0
 CALIBRATION_FLOOR: float = 0.15
 CALIBRATION_CEILING: float = 0.45
-
-
-def _clip_device(model: torch.nn.Module) -> torch.device:
-    try:
-        return next(model.parameters()).device
-    except StopIteration:
-        return torch.device("cpu")
 
 
 def sanitize_custom_tag_list(raw_tags: Iterable[str]) -> list[str]:
@@ -71,20 +63,10 @@ def build_tag_vector_map(tags: Sequence[str]) -> dict[str, np.ndarray]:
     if not tags:
         return {}
 
-    model, _, tokenizer = get_clip_bundle()
-    device = _clip_device(model)
-
     prompts = [
         template.format(tag=tag) for tag in tags for template in PROMPT_TEMPLATES
     ]
-    tokens = tokenizer(prompts)
-    if hasattr(tokens, "to"):
-        tokens = tokens.to(device)
-    with torch.no_grad():
-        embeddings = model.encode_text(tokens)
-        embeddings = embeddings / embeddings.norm(dim=-1, keepdim=True)
-
-    embeddings_np = embeddings.detach().cpu().numpy().astype(np.float32, copy=False)
+    embeddings_np = get_clip_encoder().encode_texts(prompts)
 
     vectors: dict[str, np.ndarray] = {}
     n_templates = len(PROMPT_TEMPLATES)

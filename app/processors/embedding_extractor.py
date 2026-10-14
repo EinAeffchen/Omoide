@@ -1,19 +1,21 @@
-import cv2
 import numpy as np
-import torch
 from cv2.typing import MatLike
 from PIL import Image
-from PIL.ImageFile import ImageFile
 from sqlalchemy import text
 from sqlmodel import select
 from tqdm import tqdm
 
 from app.api.media import delete_media_record
-from app.config import settings, get_clip_bundle
+from app.config import settings, get_clip_encoder
 from app.logger import logger
 from app.models import Media, Scene, Tag
 from app.processors.base import MediaProcessor
-from app.utils import safe_commit, vector_to_blob, vector_from_stored
+from app.utils import (
+    PhotoScene,
+    safe_commit,
+    vector_from_stored,
+    vector_to_blob,
+)
 
 
 class EmbeddingExtractor(MediaProcessor):
@@ -23,12 +25,8 @@ class EmbeddingExtractor(MediaProcessor):
     def load_model(self):
         if settings.processors.image_embedding_processor_active:
             self.active = True
-            # Use shared CLIP bundle; keep it warm to avoid repeated init
-            self._clip_model, self._preprocess, _ = get_clip_bundle()
-            try:
-                self._clip_device = next(self._clip_model.parameters()).device
-            except StopIteration:
-                self._clip_device = torch.device("cpu")
+            # Use shared CLIP encoder; keep it warm to avoid repeated init
+            self._clip = get_clip_encoder()
 
     def unload(self):
         # Keep CLIP warm; no action needed here to avoid per-task reinit
@@ -37,7 +35,7 @@ class EmbeddingExtractor(MediaProcessor):
     def _get_embeddings_batch(self, images: list) -> list[np.ndarray | None]:
         """Run CLIP encode_image on a batch of raw images in sub-batches.
 
-        Accepts PIL ImageFile or numpy RGB arrays. Returns a list of float32
+        Accepts PIL images or numpy RGB arrays. Returns a list of float32
         embeddings (or None for any image that failed preprocessing).
         """
         batch_size = max(1, getattr(settings.processors, "embedding_batch_size", 16))
@@ -45,14 +43,12 @@ class EmbeddingExtractor(MediaProcessor):
 
         for chunk_start in range(0, len(images), batch_size):
             chunk = images[chunk_start : chunk_start + batch_size]
-            preprocessed: list[torch.Tensor] = []
+            preprocessed: list[np.ndarray] = []
             valid_in_chunk: list[int] = []
 
             for i, img in enumerate(chunk):
                 try:
-                    if not isinstance(img, Image.Image):
-                        img = Image.fromarray(img).convert("RGB")
-                    preprocessed.append(self._preprocess(img))
+                    preprocessed.append(self._clip.preprocess(img))
                     valid_in_chunk.append(i)
                 except OSError as e:
                     logger.error(
@@ -62,14 +58,7 @@ class EmbeddingExtractor(MediaProcessor):
             if not preprocessed:
                 continue
 
-            batch_tensor = torch.stack(preprocessed)
-            if hasattr(self, "_clip_device"):
-                batch_tensor = batch_tensor.to(self._clip_device)
-
-            with torch.no_grad():
-                features = self._clip_model.encode_image(batch_tensor)
-            features = features / features.norm(dim=-1, keepdim=True)
-            features_np = features.cpu().numpy().astype(np.float32)
+            features_np = self._clip.encode_pixels(np.stack(preprocessed))
 
             for feat_i, chunk_i in enumerate(valid_in_chunk):
                 results[chunk_start + chunk_i] = features_np[feat_i]
@@ -80,7 +69,7 @@ class EmbeddingExtractor(MediaProcessor):
         self,
         media: Media,
         session,
-        scenes: list[tuple[Scene, MatLike]] | list[ImageFile] | list[Scene],
+        scenes: list[tuple[Scene, MatLike]] | list[PhotoScene] | list[Scene],
     ):
         # 1) skip if already extracted
         if session.exec(
@@ -103,7 +92,7 @@ class EmbeddingExtractor(MediaProcessor):
                 if not row:
                     # Scene has no stored embedding yet (e.g. manually created scene).
                     # Compute from thumbnail if available.
-                    if scene.thumbnail_path and hasattr(self, "_clip_model"):
+                    if scene.thumbnail_path and hasattr(self, "_clip"):
                         try:
                             thumb = settings.general.thumb_dir / scene.thumbnail_path
                             img = Image.open(thumb).convert("RGB")
@@ -145,8 +134,8 @@ class EmbeddingExtractor(MediaProcessor):
             raw_images: list = []
             scene_objects: list[Scene | None] = []
             for scene in scenes:
-                if isinstance(scene, ImageFile):
-                    raw_images.append(scene)
+                if isinstance(scene, PhotoScene):
+                    raw_images.append(scene.rgb)
                     scene_objects.append(None)
                 elif isinstance(scene, tuple):
                     scene_obj, frame = scene

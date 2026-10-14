@@ -137,7 +137,8 @@ applies the Windows VC runtime workaround. Do not use the ignored legacy
 - **Backend**: [FastAPI](https://fastapi.tiangolo.com/) + [SQLModel](https://sqlmodel.tiangolo.com/) (SQLite).
 - **Vector Search**: [sqlite-vec](https://github.com/asg017/sqlite-vec) for high-performance similarity search.
 - **AI Models**:
-    - **Vision**: [OpenCLIP](https://huggingface.co/docs/hub/open_clip) for embeddings and search.
+    - **Vision**: [OpenCLIP](https://huggingface.co/docs/hub/open_clip) models (ONNX exports) for embeddings and search.
+    - **Inference**: [ONNX Runtime](https://onnxruntime.ai/) for all models, GPU accelerated via DirectML on Windows.
     - **Faces**: [InsightFace](https://github.com/deepinsight/insightface) (ONNX) for detection and recognition.
     - **Clustering**: [HDBSCAN](https://scikit-learn.org/stable/modules/generated/sklearn.cluster.HDBSCAN.html)/[Chinese Whispers](https://chinese-whispers.readthedocs.io/latest/tutorial/) for grouping faces.
     - **Scene detection**: [scenedetect](https://www.scenedetect.com/)

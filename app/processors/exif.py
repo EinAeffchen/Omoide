@@ -1,7 +1,7 @@
 import re
 from pathlib import Path
 from datetime import datetime
-from PIL import ExifTags, ImageFile
+from PIL import ExifTags
 from sqlmodel import select
 from app.processors.base import MediaProcessor
 from app.models import Media, ExifData, Scene
@@ -14,6 +14,7 @@ import ffmpeg
 
 from dateutil import parser
 from app.logger import logger
+from app.utils import PhotoScene
 import traceback
 
 
@@ -208,7 +209,7 @@ class ExifProcessor(MediaProcessor):
         self,
         media: Media,
         session,
-        scenes: list[tuple[Scene, MatLike]] | list[ImageFile] | list[Scene],
+        scenes: list[tuple[Scene, MatLike]] | list[PhotoScene] | list[Scene],
     ):
         if self._has_record(media.id, session):
             return True
@@ -217,7 +218,7 @@ class ExifProcessor(MediaProcessor):
         suffix = fn.suffix.lower()
         if suffix in settings.scan.IMAGE_SUFFIXES:
             if scenes:
-                self._process_image(scenes[0], session, media)
+                self._process_image(scenes[0].image, session, media)
         elif suffix in settings.scan.VIDEO_SUFFIXES:
             self._process_video(media, session)
         if not self._has_record(media.id, session):

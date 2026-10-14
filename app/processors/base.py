@@ -1,9 +1,11 @@
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from sqlmodel import Session
 from app.models import Media, Scene
 from cv2.typing import MatLike
-from PIL.ImageFile import ImageFile
+
+if TYPE_CHECKING:
+    from app.utils import PhotoScene
 
 
 class MediaProcessor(ABC):
@@ -27,7 +29,7 @@ class MediaProcessor(ABC):
         self,
         media: Media,
         session: Session,
-        scenes: list[tuple[Scene, MatLike]] | list[ImageFile] | list[Scene],
+        scenes: list[tuple[Scene, MatLike]] | list["PhotoScene"] | list[Scene],
     ) -> bool|None:
         """
         Called once for each new or updated Media.

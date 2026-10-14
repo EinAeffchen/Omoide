@@ -86,7 +86,6 @@ def get_package_path(package_name):
 
 platform_is_windows = sys.platform.startswith("win")
 pyside6_path = get_package_path('PySide6')
-open_clip_path = get_package_path('open_clip')
 binaries = []
 datas = [
     ('frontend/dist', 'dist'),
@@ -101,12 +100,18 @@ if Path('app/GPU_BUILD').exists():
     datas.append(('app/GPU_BUILD', 'app'))
 if os.environ.get('OMOIDE_USE_BUNDLED_WEBVIEW2') and Path('webview2runtime').exists():
     datas.append(('webview2runtime', 'webview2runtime'))
-datas += collect_data_files('open_clip', include_py_files=True)
 # Offline reverse-geocoding dataset (~8 MB rg_cities1000.csv). Without it the
 # geocode_places task silently tries to download from geonames.org at runtime
 # (no timeout, no console output) and appears to hang forever.
 try:
     datas += collect_data_files('reverse_geocoder')
+except Exception:
+    pass
+
+# ONNX Runtime native libs (onnxruntime.dll / DirectML.dll on Windows) used by
+# CLIP and face recognition.
+try:
+    binaries += collect_dynamic_libs('onnxruntime')
 except Exception:
     pass
 
@@ -400,7 +405,8 @@ a = Analysis(
     datas=datas,
     hiddenimports=[
         'cv2',
-        'open_clip',
+        'onnxruntime',
+        'tokenizers',
         'dateutil',
         'dateutil.tz',
         'dateutil.parser',
@@ -451,7 +457,13 @@ coll = COLLECT(
     # the "Failed to resolve Python.Runtime.Loader.Initialize" RuntimeError
     # seen on some Windows systems.  Exclude all .NET managed assemblies from
     # UPX compression so the CLR can load them correctly.
-    upx_exclude=['Python.Runtime.dll'],
+    # UPX-packed ONNX Runtime / DirectML DLLs can fail to load.
+    upx_exclude=[
+        'Python.Runtime.dll',
+        'onnxruntime.dll',
+        'onnxruntime_providers_shared.dll',
+        'DirectML.dll',
+    ],
     name=APP_NAME,
 )
 

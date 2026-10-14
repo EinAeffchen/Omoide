@@ -73,9 +73,7 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     fi
 RUN if [ "${OMOIDE_BUILD_FLAVOR}" = "gpu" ]; then \
         python -m pip uninstall -y onnxruntime || true; \
-        python -m pip install --index-url https://download.pytorch.org/whl/cu121 \
-            "torch>=2.8.0" "torchvision>=0.23.0" "torchaudio>=2.8.0"; \
-        python -m pip install "onnxruntime-gpu==1.21.1"; \
+        python -m pip install "onnxruntime-gpu[cuda,cudnn]==1.27.0"; \
     fi
 RUN apt-get remove -y build-essential || true
 # 4. Copy application source code, setting ownership directly.

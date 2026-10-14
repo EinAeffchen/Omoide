@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import os
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import List
 
 import numpy as np
-from PIL import Image, UnidentifiedImageError
+from PIL import UnidentifiedImageError
 from sqlalchemy import func, or_
 from sqlmodel import Session, col, select
 
@@ -18,7 +20,7 @@ from app.database import safe_commit
 from app.logger import logger
 from app.models import Media, ProcessingTask, Status
 from app.processor_registry import load_processors, processors
-from app.utils import split_video
+from app.utils import load_photo_scene, split_video
 from .state import clear_task_progress, set_task_progress
 
 __all__ = [
@@ -99,20 +101,48 @@ def _fetch_media_batch_to_process(session: Session, limit: int) -> list[Media]:
     ).all()
 
 
-def _get_or_extract_scenes(
-    media: Media, session: Session
-) -> list[Image.Image | tuple]:
-    media_path_obj = Path(media.path)
-    suffix = media_path_obj.suffix.lower()
+# Media items whose files are decoded / frame-extracted in background threads
+# ahead of the item currently running through the processors, so file I/O and
+# decoding overlap with inference instead of leaving the GPU idle.
+_PREFETCH_AHEAD = 2
 
-    if media.extracted_scenes and suffix not in settings.scan.IMAGE_SUFFIXES:
+
+def _needs_scene_extraction(media: Media) -> bool:
+    if not media.path:
+        return False
+    suffix = Path(media.path).suffix.lower()
+    return not (
+        media.extracted_scenes and suffix not in settings.scan.IMAGE_SUFFIXES
+    )
+
+
+def _load_scenes(media: SimpleNamespace) -> list:
+    """Decode a photo or extract a video's frames. Touches no DB state, so it
+    is safe to run on a prefetch thread with a snapshot of the media row."""
+    path = Path(media.path)
+    if path.suffix.lower() in settings.scan.IMAGE_SUFFIXES:
+        return [load_photo_scene(path)]
+    return split_video(media, path)
+
+
+def _media_snapshot(media: Media) -> SimpleNamespace:
+    # ORM attributes expire on commit and would lazy-load from another thread
+    return SimpleNamespace(id=media.id, path=media.path, duration=media.duration)
+
+
+def _get_or_extract_scenes(
+    media: Media, session: Session, prefetched: Future | None = None
+) -> list:
+    media_path_obj = Path(media.path)
+
+    if not _needs_scene_extraction(media):
         return media.scenes
 
     try:
-        if suffix in settings.scan.IMAGE_SUFFIXES:
-            scenes = [Image.open(media_path_obj)]
+        if prefetched is not None:
+            scenes = prefetched.result()
         else:
-            scenes = split_video(media, media_path_obj)
+            scenes = _load_scenes(_media_snapshot(media))
     except FileNotFoundError:
         logger.warning("File not found: %s. Deleting record.", media.path)
         delete_record(media.id, session)
@@ -314,6 +344,9 @@ def _run_media_processing(task_id: str) -> None:
             session.add(task)
             safe_commit(session)
 
+            prefetcher = ThreadPoolExecutor(
+                max_workers=_PREFETCH_AHEAD, thread_name_prefix="media-prefetch"
+            )
             batch_index = 0
             while True:
                 if _is_task_cancelled(task_id):
@@ -332,8 +365,23 @@ def _run_media_processing(task_id: str) -> None:
 
                 batch_dirty = False
                 cancelled_mid_batch = False
+                prefetched: dict[int, Future] = {}
 
-                for media in medias_batch:
+                def _prefetch(index: int) -> None:
+                    if index >= len(medias_batch):
+                        return
+                    upcoming = medias_batch[index]
+                    if _needs_scene_extraction(upcoming):
+                        prefetched[index] = prefetcher.submit(
+                            _load_scenes, _media_snapshot(upcoming)
+                        )
+
+                for index in range(_PREFETCH_AHEAD):
+                    _prefetch(index)
+
+                for index, media in enumerate(medias_batch):
+                    _prefetch(index + _PREFETCH_AHEAD)
+                    pending_scenes = prefetched.pop(index, None)
                     if _is_task_cancelled(task_id):
                         logger.info("Task cancelled mid-batch. Stopping.")
                         cancelled_mid_batch = True
@@ -359,7 +407,9 @@ def _run_media_processing(task_id: str) -> None:
                         current_item=os.fspath(media.path),
                         current_step="extracting_scenes",
                     )
-                    scenes = _get_or_extract_scenes(media, session)
+                    scenes = _get_or_extract_scenes(
+                        media, session, pending_scenes
+                    )
                     logger.debug(
                         "Scenes for %s: %s",
                         media.filename,
@@ -392,6 +442,9 @@ def _run_media_processing(task_id: str) -> None:
 
                 if cancelled_mid_batch:
                     break
+
+            # Drop prefetches of items a cancelled run will not reach
+            prefetcher.shutdown(wait=True, cancel_futures=True)
 
             for proc in processors:
                 try:

@@ -1,14 +1,12 @@
 import os
 
 import numpy as np
-import torch
 from cv2.typing import MatLike
-from PIL.ImageFile import ImageFile
 from sqlmodel import Session, select, text
 
 import app.database as db
 from app.api.tags import attach_tag_to_media, get_or_create_tag
-from app.config import get_clip_bundle, settings
+from app.config import get_clip_encoder, settings
 from app.database import safe_commit
 from app.logger import logger
 from app.models import Media, Scene
@@ -20,7 +18,7 @@ from app.tagging import (
     calibrate_tag_thresholds,
     sanitize_custom_tag_list,
 )
-from app.utils import vector_from_stored
+from app.utils import PhotoScene, vector_from_stored
 
 
 class AutoTagger(MediaProcessor):
@@ -140,7 +138,7 @@ class AutoTagger(MediaProcessor):
             return
 
         # Use shared CLIP and keep it warm to avoid re-init leaks
-        self._clip_model, _, self._tokenizer = get_clip_bundle()
+        self._clip = get_clip_encoder()
         self.tag_map = build_tag_vector_map(tags)
         # Pre-stack vectors into a matrix for vectorized similarity scoring
         self._tag_names = list(self.tag_map.keys())
@@ -191,26 +189,13 @@ class AutoTagger(MediaProcessor):
         return calibrate_tag_thresholds(self._tag_matrix, sample_matrix)
 
     def _tag_to_vector(self, tag) -> np.ndarray:
-        tokenized_text = self._tokenizer([tag])
-        try:
-            device = next(self._clip_model.parameters()).device
-        except StopIteration:
-            device = torch.device("cpu")
-        if hasattr(tokenized_text, "to"):
-            tokenized_text = tokenized_text.to(device)
-        with torch.no_grad():
-            # Encode the tokenized text
-            text_embedding = self._clip_model.encode_text(tokenized_text)
-            # Normalize the embedding to a unit vector
-            text_embedding /= text_embedding.norm(dim=-1, keepdim=True)
-        # Return as a NumPy array
-        return text_embedding.squeeze(0).cpu().numpy()
+        return self._clip.encode_texts([tag])[0]
 
     def process(
         self,
         media: Media,
         session: Session,
-        scenes: list[tuple[Scene, MatLike]] | list[ImageFile] | list[Scene],
+        scenes: list[tuple[Scene, MatLike]] | list[PhotoScene] | list[Scene],
     ) -> bool | None:
         if media.ran_auto_tagging is True:
             return True

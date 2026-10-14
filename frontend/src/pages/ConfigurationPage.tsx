@@ -86,7 +86,7 @@ type FacePresetKey = "strict" | "normal" | "loose";
 
 const facePresets: Record<
   FacePresetKey,
-  Omit<AppConfig["face_recognition"], "preset" | "face_sharpness_filter_enabled" | "face_sharpness_min_variance">
+  Omit<AppConfig["face_recognition"], "preset" | "face_detection_model" | "face_sharpness_filter_enabled" | "face_sharpness_min_variance">
 > = {
   strict: {
     face_recognition_min_confidence: 0.6,
@@ -1722,6 +1722,32 @@ export default function ConfigurationPage() {
       label: "Face Recognition",
       content: (
         <Box>
+          <FormControl fullWidth margin="normal" sx={{ mt: 0, mb: 3 }}>
+            <InputLabel id="face-detection-model-label">
+              Face Detection Model
+            </InputLabel>
+            <Select
+              labelId="face-detection-model-label"
+              value={config.face_recognition.face_detection_model}
+              label="Face Detection Model"
+              onChange={(e) =>
+                handleValueChange(
+                  "face_recognition",
+                  "face_detection_model",
+                  e.target
+                    .value as AppConfig["face_recognition"]["face_detection_model"]
+                )
+              }
+            >
+              <MenuItem value="buffalo_l">Accurate (buffalo_l)</MenuItem>
+              <MenuItem value="buffalo_s">Fast (buffalo_s)</MenuItem>
+            </Select>
+            <FormHelperText>
+              The fast detector finds faces about 4x quicker but misses more
+              small or partly hidden faces. Recognition is the same for both,
+              so existing people are unaffected.
+            </FormHelperText>
+          </FormControl>
           <Box sx={{ borderBottom: 1, borderColor: "divider", mb: 3 }}>
             <Tabs
               value={faceSettingsMode}

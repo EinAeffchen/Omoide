@@ -1,6 +1,6 @@
 [project]
 name = "omoide"
-version = "0.7.3"
+version = "0.7.4"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -11,8 +11,10 @@ dependencies = [
     "ffmpeg-python==0.2.0",
     "hdbscan==0.8.41",
     "imagehash==4.3.2",
-    "onnxruntime==1.27.0",
-    "open-clip-torch==3.3.0",
+    # DirectML build on Windows: GPU acceleration on any DX12 GPU from the
+    # same small package. It lags behind upstream (sustained engineering).
+    "onnxruntime==1.27.0; sys_platform != 'win32'",
+    "onnxruntime-directml==1.24.4; sys_platform == 'win32'",
     "opencv-python==4.11.0.86",
     "insightface>=0.7.3",
     "cmake>=3.27",
@@ -28,26 +30,20 @@ dependencies = [
     "scenedetect==0.6.6",
     "sqlite-vec==0.1.9",
     "sqlmodel==0.0.24",
-    "torch>=2.8.0",
+    "tokenizers>=0.22.2",
     "uvicorn==0.34.2",
     "umap-learn>=0.5.11",
     "pillow>=12.1.1",
     "pillow-heif>=0.22.0",
-    "torchvision==0.27.1",
-    "transformers==5.12.1",
     "reverse-geocoder>=1.5.1",
 ]
 
-[tool.uv.sources]
-torch = [{ index = "pytorch-cpu" }]
-torchvision = [{ index = "pytorch-cpu" }]
-torchaudio = [{ index = "pytorch-cpu" }]
-
-# Declare the CPU index once
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
+[tool.uv]
+# insightface requires "onnxruntime", which would install next to
+# onnxruntime-directml on Windows and overwrite the same module. Drop it there.
+override-dependencies = [
+    "onnxruntime==1.27.0; sys_platform != 'win32'",
+]
 
 [project.optional-dependencies]
 build = [

@@ -113,7 +113,7 @@ from app.api import (
     untagged,
 )
 from app.api.processors import router as proc_router
-from app.config import get_clip_bundle, get_os_app_config_dir, settings
+from app.config import get_clip_encoder, get_os_app_config_dir, settings
 from app.database import ensure_vec_tables
 from app.ffmpeg import ensure_ffmpeg_available
 from app.logger import configure_file_logging, logger
@@ -262,17 +262,18 @@ def _cleanup_tasks_on_shutdown():
 
 
 def _prewarm_clip() -> None:
-    """Load the CLIP bundle in a background thread at startup.
+    """Load the CLIP encoder in a background thread at startup.
 
-    Torch's first import on Windows takes 10+ seconds due to DLL scanning.
-    Starting this early means the bundle is ready before the user triggers a task.
+    The first run downloads the model files and session creation takes a few
+    seconds; starting early means the encoder is ready before the user
+    triggers a task.
     """
     try:
-        get_clip_bundle()
-        logger.info("OpenCLIP bundle pre-loaded")
+        get_clip_encoder()
+        logger.info("CLIP encoder pre-loaded")
     except Exception as exc:
         logger.warning(
-            "OpenCLIP pre-warm failed (will retry on first use): %s", exc
+            "CLIP pre-warm failed (will retry on first use): %s", exc
         )
 
 

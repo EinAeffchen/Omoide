@@ -103,22 +103,6 @@ def _probe_ffmpeg_encoder(
 
 
 @lru_cache(maxsize=2)
-def resolve_torch_device(prefer_gpu: bool) -> str:
-    if not prefer_gpu:
-        return "cpu"
-    try:
-        import torch
-    except Exception as exc:
-        logger.debug("Torch unavailable for GPU detection: %s", exc)
-        return "cpu"
-    if torch.cuda.is_available():
-        return "cuda"
-    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        return "mps"
-    return "cpu"
-
-
-@lru_cache(maxsize=2)
 def resolve_onnx_providers(prefer_gpu: bool) -> tuple[list[str], bool]:
     try:
         import onnxruntime as ort
@@ -144,6 +128,47 @@ def resolve_onnx_providers(prefer_gpu: bool) -> tuple[list[str], bool]:
         providers = gpu_providers + ["CPUExecutionProvider"]
         return providers, True
     return ["CPUExecutionProvider"], False
+
+
+def create_onnx_session(model_path: Path, prefer_gpu: bool):
+    """Create an ONNX Runtime session on the best available provider.
+
+    Falls back to CPU when the GPU provider fails to initialise (e.g. no
+    DirectX 12 capable adapter, outdated driver).
+    """
+    import onnxruntime as ort
+
+    providers, uses_gpu = resolve_onnx_providers(prefer_gpu)
+    if "CUDAExecutionProvider" in providers and hasattr(ort, "preload_dlls"):
+        # Load CUDA/cuDNN from the nvidia-* wheels (onnxruntime-gpu[cuda,cudnn])
+        ort.preload_dlls()
+    options = ort.SessionOptions()
+    if "DmlExecutionProvider" in providers:
+        # DirectML does not support memory patterns or parallel execution.
+        options.enable_mem_pattern = False
+        options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+    try:
+        session = ort.InferenceSession(
+            str(model_path), sess_options=options, providers=providers
+        )
+    except Exception as exc:
+        if not uses_gpu:
+            raise
+        logger.warning(
+            "GPU session for %s failed (%s); falling back to CPU",
+            model_path.name,
+            exc,
+        )
+        session = ort.InferenceSession(
+            str(model_path), providers=["CPUExecutionProvider"]
+        )
+    logger.info(
+        "Loaded %s/%s with providers %s",
+        model_path.parent.name,
+        model_path.name,
+        session.get_providers(),
+    )
+    return session
 
 
 @lru_cache(maxsize=2)

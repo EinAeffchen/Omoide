@@ -257,17 +257,30 @@ class ClipModel(Enum):
         "xlm-roberta-large-ViT-H-14",
         1024,
         "frozen_laion5b_s13b_b90k",
+        "immich-app/XLM-Roberta-Large-ViT-H-14__frozen_laion5b_s13b_b90k",
     )
     ROBERTA_BASE_VIT_B_32 = (
         "xlm-roberta-base-ViT-B-32",
         512,
         "laion5b_s13b_b90k",
+        "immich-app/XLM-Roberta-Base-ViT-B-32__laion5b_s13b_b90k",
     )
-    VIT_L_14 = ("ViT-L-14", 768, "laion2b_s32b_b82k")
-    VIT_B_32 = ("ViT-B-32", 512, "laion2b_s34b_b79k")
-    CONVNEXT_BASE_W = ("convnext_base_w", 640, "laion2b_s13b_b82k_augreg")
+    VIT_L_14 = (
+        "ViT-L-14",
+        768,
+        "laion2b_s32b_b82k",
+        "immich-app/ViT-L-14__laion2b-s32b-b82k",
+    )
+    VIT_B_32 = (
+        "ViT-B-32",
+        512,
+        "laion2b_s34b_b79k",
+        "immich-app/ViT-B-32__laion2b-s34b-b79k",
+    )
 
-    def __init__(self, model_name: str, embedding_size: int, pretrained: str):
+    def __init__(
+        self, model_name: str, embedding_size: int, pretrained: str, hf_repo: str
+    ):
         """
         This initializer is called for each member, assigning the tuple
         values to attributes on the member itself.
@@ -275,6 +288,8 @@ class ClipModel(Enum):
         self.model_name = model_name
         self.embedding_size = embedding_size
         self.pretrained = pretrained
+        # Hugging Face repo holding the ONNX export of these weights
+        self.hf_repo = hf_repo
 
     @classmethod
     def _missing_(cls, value: object):
@@ -283,6 +298,13 @@ class ClipModel(Enum):
             for member in cls:
                 if member.model_name.lower() == value.lower():
                     return member
+            if value.lower() == "convnext_base_w":
+                # No ONNX export exists for this (never tested) option.
+                logger.warning(
+                    "CLIP model convnext_base_w is no longer supported; "
+                    "using xlm-roberta-base-ViT-B-32"
+                )
+                return cls.ROBERTA_BASE_VIT_B_32
         return None
 
     @classmethod
@@ -515,7 +537,6 @@ class AISettings(BaseModel):
     # 3. ViT-L-14 -> english only large model
     # 4. laion2b_s32b_b82k -> english only large model
     # 5. ViT-B-32 -> english only base model
-    # 6. convnext_base_w -> english only convolution base model
     clip_model: Annotated[
         ClipModel,
         PlainSerializer(lambda x: x.model_name, return_type=str),
@@ -630,8 +651,19 @@ FACE_RECOGNITION_PRESETS: dict[
 }
 
 
+class FaceDetectionModel(str, Enum):
+    # SCRFD-10G from InsightFace's buffalo_l pack: most accurate, slowest
+    BUFFALO_L = "buffalo_l"
+    # SCRFD-500M from the buffalo_s pack: ~4x faster detection on CPU,
+    # misses more small/hard faces
+    BUFFALO_S = "buffalo_s"
+
+
 class FaceRecognitionSettings(BaseModel):
     preset: FaceClusteringPreset = FaceClusteringPreset.LOOSE
+    # face detector to use. Recognition always uses buffalo_l's ArcFace model,
+    # so switching keeps existing face embeddings and people compatible.
+    face_detection_model: FaceDetectionModel = FaceDetectionModel.BUFFALO_L
     # minimum confidence needed to extract a face
     face_recognition_min_confidence: float = 0.5
     # cosine threshold for attaching a face to an existing person's prototypes.
@@ -786,8 +818,8 @@ class ContentProcessorSettings(BaseModel):
     blur_processor_active: bool = True
     # number of media rows processed per batch when running the heavy pipeline
     media_batch_size: int = 125
-    # use GPU acceleration when available (CUDA/MPS for CLIP, CUDA/DML for InsightFace)
-    # falls back to CPU automatically when no GPU is detected
+    # use GPU acceleration when available (DirectML on Windows, CUDA/CoreML
+    # with matching onnxruntime builds); falls back to CPU automatically
     prefer_gpu: bool = True
     # number of video frames batched together for a single CLIP forward pass
     embedding_batch_size: int = 16
@@ -939,91 +971,77 @@ def save_settings(settings_model: AppSettings):
 
 
 def get_model(settings: AppSettings):
-    """Create a new OpenCLIP model bundle on the selected device.
+    """Create a new ONNX CLIP encoder on the selected device.
 
     Note: This constructs a fresh model; callers should prefer the
-    acquire_clip()/get_clip_bundle() helpers below to reuse a shared instance.
+    acquire_clip()/get_clip_encoder() helpers below to reuse a shared instance.
     """
-    import open_clip
+    from app.clip_onnx import ClipEncoder, ensure_model_files
 
-    from app.accelerators import resolve_torch_device
-
-    device = resolve_torch_device(settings.processors.prefer_gpu)
-    model, preprocess, _ = open_clip.create_model_and_transforms(
-        settings.ai.clip_model.model_name,
-        pretrained=settings.ai.clip_model_pretrained,
-        device=device,
+    model_dir = ensure_model_files(
+        settings.ai.clip_model.hf_repo, settings.general.models_dir
     )
-    tokenizer = open_clip.get_tokenizer(settings.ai.clip_model.model_name)
-    return model, preprocess, tokenizer
+    return ClipEncoder(model_dir, prefer_gpu=settings.processors.prefer_gpu)
 
 
-# ----- Lazy, shared CLIP bundle management -----
+# ----- Lazy, shared CLIP encoder management -----
 _clip_lock = threading.RLock()
-_clip_model = None
-_clip_preprocess = None
-_clip_tokenizer = None
+_clip_encoder = None
 _clip_refs = 0
 
 
-def get_clip_bundle():
-    """Return a shared CLIP bundle, loading it lazily if needed.
+def get_clip_encoder():
+    """Return the shared CLIP encoder, loading it lazily if needed.
 
     Does not change the reference count; use acquire_clip()/release_clip()
     when you want lifecycle management (e.g., processors and long tasks).
     """
-    global _clip_model, _clip_preprocess, _clip_tokenizer
+    global _clip_encoder
     with _clip_lock:
-        if _clip_model is None:
-            logger.info("Loading OpenCLIP bundle (lazy)...")
-            _clip_model, _clip_preprocess, _clip_tokenizer = get_model(
-                settings
-            )
-        return _clip_model, _clip_preprocess, _clip_tokenizer
+        if _clip_encoder is None:
+            logger.info("Loading CLIP encoder (lazy)...")
+            _clip_encoder = get_model(settings)
+        return _clip_encoder
 
 
 def acquire_clip():
-    """Acquire a reference to the shared CLIP bundle and return it.
+    """Acquire a reference to the shared CLIP encoder and return it.
 
-    While at least one reference is held, the bundle remains loaded.
+    While at least one reference is held, the encoder remains loaded.
     """
     global _clip_refs
     with _clip_lock:
-        model, preprocess, tokenizer = get_clip_bundle()
+        encoder = get_clip_encoder()
         _clip_refs += 1
-        return model, preprocess, tokenizer
+        return encoder
 
 
 def release_clip():
-    """Release a previously acquired CLIP bundle reference.
+    """Release a previously acquired CLIP encoder reference.
 
-    When the refcount drops to zero, unload the bundle to free memory.
+    When the refcount drops to zero, unload the encoder to free memory.
     """
-    global _clip_refs, _clip_model, _clip_preprocess, _clip_tokenizer
+    global _clip_refs, _clip_encoder
     with _clip_lock:
         if _clip_refs > 0:
             _clip_refs -= 1
-        if _clip_refs == 0 and _clip_model is not None:
-            logger.info("Releasing OpenCLIP bundle from memory")
+        if _clip_refs == 0 and _clip_encoder is not None:
+            logger.info("Releasing CLIP encoder from memory")
             try:
-                _clip_model = None
-                _clip_preprocess = None
-                _clip_tokenizer = None
+                _clip_encoder = None
             finally:
                 gc.collect()
 
 
 def _reset_clip_after_settings_change():
-    """Clear the shared CLIP bundle if nothing is using it.
+    """Clear the shared CLIP encoder if nothing is using it.
 
     If references are held, defer reset until they are released.
     """
-    global _clip_model, _clip_preprocess, _clip_tokenizer
+    global _clip_encoder
     with _clip_lock:
         if _clip_refs == 0:
-            _clip_model = None
-            _clip_preprocess = None
-            _clip_tokenizer = None
+            _clip_encoder = None
         else:
             logger.info(
                 "Deferring CLIP reload until current users release it (refs=%s)",
@@ -1100,7 +1118,7 @@ def reload_settings():
             "Could not reset database engine or run migrations: %s", e
         )
 
-    # Invalidate CLIP bundle to reflect possible AI model changes; will reload lazily
+    # Invalidate CLIP encoder to reflect possible AI model changes; will reload lazily
     _reset_clip_after_settings_change()
     try:
         from app.processor_registry import reset_processors

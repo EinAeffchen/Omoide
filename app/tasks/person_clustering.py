@@ -1188,6 +1188,72 @@ def _bulk_assign_faces_to_persons(
             session.exec(sql_face_embedding)
 
 
+# Video faces whose embeddings are at least this similar (cosine) are treated
+# as one person's track. Measured within videos of a 40-person library:
+# links 83% of same-person frame pairs, while different persons never exceeded
+# 0.26 within a video (0.44 at the 99.99th percentile across all photos).
+_VIDEO_TRACK_LINK_COSINE = 0.5
+
+
+def _pool_video_tracks(
+    session: Session, face_ids: list[int], embeddings: np.ndarray
+) -> np.ndarray:
+    """Replace each video face's embedding by the mean of its track.
+
+    Faces of one video are grouped greedily: a face joins the most similar
+    track whose mean it matches with at least _VIDEO_TRACK_LINK_COSINE and
+    that has no face from the same frame (those are different people).
+    Matching on the pooled embedding lets clear frames carry blurry or
+    profile frames of the same person (measured: 99.55% -> 100% correct).
+    """
+    position = {face_id: idx for idx, face_id in enumerate(face_ids)}
+    frames_by_video: dict[int, list[tuple[int, float]]] = {}
+    for chunk in _iter_chunks(face_ids, 500):
+        placeholders, params = _build_in_clause_params(chunk, prefix="f")
+        rows = session.exec(
+            text(
+                "SELECT id, media_id, timestamp FROM face"
+                f" WHERE timestamp IS NOT NULL AND id IN ({placeholders})"
+            ).bindparams(**params)
+        ).all()
+        for face_id, media_id, timestamp in rows:
+            frames_by_video.setdefault(int(media_id), []).append(
+                (position[int(face_id)], float(timestamp))
+            )
+
+    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+    unit = np.divide(
+        embeddings, norms, out=np.zeros_like(embeddings), where=norms > 0
+    )
+    pooled = embeddings.copy()
+    for members in frames_by_video.values():
+        if len(members) < 2:
+            continue
+        tracks: list[tuple[np.ndarray, set[float], list[int]]] = []
+        for idx, timestamp in members:
+            vec = unit[idx]
+            if not np.any(vec):
+                continue
+            best, best_sim = None, _VIDEO_TRACK_LINK_COSINE
+            for track in tracks:
+                if timestamp in track[1]:
+                    continue
+                total = track[0]
+                sim = float(vec @ total) / float(np.linalg.norm(total))
+                if sim >= best_sim:
+                    best, best_sim = track, sim
+            if best is None:
+                tracks.append((vec.copy(), {timestamp}, [idx]))
+            else:
+                best[0][:] += vec
+                best[1].add(timestamp)
+                best[2].append(idx)
+        for total, _, indices in tracks:
+            if len(indices) > 1:
+                pooled[indices] = total / np.linalg.norm(total)
+    return pooled
+
+
 def _match_unassigned_to_existing(
     session: Session,
     face_ids: list[int],
@@ -1222,6 +1288,10 @@ def _match_unassigned_to_existing(
             tuple(person_matrix.shape),
         )
         return face_ids
+
+    embeddings = _pool_video_tracks(
+        session, face_ids, embeddings.astype(np.float32, copy=False)
+    )
 
     threshold_cosine = float(
         getattr(settings.face_recognition, "existing_person_cosine_threshold", 0.0)

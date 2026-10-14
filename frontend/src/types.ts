@@ -643,6 +643,7 @@ export interface AppConfig {
   };
   face_recognition: {
     preset: "strict" | "normal" | "loose" | "custom";
+    face_detection_model: "buffalo_l" | "buffalo_s";
     face_recognition_min_confidence: number;
     existing_person_cosine_threshold: number;
     existing_person_min_cosine_margin: number;
