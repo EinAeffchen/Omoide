@@ -210,9 +210,16 @@ class EmbeddingExtractor(MediaProcessor):
                 "EmbeddingExtractor: failed to convert embedding for %s", media.path
             )
             return False
+        # sqlite-vec tables reject INSERT OR REPLACE for an existing key, which
+        # every re-run of this processor hits; drop the old vector first.
+        session.exec(
+            text("DELETE FROM media_embeddings WHERE media_id = :id").bindparams(
+                id=media.id
+            )
+        )
         sql = text(
             """
-            INSERT OR REPLACE INTO media_embeddings(media_id, embedding)
+            INSERT INTO media_embeddings(media_id, embedding)
             VALUES (:id, :emb)
             """
         ).bindparams(id=media.id, emb=blob)

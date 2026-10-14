@@ -24,7 +24,7 @@ from app.logger import logger
 
 HF_BASE_URL = "https://huggingface.co"
 
-MODEL_FILES = (
+REQUIRED_FILES = (
     "config.json",
     "visual/model.onnx",
     "visual/preprocess_cfg.json",
@@ -32,6 +32,11 @@ MODEL_FILES = (
     "textual/tokenizer.json",
     "textual/tokenizer_config.json",
 )
+# Exports for other runtimes/hardware stored in the same repos
+_SKIPPED_PATH_PARTS = ("rknpu", "armnn", "fp16")
+# Written once every file of a model is present, so later starts skip the
+# (network) file listing.
+_COMPLETE_MARKER = ".complete"
 
 _RESAMPLING = {
     "bicubic": Image.Resampling.BICUBIC,
@@ -48,16 +53,50 @@ def _download_file(url: str, dest: Path) -> None:
     tmp.replace(dest)
 
 
+def _list_model_files(hf_repo: str) -> list[str]:
+    """All files of the ONNX export, including external weight files.
+
+    Models over 2 GB (e.g. ViT-H-14) keep their weights in hundreds of files
+    next to model.onnx that ONNX Runtime loads by name.
+    """
+    with urlopen(f"{HF_BASE_URL}/api/models/{hf_repo}") as response:
+        siblings = json.load(response).get("siblings", [])
+    files = [
+        s["rfilename"]
+        for s in siblings
+        if s["rfilename"].split("/")[0] in ("visual", "textual")
+        and not any(part in _SKIPPED_PATH_PARTS for part in s["rfilename"].split("/"))
+    ]
+    return sorted(set(files) | set(REQUIRED_FILES))
+
+
 def ensure_model_files(hf_repo: str, models_dir: Path) -> Path:
     """Download the ONNX export of ``hf_repo`` unless it is already cached."""
+    from concurrent.futures import ThreadPoolExecutor
+
     model_dir = models_dir / "clip" / hf_repo.split("/")[-1]
-    for rel_path in MODEL_FILES:
-        dest = model_dir / rel_path
-        if dest.exists():
-            continue
-        url = f"{HF_BASE_URL}/{hf_repo}/resolve/main/{rel_path}"
-        logger.info("Downloading CLIP model file %s", url)
-        _download_file(url, dest)
+    if (model_dir / _COMPLETE_MARKER).exists():
+        return model_dir
+    missing = [
+        rel_path
+        for rel_path in _list_model_files(hf_repo)
+        if not (model_dir / rel_path).exists()
+    ]
+    if missing:
+        logger.info(
+            "Downloading %d CLIP model files for %s", len(missing), hf_repo
+        )
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            list(
+                pool.map(
+                    lambda rel_path: _download_file(
+                        f"{HF_BASE_URL}/{hf_repo}/resolve/main/{rel_path}",
+                        model_dir / rel_path,
+                    ),
+                    missing,
+                )
+            )
+    (model_dir / _COMPLETE_MARKER).touch()
     return model_dir
 
 
