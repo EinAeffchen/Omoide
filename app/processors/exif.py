@@ -14,7 +14,7 @@ import ffmpeg
 
 from dateutil import parser
 from app.logger import logger
-from app.utils import PhotoScene
+from app.frames import PhotoScene
 import traceback
 
 

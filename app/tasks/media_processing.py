@@ -7,20 +7,19 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import List
 
-import numpy as np
 from PIL import UnidentifiedImageError
 from sqlalchemy import func, or_
 from sqlmodel import Session, col, select
 
 import app.database as db
-from app.api.media import delete_record
+from app.records import delete_record
 from app.concurrency import heavy_writer
 from app.config import settings
 from app.database import safe_commit
 from app.logger import logger
 from app.models import Media, ProcessingTask, Status
 from app.processor_registry import load_processors, processors
-from app.utils import load_photo_scene, split_video
+from app.frames import load_photo_scene, split_video
 from .state import clear_task_progress, set_task_progress
 
 __all__ = [

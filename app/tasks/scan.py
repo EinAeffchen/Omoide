@@ -17,7 +17,8 @@ from app.config import settings
 from app.database import safe_commit
 from app.logger import logger
 from app.models import Media, ProcessingTask
-from app.utils import generate_thumbnail, process_file, save_thumbnail_image
+from app.media_files import process_file
+from app.thumbnails import generate_thumbnail, save_thumbnail_image
 from .state import clear_task_progress, record_task_failure, set_task_progress
 
 __all__ = ["run_scan"]

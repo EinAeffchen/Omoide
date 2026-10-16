@@ -24,7 +24,8 @@ from app.schemas.search import (
     SceneSearchResult,
 )
 from app.schemas.tag import TagRead
-from app.utils import name_contains_all_terms, vector_to_blob
+from app.persons import name_contains_all_terms
+from app.vectors import vector_to_blob
 
 router = APIRouter()
 

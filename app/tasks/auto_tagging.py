@@ -23,7 +23,7 @@ from app.tasks.state import (
     record_task_failure,
     set_task_progress,
 )
-from app.utils import vector_from_stored
+from app.vectors import vector_from_stored
 
 COUNT_CUSTOM_AUTOTAG_MEDIA_SQL = text(
     """

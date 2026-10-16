@@ -8,10 +8,9 @@ from sqlmodel import col, select
 
 from app.config import settings
 from app.database import safe_commit
-from app.logger import logger
 from app.models import Media, Scene
 from app.processors.base import MediaProcessor
-from app.utils import PhotoScene
+from app.frames import PhotoScene
 
 # Downscale to this before computing Laplacian — enough for blur detection, much faster.
 _MAX_SIZE = 512

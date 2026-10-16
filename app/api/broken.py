@@ -16,7 +16,7 @@ from app.schemas.broken import (
     BrokenRetryRequest,
     BrokenRetryResponse,
 )
-from app.utils import generate_thumbnail
+from app.thumbnails import generate_thumbnail
 
 router = APIRouter()
 

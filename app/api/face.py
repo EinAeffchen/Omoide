@@ -16,7 +16,7 @@ from app.models import Face, Person
 from app.pagination import paginate
 from app.schemas.face import CursorPage, FaceAssign
 from app.schemas.person import PersonMinimal
-from app.utils import (
+from app.persons import (
     delete_face_embeddings,
     rebuild_person_embedding,
     recalculate_person_appearance_counts,

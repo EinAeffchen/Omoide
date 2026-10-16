@@ -91,9 +91,6 @@ datas = [
     ('frontend/dist', 'dist'),
     ('alembic', 'alembic'),
     ('alembic.ini', '.'),
-    # Optionally bundle a recognition ONNX model if present in repo
-    ('app/models/face_recognition_sface_2021dec.onnx', '.'),
-    ('app/models/scrfd_2.5g_bnkps.onnx', '.'),
     ('app/VERSION', 'app'),
 ]
 if Path('app/GPU_BUILD').exists():

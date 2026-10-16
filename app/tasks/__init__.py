@@ -26,11 +26,8 @@ from .media_processing import (
     run_processors_for_media,
     run_single_processor,
 )
-from .person_clustering import (
-    merge_similar_persons,
-    rebuild_person_embedding,
-    run_person_clustering,
-)
+from .person_clustering import run_person_clustering
+from .person_merging import merge_similar_persons
 from .organize import run_build_events, run_geocode_places
 from .pipeline import run_cleanup_and_chain, run_scan_and_chain
 from .relationships import rebuild_person_relationships
@@ -44,7 +41,6 @@ __all__ = [
     "create_and_run_task",
     "generate_hashes",
     "merge_similar_persons",
-    "rebuild_person_embedding",
     "reset_clustering",
     "reset_processing",
     "run_custom_auto_tagging",

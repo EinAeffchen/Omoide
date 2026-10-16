@@ -9,12 +9,9 @@ from app.config import settings
 from app.logger import logger
 from app.models import Media, Scene, Tag
 from app.processors.base import MediaProcessor
-from app.utils import (
-    PhotoScene,
-    safe_commit,
-    vector_from_stored,
-    vector_to_blob,
-)
+from app.database import safe_commit
+from app.frames import PhotoScene
+from app.vectors import vector_from_stored, vector_to_blob
 
 
 class EmbeddingExtractor(MediaProcessor):

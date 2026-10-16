@@ -30,7 +30,7 @@ from app.schemas.duplicates import (
     DuplicateGroup as DuplicateGroupSchema,
 )
 from app.schemas.media import MediaPreview
-from app.utils import delete_file, delete_record
+from app.records import delete_file, delete_record
 
 router = APIRouter()
 

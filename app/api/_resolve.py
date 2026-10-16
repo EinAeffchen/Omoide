@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 
 from app.logger import logger
 from app.models import Blacklist, Media
-from app.utils import delete_file, delete_record
+from app.records import delete_file, delete_record
 
 
 def resolve_media_action(

@@ -12,8 +12,9 @@ from app.models import (
 )
 from sqlalchemy import func
 from datetime import datetime, timezone
-from app.config import settings, DuplicateHandlingRule, DuplicateKeepRule
-from app.utils import delete_file, delete_record
+from app.config import settings
+from app.config.schema import DuplicateHandlingRule, DuplicateKeepRule
+from app.records import delete_file, delete_record
 import imagehash
 
 class UnionFind:

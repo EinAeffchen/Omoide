@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import Literal
 
 from fastapi import BackgroundTasks, HTTPException
@@ -16,7 +16,7 @@ from app.presentation import ensure_writable
 
 from .state import clear_task_progress
 
-__all__ = ["create_and_run_task"]
+__all__ = ["complete_task", "create_and_run_task"]
 
 
 def _run_task_guarded(callable_task: Callable[[str], None], task_id: str) -> None:
@@ -97,3 +97,10 @@ def create_and_run_task(
 
     background_tasks.add_task(_run_task_guarded, callable_task, task.id)
     return task
+
+
+def complete_task(session: Session, task: ProcessingTask):
+    task.status = "completed"
+    task.finished_at = datetime.now(UTC)
+    session.add(task)
+    safe_commit(session)

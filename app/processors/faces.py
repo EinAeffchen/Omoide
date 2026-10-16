@@ -9,19 +9,16 @@ from PIL import Image, ImageOps
 from sqlmodel import select, text
 
 from app.accelerators import resolve_onnx_providers
-from app.config import FaceDetectionModel, settings
+from app.config import settings
+from app.config.schema import FaceDetectionModel
 from app.database import safe_commit
 from app.logger import logger
 from app.models import Face, Media, Person, Scene
 from app.processors.base import MediaProcessor
-from app.utils import (
-    PROCESSING_MAX_DIM,
-    PhotoScene,
-    auto_select_profile_face,
-    get_thumb_folder,
-    to_posix_str,
-    vector_to_blob,
-)
+from app.frames import PhotoScene, PROCESSING_MAX_DIM
+from app.persons import auto_select_profile_face
+from app.thumbnails import get_thumb_folder, to_posix_str
+from app.vectors import vector_to_blob
 
 
 class FaceProcessor(MediaProcessor):

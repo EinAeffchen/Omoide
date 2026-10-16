@@ -5,7 +5,7 @@ from app.models import Media, Scene
 from cv2.typing import MatLike
 
 if TYPE_CHECKING:
-    from app.utils import PhotoScene
+    from app.frames import PhotoScene
 
 
 class MediaProcessor(ABC):

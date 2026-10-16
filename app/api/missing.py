@@ -17,7 +17,7 @@ from app.schemas.missing import (
     MissingResetResponse,
     build_summary,
 )
-from app.utils import delete_record
+from app.records import delete_record
 
 router = APIRouter()
 

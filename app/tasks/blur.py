@@ -5,7 +5,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from PIL import Image, ImageOps
+from PIL import Image
 from sqlalchemy import func
 from sqlmodel import Session, select
 

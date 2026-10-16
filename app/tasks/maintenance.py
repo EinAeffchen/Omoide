@@ -7,7 +7,7 @@ from sqlalchemy import delete, func, text, update
 from sqlmodel import Session, select
 
 import app.database as db
-from app.api.media import delete_record
+from app.records import delete_record
 from app.concurrency import heavy_writer
 from app.config import settings
 from app.database import safe_commit

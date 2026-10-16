@@ -115,7 +115,8 @@ from app.api import (
 from app.api.processors import router as proc_router
 from app.clip_onnx import get_clip_encoder
 from app.presentation import enforce_presentation_mode
-from app.config import get_os_app_config_dir, settings
+from app.config import settings
+from app.config.profiles import get_os_app_config_dir
 from app.database import ensure_vec_tables
 from app.ffmpeg import ensure_ffmpeg_available
 from app.logger import configure_file_logging, logger

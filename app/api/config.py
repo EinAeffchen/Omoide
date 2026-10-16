@@ -6,19 +6,14 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 import app.database as db
-from app.config import (
-    AppSettings,
-    read_bootstrap,
-    reload_settings,
-    save_settings,
-    settings,
-    write_bootstrap,
-)
+from app.config import reload_settings, save_settings, settings
+from app.config.profiles import read_bootstrap, write_bootstrap
+from app.config.schema import AppSettings
 from app.models import Media, ProcessingTask
 from app.presentation import ensure_writable
 from app.tagging import sanitize_custom_tag_list
 from app.tasks import schedule_custom_auto_tagging
-from app.utils import delete_record
+from app.records import delete_record
 
 
 # Even reading the configuration exposes filesystem paths, so the whole
@@ -325,7 +320,7 @@ def switch_profile(req: SwitchProfileRequest):
         if not target_config.exists():
             import yaml
 
-            from app.config import AppSettings
+            from app.config.schema import AppSettings
 
             defaults = AppSettings().model_dump(mode="json")
             # Remove derived paths and data_dir; they are computed by runtime
@@ -402,7 +397,7 @@ def create_profile(req: CreateProfileRequest):
         target_config = dest / "config.yaml"
         import yaml
 
-        from app.config import AppSettings
+        from app.config.schema import AppSettings
 
         defaults = AppSettings().model_dump(mode="json")
         general = defaults.get("general", {})

@@ -19,7 +19,8 @@ from app.tagging import (
     calibrate_tag_thresholds,
     sanitize_custom_tag_list,
 )
-from app.utils import PhotoScene, vector_from_stored
+from app.frames import PhotoScene
+from app.vectors import vector_from_stored
 
 
 class AutoTagger(MediaProcessor):

@@ -11,7 +11,7 @@ from app.concurrency import heavy_writer
 from app.config import settings
 from app.logger import logger
 from app.models import Media, ProcessingTask
-from app.utils import generate_perceptual_hash
+from app.phash import generate_perceptual_hash
 
 __all__ = ["generate_hashes"]
 
