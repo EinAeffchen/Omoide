@@ -31,7 +31,7 @@ import {
   TimelineEventCreate,
   TimelineDisplayItem,
 } from "../types";
-import { API } from "../config";
+import config, { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
 
 interface TimelineTabProps {
@@ -40,7 +40,9 @@ interface TimelineTabProps {
   onJumpToFace?: (mediaId: number) => void;
 }
 
-export const TimelineTab: React.FC<TimelineTabProps> = ({ person, onDetachMedia, onJumpToFace }) => {
+export const TimelineTab: React.FC<TimelineTabProps> = ({ person, onDetachMedia: onDetachMediaProp, onJumpToFace }) => {
+  const canMutate = !config.PRESENTATION_MODE;
+  const onDetachMedia = canMutate ? onDetachMediaProp : undefined;
   const [dayToView, setDayToView] = useState<MediaPreview[] | null>(null);
   const listKey = useMemo(() => `person-${person.id}-timeline`, [person.id]);
   const { items, hasMore, isLoading } = useListStore(
@@ -161,15 +163,17 @@ export const TimelineTab: React.FC<TimelineTabProps> = ({ person, onDetachMedia,
 
   return (
     <Box>
-      <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 2 }}>
-        <Button
-          variant="contained"
-          startIcon={<AddIcon />}
-          onClick={handleOpenCreateDialog}
-        >
-          Add Event
-        </Button>
-      </Box>
+      {canMutate && (
+        <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 2 }}>
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            onClick={handleOpenCreateDialog}
+          >
+            Add Event
+          </Button>
+        </Box>
+      )}
 
       <Timeline position="alternate">
         {displayItems.map((item, index) => {
@@ -190,10 +194,10 @@ export const TimelineTab: React.FC<TimelineTabProps> = ({ person, onDetachMedia,
                   {item.type === "event" ? (
                     <EventCard
                       event={item.event}
-                      onEdit={() => handleOpenEditDialog(item.event)}
-                      onDelete={() => {
+                      onEdit={canMutate ? () => handleOpenEditDialog(item.event) : undefined}
+                      onDelete={canMutate ? () => {
                         handleDeleteEvent(item.event);
-                      }}
+                      } : undefined}
                     />
                   ) : (
                     <MediaItemGroup

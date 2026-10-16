@@ -5,7 +5,7 @@ from typing import List
 
 import numpy as np
 
-from app.config import get_clip_encoder
+from app.clip_onnx import get_clip_encoder
 
 # Fallback flat cutoff used only when no per-tag calibration sample is
 # available yet (e.g. an empty library on first run).

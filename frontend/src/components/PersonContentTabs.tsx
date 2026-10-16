@@ -28,6 +28,7 @@ const PersonRelationshipGraph = React.lazy(
   () => import("./PersonRelationshipGraph")
 );
 import type { MergeResult } from "../services/personActions";
+import config from "../config";
 
 const DetectedFaces = React.lazy(() => import("./DetectedFaces"));
 
@@ -411,6 +412,7 @@ export function PersonContentTabs({
           }}
         >
           <Typography variant="h6">Similar People</Typography>
+          {!config.PRESENTATION_MODE && (
           <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
             {selectedSimilarIds.length > 0 && (
               <Typography variant="body2" color="text.secondary">
@@ -441,6 +443,7 @@ export function PersonContentTabs({
               {isMergingSimilar ? "Merging..." : "Merge Selected"}
             </Button>
           </Box>
+          )}
         </Box>
 
         {similarPersons.length > 0 ? (
@@ -449,7 +452,7 @@ export function PersonContentTabs({
               <Grid key={similar.id} size={{ xs: 6, sm: 3, md: 2 }}>
                 <SimilarPersonCard
                   {...similar}
-                  selectable
+                  selectable={!config.PRESENTATION_MODE}
                   selected={selectedSimilarIds.includes(similar.id)}
                   onToggleSelect={() => toggleSimilarSelection(similar.id)}
                 />

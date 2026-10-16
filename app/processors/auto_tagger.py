@@ -6,7 +6,8 @@ from sqlmodel import Session, select, text
 
 import app.database as db
 from app.api.tags import attach_tag_to_media, get_or_create_tag
-from app.config import get_clip_encoder, settings
+from app.clip_onnx import get_clip_encoder
+from app.config import settings
 from app.database import safe_commit
 from app.logger import logger
 from app.models import Media, Scene

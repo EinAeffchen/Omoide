@@ -73,7 +73,8 @@ export function MediaContentTabs(props: MediaContentTabsProps) {
     });
   tabs.push({ key: "tags", label: "Tags", icon: <TagIcon /> });
   tabs.push({ key: "exif", label: "Exif Data", icon: <DataObjectIcon /> });
-  tabs.push({ key: "processors", label: "Processors", icon: <ReplayIcon /> });
+  if (!config.PRESENTATION_MODE)
+    tabs.push({ key: "processors", label: "Processors", icon: <ReplayIcon /> });
 
   // Fall back to the first tab when the current media type lacks the selected tab
   const activeTab = tabs.some((t) => t.key === tabKey) ? tabKey : tabs[0].key;
@@ -153,9 +154,11 @@ export function MediaContentTabs(props: MediaContentTabsProps) {
             <MediaExif mediaId={media.id} />
           </TabPanel>
 
-          <TabPanel value={activeTab} index="processors">
-            <MediaProcessorsTab mediaId={media.id} />
-          </TabPanel>
+          {!config.PRESENTATION_MODE && (
+            <TabPanel value={activeTab} index="processors">
+              <MediaProcessorsTab mediaId={media.id} />
+            </TabPanel>
+          )}
         </>
       )}
     </Box>

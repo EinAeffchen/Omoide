@@ -1,5 +1,5 @@
 import { API } from "../config";
-import { Person, PersonRelationshipGraph } from "../types";
+import { Person, PersonRelationshipGraph, Task } from "../types";
 
 export interface MergeResult {
   merged_ids: number[];
@@ -17,17 +17,12 @@ export interface AddMediaAppearanceResult {
   added: boolean;
 }
 
-export interface PersonMediaExportResult {
-  mode: "copy" | "move";
-  completed: number;
-  skipped: { filename: string; reason: string }[];
-}
-
+/** Starts a background task; poll it via getTask for the outcome. */
 export const exportPersonMedia = async (
   personId: number,
   destinationPath: string,
   mode: "copy" | "move"
-): Promise<PersonMediaExportResult> => {
+): Promise<Task> => {
   const res = await fetch(`${API}/api/person/${personId}/export-media`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

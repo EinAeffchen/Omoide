@@ -8,7 +8,7 @@ import DeleteIcon from "@mui/icons-material/Delete";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import { Tag } from "../types";
 import { deleteTag } from "../services/tagActions";
-import { API } from "../config";
+import config, { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
 interface TagCardProps {
   tag: Tag;
@@ -151,6 +151,7 @@ export default function TagCard({ tag, onTagDeleted }: TagCardProps) {
           }}
         >
           <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
+            {!config.PRESENTATION_MODE && (
             <IconButton
               onClick={handleOpenConfirmDialog}
               size="small"
@@ -167,6 +168,7 @@ export default function TagCard({ tag, onTagDeleted }: TagCardProps) {
             >
               <DeleteIcon fontSize="small" />
             </IconButton>
+            )}
           </Box>
           <Box>
             <Typography variant="h6" fontWeight="bold" noWrap>

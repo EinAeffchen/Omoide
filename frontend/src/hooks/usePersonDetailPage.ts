@@ -135,7 +135,7 @@ export const usePersonDetailPage = () => {
   const [snackbar, setSnackbar] = useState<{
     open: boolean;
     message: string;
-    severity: "success" | "error";
+    severity: "success" | "error" | "info";
   }>({ open: false, message: "", severity: "success" });
   const [confirmDelete, setConfirmDelete] = useState(false);
 

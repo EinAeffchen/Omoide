@@ -4,14 +4,13 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, or_
 from sqlmodel import Session, select
 
 from app.api.albums import AlbumRead, _album_read
-from app.config import settings
 from app.database import get_session, safe_commit
 from app.logger import logger
 from app.models import Album, AlbumMediaLink, Event, EventMediaLink, Media
+from app.pagination import media_newest_first, paginate
 from app.schemas.media import CursorPage
 
 router = APIRouter()
@@ -65,26 +64,13 @@ def list_events(
     limit: int = Query(30, ge=1, le=100),
     session: Session = Depends(get_session),
 ):
-    q = select(Event).order_by(Event.start_at.desc(), Event.id.desc())
-    if cursor:
-        try:
-            val_str, id_str = cursor.split("_", 1)
-            prev_val = datetime.fromisoformat(val_str)
-            prev_id = int(id_str)
-        except ValueError:
-            logger.warning("Invalid event cursor: %s", cursor)
-        else:
-            q = q.where(
-                or_(
-                    Event.start_at < prev_val,
-                    and_(Event.start_at == prev_val, Event.id < prev_id),
-                )
-            )
-    events = session.exec(q.limit(limit)).all()
-    next_cursor = None
-    if len(events) == limit:
-        last = events[-1]
-        next_cursor = f"{last.start_at.isoformat()}_{last.id}"
+    events, next_cursor = paginate(
+        session,
+        select(Event),
+        [(Event.start_at, False), (Event.id, False)],
+        cursor=cursor,
+        limit=limit,
+    )
     return EventPage(
         items=[_event_read(session, e) for e in events],
         next_cursor=next_cursor,
@@ -109,8 +95,6 @@ def update_event(
     body: EventUpdate,
     session: Session = Depends(get_session),
 ):
-    if settings.general.presentation_mode:
-        raise HTTPException(403, "Not allowed in presentation mode")
     event = session.get(Event, event_id)
     if not event:
         raise HTTPException(404, "Event not found")
@@ -133,8 +117,6 @@ def convert_event_to_album(
     session: Session = Depends(get_session),
 ):
     """Move an event's media into a new album and remove the event."""
-    if settings.general.presentation_mode:
-        raise HTTPException(403, "Not allowed in presentation mode")
     event = session.get(Event, event_id)
     if not event:
         raise HTTPException(404, "Event not found")
@@ -190,25 +172,8 @@ def list_event_media(
             Media.processing_error.is_(None),
             Media.missing_since.is_(None),
         )
-        .order_by(Media.created_at.desc(), Media.id.desc())
     )
-    if cursor:
-        try:
-            val_str, id_str = cursor.split("_", 1)
-            prev_val = datetime.fromisoformat(val_str)
-            prev_id = int(id_str)
-        except ValueError:
-            logger.warning("Invalid event media cursor: %s", cursor)
-        else:
-            q = q.where(
-                or_(
-                    Media.created_at < prev_val,
-                    and_(Media.created_at == prev_val, Media.id < prev_id),
-                )
-            )
-    results = session.exec(q.limit(limit)).all()
-    next_cursor = None
-    if len(results) == limit:
-        last = results[-1]
-        next_cursor = f"{last.created_at.isoformat()}_{last.id}"
+    results, next_cursor = paginate(
+        session, q, media_newest_first(), cursor=cursor, limit=limit
+    )
     return CursorPage(items=results, next_cursor=next_cursor)

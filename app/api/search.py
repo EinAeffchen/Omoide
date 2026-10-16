@@ -2,18 +2,20 @@ import io
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime
 
 import numpy as np
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from PIL import Image
-from sqlalchemy import and_, desc, func, or_, text, tuple_
+from sqlalchemy import func, or_, text
 from sqlmodel import Session, select
 
-from app.config import get_clip_encoder, settings
+from app.clip_onnx import get_clip_encoder
+from app.config import settings
 from app.database import get_session
 from app.logger import logger
 from app.models import Media, Person, Scene, Tag
+from app.pagination import paginate
+from app.presentation import allow_in_presentation_mode
 from app.schemas.media import MediaPreview
 from app.schemas.person import PersonRead
 from app.schemas.search import (
@@ -201,6 +203,7 @@ def _find_by_filename(query: str, session: Session) -> list[Media]:
     summary="Search for similar media by uploading an image",
     response_model=list[MediaPreview],
 )
+@allow_in_presentation_mode
 def search_by_image(
     file: UploadFile = File(...),
     limit: int = 20,
@@ -401,21 +404,9 @@ def search_combined(
     # ------------------------------------------------------------------
     # Date order: over-fetch all vector candidates (up to _MAX_KNN_RESULTS),
     # then sort and paginate by (inserted_at DESC, id DESC).
-    # Cursor format: "<iso_datetime>_<media_id>"
     # ------------------------------------------------------------------
-    cursor_dt: datetime | None = None
-    cursor_id: int | None = None
-    if cursor:
-        try:
-            iso_str, id_str = cursor.rsplit("_", 1)
-            cursor_dt = datetime.fromisoformat(iso_str)
-            cursor_id = int(id_str)
-        except (ValueError, TypeError):
-            raise HTTPException(status_code=400, detail="Invalid cursor format")
-
     if person_ids:
         media_filter = _person_media_filter_sql(person_ids)
-        logger.warning(media_filter)
         vec_sql = text(f"""
             SELECT me.media_id
             FROM media_embeddings me
@@ -438,21 +429,14 @@ def search_combined(
     if not candidate_ids:
         return CombinedMediaSearchResult(persons=persons)
 
-    q = select(Media).where(Media.id.in_(candidate_ids))
-    if cursor_dt is not None:
-        q = q.where(
-            or_(
-                Media.inserted_at < cursor_dt,
-                and_(Media.inserted_at == cursor_dt, Media.id < cursor_id),
-            )
-        )
-    q = q.order_by(desc(Media.inserted_at), desc(Media.id)).limit(limit + 1)
-    media_objs = list(session.exec(q).all())
-
-    page_objs = media_objs[:limit]
-    has_more = len(media_objs) > limit
-    last = page_objs[-1] if page_objs else None
-    next_cursor = f"{last.inserted_at.isoformat()}_{last.id}" if last and has_more else None
+    page_objs, next_cursor = paginate(
+        session,
+        select(Media).where(Media.id.in_(candidate_ids)),
+        [(Media.inserted_at, False), (Media.id, False)],
+        cursor=cursor,
+        limit=limit,
+        tag="date",
+    )
 
     return CombinedMediaSearchResult(
         persons=persons,
@@ -596,7 +580,9 @@ def search_scenes(
 )
 def search_people(
     limit: int = 20,
-    cursor: str | None = Query(None, description="Encoded as `<count>_<id>`"),
+    cursor: str | None = Query(
+        None, description="Opaque cursor from the previous page's `next_cursor`"
+    ),
     query: str = Query("", description="Person name query"),
     session: Session = Depends(get_session),
 ):
@@ -604,25 +590,13 @@ def search_people(
     if name_clause is None:
         return CursorPage(items=[], next_cursor=None)
 
-    q = select(Person).where(name_clause)
-
-    if cursor:
-        try:
-            cursor_count, cursor_id = map(int, cursor.split("_"))
-            q = q.where(
-                tuple_(Person.appearance_count, Person.id)
-                < (cursor_count, cursor_id)
-            )
-        except (ValueError, TypeError):
-            raise HTTPException(status_code=400, detail="Invalid cursor format")
-
-    q = q.order_by(desc(Person.appearance_count), desc(Person.id)).limit(limit)
-    people = session.exec(q).all()
-
-    next_cursor = None
-    if len(people) == limit:
-        last = people[-1]
-        next_cursor = f"{last.appearance_count}_{last.id}"
+    people, next_cursor = paginate(
+        session,
+        select(Person).where(name_clause),
+        [(func.coalesce(Person.appearance_count, 0), False), (Person.id, False)],
+        cursor=cursor,
+        limit=limit,
+    )
     return CursorPage(
         items=[PersonRead.model_validate(p) for p in people],
         next_cursor=next_cursor,
@@ -637,7 +611,7 @@ def search_people(
 def search_tags(
     limit: int = 20,
     cursor: str | None = Query(
-        None, description="The ID of the last tag from the previous page"
+        None, description="Opaque cursor from the previous page's `next_cursor`"
     ),
     query: str = Query("", description="Tag name query"),
     session: Session = Depends(get_session),
@@ -645,22 +619,13 @@ def search_tags(
     if not query:
         return CursorPage(items=[], next_cursor=None)
 
-    q = select(Tag).where(Tag.name.ilike(f"%{query}%"))
-
-    if cursor:
-        try:
-            cursor_id = int(cursor)
-            q = q.where(Tag.id < cursor_id)
-        except (ValueError, TypeError):
-            raise HTTPException(status_code=400, detail="Invalid cursor format")
-
-    q = q.order_by(desc(Tag.id)).limit(limit)
-    tags = session.exec(q).all()
-
-    next_cursor = None
-    if len(tags) == limit:
-        next_cursor = str(tags[-1].id)
-
+    tags, next_cursor = paginate(
+        session,
+        select(Tag).where(Tag.name.ilike(f"%{query}%")),
+        [(Tag.id, False)],
+        cursor=cursor,
+        limit=limit,
+    )
     return CursorPage(
         items=[TagRead.model_validate(t) for t in tags],
         next_cursor=next_cursor,

@@ -7,21 +7,45 @@ from fastapi import (
     status,
 )
 from pydantic import BaseModel
-from sqlalchemy import or_
-from sqlmodel import Session, delete, select, text
+from sqlmodel import Session, select, update
 
 from app.config import settings
-from app.database import get_session, safe_commit, safe_execute
+from app.database import get_session, safe_commit
 from app.logger import logger
-from app.models import Face, Person, PersonMediaLink, PersonRelationship, PersonTagLink
+from app.models import Face, Person
+from app.pagination import paginate
 from app.schemas.face import CursorPage, FaceAssign
 from app.schemas.person import PersonMinimal
 from app.utils import (
+    delete_face_embeddings,
+    rebuild_person_embedding,
     recalculate_person_appearance_counts,
-    update_person_embedding,
+    set_face_embedding_person,
 )
 
 router = APIRouter()
+
+
+def _load_faces(session: Session, face_ids: list[int]) -> list[Face]:
+    """Fetch faces in request order with one query, logging unknown ids."""
+    if not face_ids:
+        return []
+    by_id = {
+        face.id: face
+        for face in session.exec(select(Face).where(Face.id.in_(face_ids))).all()
+    }
+    missing = [fid for fid in face_ids if fid not in by_id]
+    if missing:
+        logger.warning("Skipping unknown face ids: %s", missing)
+    return [by_id[fid] for fid in dict.fromkeys(face_ids) if fid in by_id]
+
+
+def _refresh_persons(session: Session, person_ids: set[int]) -> None:
+    """Update counts and centroids of persons whose faces changed, removing
+    persons that were left without any faces or media links."""
+    recalculate_person_appearance_counts(session, person_ids)
+    for pid in person_ids:
+        rebuild_person_embedding(session, pid)
 
 
 @router.post(
@@ -29,46 +53,27 @@ router = APIRouter()
     summary="Assign existing faces to a person",
     status_code=status.HTTP_200_OK,
 )
-async def assign_faces(
+def assign_faces(
     body: FaceAssign = Body(...),
     session: Session = Depends(get_session),
 ):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in settings.general.presentation_mode mode.",
-        )
     new_person_id = body.person_id
-    new_person = session.get(Person, new_person_id)
-    if not new_person:
+    if not session.get(Person, new_person_id):
         raise HTTPException(status_code=404, detail="Person not found")
 
-    affected_person_ids: set[int] = set()
-    if new_person_id is not None:
-        affected_person_ids.add(new_person_id)
-
-    for face_id in body.face_ids:
-        face = session.get(Face, face_id)
-        if not face:
-            logger.warning(f"Face with ID {face_id} not found, skipping assignment.")
+    affected_person_ids: set[int] = {new_person_id}
+    moved: list[int] = []
+    for face in _load_faces(session, body.face_ids):
+        if face.person_id == new_person_id:
             continue
-
-        original_person_id = face.person_id
-        if original_person_id == new_person_id:
-            continue
-        if original_person_id is not None:
-            affected_person_ids.add(original_person_id)
-
-        face.person = new_person
+        if face.person_id is not None:
+            affected_person_ids.add(face.person_id)
+        face.person_id = new_person_id
         session.add(face)
+        moved.append(face.id)
 
-        if original_person_id and original_person_id != body.person_id:
-            old_person_can_be_deleted(session, original_person_id)
-        update_face_embedding(session, face_id, new_person_id)
-
-    recalculate_person_appearance_counts(session, affected_person_ids)
-    if new_person_id and new_person_id > 0:
-        update_person_embedding(session, new_person_id)
+    set_face_embedding_person(session, moved, new_person_id)
+    _refresh_persons(session, affected_person_ids)
     safe_commit(session)
     return {"message": "Faces assigned successfully"}
 
@@ -78,70 +83,24 @@ async def assign_faces(
     summary="Detaches existing faces from their persons",
     status_code=status.HTTP_200_OK,
 )
-async def detach_faces(
+def detach_faces(
     face_ids: list[int] = Body(..., embed=True),
     session: Session = Depends(get_session),
 ):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in settings.general.presentation_mode mode.",
-        )
-
     affected_person_ids: set[int] = set()
-
-    for face_id in face_ids:
-        face = session.get(Face, face_id)
-        if not face:
-            logger.warning(f"Face with ID {face_id} not found, skipping detachment.")
+    detached: list[int] = []
+    for face in _load_faces(session, face_ids):
+        if face.person_id is None:
             continue
-
-        person_id = face.person_id
-        if person_id:
-            affected_person_ids.add(person_id)
-
+        affected_person_ids.add(face.person_id)
         face.person_id = None
         session.add(face)
+        detached.append(face.id)
 
-        if person_id:
-            old_person_can_be_deleted(session, person_id)
-        update_face_embedding(
-            session, face_id, -1
-        )  # -1 detaches face from person in embedding table
-        # update embedding of person to fix suggested faces after detach
-    recalculate_person_appearance_counts(session, affected_person_ids)
-    for pid in affected_person_ids:
-        if session.get(Person, pid):
-            update_person_embedding(session, pid)
+    set_face_embedding_person(session, detached, None)
+    _refresh_persons(session, affected_person_ids)
     safe_commit(session)
     return {"message": "Faces detached successfully"}
-
-
-def update_face_embedding(
-    session: Session,
-    face_id: int,
-    person_id: int | None,
-    delete_face: bool = False,
-):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in settings.general.presentation_mode mode.",
-        )
-    if not delete_face:
-        sql = text(
-            """
-            UPDATE face_embeddings
-            set person_id=:p_id
-            WHERE face_id=:f_id
-            """
-        ).bindparams(p_id=person_id if person_id is not None else -1, f_id=face_id)
-    else:
-        sql = text(
-            """DELETE FROM face_embeddings
-                   WHERE face_id=:f_id"""
-        ).bindparams(f_id=face_id)
-    safe_execute(session, sql)
 
 
 @router.delete(
@@ -153,38 +112,25 @@ def delete_faces(
     face_ids: list[int] = Query(..., alias="face_ids"),
     session: Session = Depends(get_session),
 ):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in settings.general.presentation_mode mode.",
-        )
-    affected_person_ids: set[int] = set()
-    for face_id in face_ids:
-        face = session.get(Face, face_id)
-        if not face:
-            logger.warning(f"Face with ID {face_id} not found, skipping deletion.")
-            continue
-
-        # remove thumbnail from disk
-        thumb = settings.general.thumb_dir / face.thumbnail_path
-        if thumb.exists():
-            thumb.unlink()
-
-        if person := face.person:
-            person_id = face.person.id
-            affected_person_ids.add(person_id)
-        else:
-            person_id = None
+    faces = _load_faces(session, face_ids)
+    affected_person_ids = {f.person_id for f in faces if f.person_id is not None}
+    thumbnails = [f.thumbnail_path for f in faces if f.thumbnail_path]
+    face_ids = [f.id for f in faces]
+    # Release profile-face references first; _refresh_persons re-picks one.
+    session.exec(
+        update(Person)
+        .where(Person.profile_face_id.in_(face_ids))
+        .values(profile_face_id=None)
+    )
+    delete_face_embeddings(session, face_ids)
+    for face in faces:
         session.delete(face)
-
-        update_face_embedding(session, face_id, person_id, delete_face=True)
-        if person_id:
-            old_person_can_be_deleted(session, person_id)
-    recalculate_person_appearance_counts(session, affected_person_ids)
-    for pid in affected_person_ids:
-        if session.get(Person, pid):
-            update_person_embedding(session, pid)
+    _refresh_persons(session, affected_person_ids)
     safe_commit(session)
+
+    # Only remove files once the rows are gone for good.
+    for thumbnail_path in thumbnails:
+        (settings.general.thumb_dir / thumbnail_path).unlink(missing_ok=True)
     return {"message": "Faces deleted successfully"}
 
 
@@ -196,25 +142,17 @@ class FaceCreatePerson(BaseModel):
 def get_orphans(
     session: Session = Depends(get_session),
     cursor: str | None = Query(
-        None,
-        description=(
-            "encoded as `<id>`; e.g. `2025-05-05T12:34:56.789012_1234` or `2500_1234`"
-        ),
+        None, description="Opaque cursor from the previous page's `next_cursor`"
     ),
     limit: int = 48,
 ):
-    before_id = None
-    if cursor:
-        before_id = int(cursor)
-    query = select(Face).where(Face.person_id.is_(None)).order_by(Face.id.desc())
-    if before_id:
-        query = query.where(Face.id < before_id)
-    orphans = safe_execute(session, query.limit(limit)).all()
-
-    if len(orphans) == limit:
-        next_cursor = str(orphans[-1].id)
-    else:
-        next_cursor = None
+    orphans, next_cursor = paginate(
+        session,
+        select(Face).where(Face.person_id.is_(None)),
+        [(Face.id, False)],
+        cursor=cursor,
+        limit=limit,
+    )
     return CursorPage(next_cursor=next_cursor, items=orphans)
 
 
@@ -224,90 +162,35 @@ def get_orphans(
     response_model=PersonMinimal,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_person_from_faces(
+def create_person_from_faces(
     face_ids: list[int] = Body(..., embed=True),
     name: str | None = Body(None),
     session: Session = Depends(get_session),
 ):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in settings.general.presentation_mode mode.",
-        )
     if not face_ids:
         raise HTTPException(status_code=400, detail="No face IDs provided")
 
-    faces = []
-    for face_id in face_ids:
-        face = session.get(Face, face_id)
-        if not face:
-            logger.warning(f"Face with ID {face_id} not found, skipping.")
-            continue
-        faces.append(face)
-
+    faces = _load_faces(session, face_ids)
     if not faces:
         raise HTTPException(status_code=404, detail="No valid faces found")
 
-    media_ids = {face.media_id for face in faces}
-
-    # Create the Person
     person = Person(
         name=name,
-        profile_face_id=faces[0].id,  # Set profile to the first face
-        appearance_count=len(media_ids),
+        profile_face_id=faces[0].id,
+        appearance_count=len({face.media_id for face in faces}),
     )
     session.add(person)
     session.flush()
     person_id = person.id
 
-    previous_person_ids: set[int] = set()
+    affected_person_ids: set[int] = {person_id}
     for face in faces:
-        previous_person = face.person
+        if face.person_id is not None:
+            affected_person_ids.add(face.person_id)
         face.person_id = person_id
         session.add(face)
-        if previous_person and previous_person.id != person_id:
-            previous_person_ids.add(previous_person.id)
-            old_person_can_be_deleted(session, previous_person.id)
-        update_face_embedding(session, face.id, person_id)
-    target_person_ids = set(previous_person_ids)
-    target_person_ids.add(person_id)
-    recalculate_person_appearance_counts(session, target_person_ids)
-    if person_id:
-        update_person_embedding(session, person_id)
+
+    set_face_embedding_person(session, [f.id for f in faces], person_id)
+    _refresh_persons(session, affected_person_ids)
     safe_commit(session)
-    session.close()
     return PersonMinimal(id=person_id)
-
-
-def old_person_can_be_deleted(session: Session, person_id: int | None):
-    if person_id is None:
-        return True
-    remaining = safe_execute(
-        session, select(Face).where(Face.person_id == person_id)
-    ).first()
-    if remaining:
-        return False
-    remaining_manual_link = safe_execute(
-        session,
-        select(PersonMediaLink).where(PersonMediaLink.person_id == person_id),
-    ).first()
-    if remaining_manual_link:
-        return False
-
-    # delete any tag links
-    safe_execute(
-        session,
-        delete(PersonTagLink).where(PersonTagLink.person_id == person_id),
-    )
-    person = session.get(Person, person_id)
-    session.exec(
-        delete(PersonRelationship).where(
-            or_(
-                PersonRelationship.person_a_id == person_id,
-                PersonRelationship.person_b_id == person_id,
-            )
-        )
-    )
-    session.delete(person)
-    safe_commit(session)
-    return True

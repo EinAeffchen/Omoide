@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, func, not_, or_, select
+from sqlalchemy import not_, select
 from sqlmodel import Session
 
-from app.config import settings
 from app.database import get_session
 from app.logger import logger
 from app.models import Media
+from app.pagination import count_rows, paginate
 from app.schemas.missing import (
     MissingBulkActionRequest,
     MissingConfirmResponse,
@@ -42,39 +41,14 @@ def list_missing_media(
     include_confirmed: bool = Query(False),
 ):
     conditions = _base_conditions(include_confirmed, path_prefix)
-    stmt = select(Media).where(*conditions)
-    stmt = stmt.order_by(Media.missing_since.desc(), Media.id.desc())
-
-    if cursor:
-        try:
-            cursor_time_str, cursor_id_str = cursor.rsplit("_", 1)
-            cursor_time = datetime.fromisoformat(cursor_time_str)
-            cursor_id = int(cursor_id_str)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail="Invalid cursor") from exc
-
-        stmt = stmt.where(
-            or_(
-                Media.missing_since < cursor_time,
-                and_(
-                    Media.missing_since == cursor_time,
-                    Media.id < cursor_id,
-                ),
-            )
-        )
-
-    items = session.exec(stmt.limit(limit)).scalars().all()
-
-    next_cursor = None
-    if len(items) == limit:
-        last = items[-1]
-        if last.missing_since is not None:
-            next_cursor = f"{last.missing_since.isoformat()}_{last.id}"
-
-    total = (
-        session.exec(select(func.count(Media.id)).where(*conditions)).scalars().first()
-        or 0
+    items, next_cursor = paginate(
+        session,
+        select(Media).where(*conditions),
+        [(Media.missing_since, False), (Media.id, False)],
+        cursor=cursor,
+        limit=limit,
     )
+    total = count_rows(session, Media.id, *conditions)
     try:
         summary_rows = session.exec(select(Media.path).where(*conditions)).all()
         summary = build_summary((row[0] for row in summary_rows))
@@ -115,12 +89,6 @@ def confirm_missing(
     payload: MissingBulkActionRequest,
     session: Session = Depends(get_session),
 ):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in presentation_mode mode.",
-        )
-
     target_ids = _resolve_target_ids(session, payload)
     if not target_ids:
         return MissingConfirmResponse(deleted=0)
@@ -144,12 +112,6 @@ def reset_missing_flags(
     payload: MissingBulkActionRequest,
     session: Session = Depends(get_session),
 ):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in presentation_mode mode.",
-        )
-
     target_ids = _resolve_target_ids(session, payload)
     if not target_ids:
         return MissingResetResponse(cleared=0)

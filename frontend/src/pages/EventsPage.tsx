@@ -108,13 +108,15 @@ export default function EventsPage() {
             Events
           </Typography>
         </Box>
-        <Button
-          variant="outlined"
-          startIcon={<AutorenewIcon />}
-          onClick={handleRebuild}
-        >
-          Rebuild events
-        </Button>
+        {!config.PRESENTATION_MODE && (
+          <Button
+            variant="outlined"
+            startIcon={<AutorenewIcon />}
+            onClick={handleRebuild}
+          >
+            Rebuild events
+          </Button>
+        )}
       </Box>
 
       {error && (
@@ -127,7 +129,11 @@ export default function EventsPage() {
         <EmptyState
           icon={<TheatersIcon />}
           title="No events yet"
-          description="Run “Rebuild events” to cluster your library into trips and moments. Run geocoding first (Places page) for named events."
+          description={
+            config.PRESENTATION_MODE
+              ? undefined
+              : "Run “Rebuild events” to cluster your library into trips and moments. Run geocoding first (Places page) for named events."
+          }
         />
       )}
 

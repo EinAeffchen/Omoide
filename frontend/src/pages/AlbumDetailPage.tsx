@@ -31,6 +31,7 @@ import {
   updateAlbum,
 } from "../services/features";
 import { Album } from "../types";
+import config from "../config";
 
 export default function AlbumDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -126,6 +127,7 @@ export default function AlbumDetailPage() {
             {album ? `${album.media_count} items` : ""}
           </Typography>
         </Box>
+        {!config.PRESENTATION_MODE && (
         <Box display="flex" gap={1}>
           <Button
             size="small"
@@ -158,6 +160,7 @@ export default function AlbumDetailPage() {
             </IconButton>
           </Tooltip>
         </Box>
+        )}
       </Box>
 
       {error && (
@@ -174,7 +177,11 @@ export default function AlbumDetailPage() {
           <EmptyState
             icon={<PhotoAlbumIcon />}
             title="Album is empty"
-            description="Click “Add media” above (or use Select Mode in any grid), pick items, then “Add to Album”."
+            description={
+              config.PRESENTATION_MODE
+                ? undefined
+                : "Click “Add media” above (or use Select Mode in any grid), pick items, then “Add to Album”."
+            }
           />
         }
       />

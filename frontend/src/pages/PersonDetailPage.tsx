@@ -12,7 +12,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Alert from "@mui/material/Alert";
 import Snackbar from "@mui/material/Snackbar";
 import { PersonContentTabs } from "../components/PersonContentTabs";
@@ -23,6 +23,11 @@ import { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
 import { pickDirectory } from "../services/config";
 import { exportPersonMedia } from "../services/personActions";
+import { getTask } from "../services/task";
+import { getTaskFailures } from "../services/taskActions";
+import { Task } from "../types";
+
+const EXPORT_POLL_INTERVAL_MS = 1500;
 
 const getInitials = (name?: string) => {
   if (!name) return "?";
@@ -37,6 +42,7 @@ export default function PersonDetailPage() {
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [exportDestination, setExportDestination] = useState<string | null>(null);
   const [exportingMedia, setExportingMedia] = useState(false);
+  const [exportTask, setExportTask] = useState<Task | null>(null);
   const {
     person,
     loading,
@@ -111,23 +117,65 @@ export default function PersonDetailPage() {
     }
   };
 
+  // The export runs as a background task; poll it to report the outcome.
+  useEffect(() => {
+    if (!exportTask || !["pending", "running"].includes(exportTask.status)) {
+      return;
+    }
+    let cancelled = false;
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const updated = await getTask(exportTask.id);
+        if (cancelled) return;
+        if (["pending", "running"].includes(updated.status)) {
+          setExportTask(updated);
+          return;
+        }
+        setExportTask(null);
+        if (updated.status !== "completed") {
+          setSnackbar({
+            open: true,
+            message: `Media export ${updated.status}.`,
+            severity: updated.status === "failed" ? "error" : "info",
+          });
+          return;
+        }
+        const skipped = (await getTaskFailures(updated.id)).length;
+        if (cancelled) return;
+        const exported = updated.processed - skipped;
+        setSnackbar({
+          open: true,
+          message: `Exported ${exported} media file${exported === 1 ? "" : "s"}${
+            skipped ? `; skipped ${skipped}` : ""
+          }.`,
+          severity: skipped && exported === 0 ? "error" : "success",
+        });
+      } catch (error) {
+        if (cancelled) return;
+        console.error("Failed to fetch export task status:", error);
+        setExportTask(null);
+      }
+    }, EXPORT_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [exportTask, setSnackbar]);
+
   const exportMedia = async (mode: "copy" | "move") => {
     if (!exportDestination) return;
     setExportingMedia(true);
     try {
-      const result = await exportPersonMedia(
+      const task = await exportPersonMedia(
         person?.id ?? 0,
         exportDestination,
         mode,
       );
-      const action = mode === "copy" ? "Copied" : "Moved";
-      const skipped = result.skipped.length;
+      setExportTask(task);
       setSnackbar({
         open: true,
-        message: `${action} ${result.completed} media file${result.completed === 1 ? "" : "s"}${
-          skipped ? `; skipped ${skipped}` : ""
-        }.`,
-        severity: skipped && result.completed === 0 ? "error" : "success",
+        message: `${mode === "copy" ? "Copying" : "Moving"} media in the background; progress is shown under Tasks.`,
+        severity: "info",
       });
       setExportDialogOpen(false);
       setExportDestination(null);
@@ -172,7 +220,7 @@ export default function PersonDetailPage() {
         autoSelectingProfile={isAutoSelectingProfile}
         onExportMedia={selectExportDestination}
         canExportMedia={canExportMedia}
-        exportingMedia={exportingMedia}
+        exportingMedia={exportingMedia || exportTask !== null}
       />
 
       <PersonContentTabs

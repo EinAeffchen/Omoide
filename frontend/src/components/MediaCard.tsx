@@ -412,27 +412,48 @@ export default function MediaCard({
 
       {media && !isSelecting && (
         <>
-          <IconButton
-            onClick={handleToggleFavorite}
-            size="small"
-            sx={{
-              position: "absolute",
-              top: 4,
-              right: 4,
-              zIndex: 20,
-              p: 0.5,
-              color: isFavorite ? "error.main" : "white",
-              bgcolor: "rgba(0,0,0,0.45)",
-              "&:hover": { bgcolor: "rgba(0,0,0,0.6)" },
-            }}
-          >
-            {isFavorite ? (
+          {!appConfig.PRESENTATION_MODE && (
+            <IconButton
+              onClick={handleToggleFavorite}
+              size="small"
+              sx={{
+                position: "absolute",
+                top: 4,
+                right: 4,
+                zIndex: 20,
+                p: 0.5,
+                color: isFavorite ? "error.main" : "white",
+                bgcolor: "rgba(0,0,0,0.45)",
+                "&:hover": { bgcolor: "rgba(0,0,0,0.6)" },
+              }}
+            >
+              {isFavorite ? (
+                <FavoriteIcon fontSize="small" />
+              ) : (
+                <FavoriteBorderIcon fontSize="small" />
+              )}
+            </IconButton>
+          )}
+          {appConfig.PRESENTATION_MODE && isFavorite && (
+            <Box
+              aria-label="Favorite"
+              sx={{
+                position: "absolute",
+                top: 4,
+                right: 4,
+                zIndex: 20,
+                p: 0.5,
+                display: "flex",
+                borderRadius: "50%",
+                color: "error.main",
+                bgcolor: "rgba(0,0,0,0.45)",
+                pointerEvents: "none",
+              }}
+            >
               <FavoriteIcon fontSize="small" />
-            ) : (
-              <FavoriteBorderIcon fontSize="small" />
-            )}
-          </IconButton>
-          {onUnmatch && (
+            </Box>
+          )}
+          {onUnmatch && !appConfig.PRESENTATION_MODE && (
             <Tooltip title={unmatchLabel}>
               <IconButton
                 aria-label={unmatchLabel}

@@ -13,7 +13,7 @@ from pathlib import Path
 
 # Keep the alternate PyInstaller entry point safe as well. On Windows a
 # multiprocessing worker re-executes the frozen application; this must happen
-# before importing Torch/OpenCLIP or creating a webview window.
+# before importing the ML runtimes or creating a webview window.
 multiprocessing.freeze_support()
 
 from app.version import get_app_version
@@ -80,7 +80,7 @@ if _webview2_runtime_path:
 
 from anyio import to_thread
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -113,7 +113,9 @@ from app.api import (
     untagged,
 )
 from app.api.processors import router as proc_router
-from app.config import get_clip_encoder, get_os_app_config_dir, settings
+from app.clip_onnx import get_clip_encoder
+from app.presentation import enforce_presentation_mode
+from app.config import get_os_app_config_dir, settings
 from app.database import ensure_vec_tables
 from app.ffmpeg import ensure_ffmpeg_available
 from app.logger import configure_file_logging, logger
@@ -345,7 +347,11 @@ except Exception:
     # Non-fatal if file logging cannot be initialized
     pass
 
-app = FastAPI(lifespan=lifespan, redoc_url=None)
+app = FastAPI(
+    lifespan=lifespan,
+    redoc_url=None,
+    dependencies=[Depends(enforce_presentation_mode)],
+)
 origins = [os.environ.get("DOMAIN", ""), "http://localhost:5173"]
 app.add_middleware(
     CORSMiddleware,

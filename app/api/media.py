@@ -1,7 +1,7 @@
 import os
 import subprocess
 import sys
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 from typing import Annotated
 from urllib.parse import quote
@@ -16,12 +16,12 @@ from fastapi import (
     status,
 )
 from fastapi.responses import PlainTextResponse
-from sqlalchemy import and_, case, func, or_, text, tuple_, union_all
+from sqlalchemy import case, func, text, tuple_, union_all
 from sqlalchemy.orm import aliased, selectinload
 from sqlmodel import Session, col, select
 
 from app.config import settings
-from app.database import get_session, safe_commit, safe_execute
+from app.database import get_session, safe_commit
 from app.logger import logger
 from app.models import (
     ExifData,
@@ -32,6 +32,7 @@ from app.models import (
     Scene,
     Tag,
 )
+from app.pagination import SortKey, paginate
 from app.schemas.face import FaceRead
 from app.schemas.media import (
     CursorPage,
@@ -243,12 +244,18 @@ def format_timestamp(seconds: float) -> str:
     return f"{hrs:02d}:{mins:02d}:{secs:02d}.{ms:03d}"
 
 
+def _media_sort_keys(sort: str) -> list[SortKey]:
+    """"newest" orders by capture time, "latest" by when it was added."""
+    column = Media.created_at if sort == "newest" else Media.inserted_at
+    return [(column, False), (Media.id, False)]
+
+
 @router.get("/missing-geo", response_model=CursorPage)
 def get_missing_geo(
     session: Session = Depends(get_session),
     cursor: str | None = Query(
         None,
-        description="encoded as `<inserted_at>_<id>`; e.g. `2025-05-05T12:34:56.789012_1234`",
+        description="Opaque cursor from the previous page's `next_cursor`",
     ),
     limit: int = Query(100, ge=1, le=200),
 ):
@@ -256,37 +263,10 @@ def get_missing_geo(
         select(Media)
         .join(ExifData)
         .where(ExifData.lat.is_(None))
-        # Add a secondary unique sort key for stable ordering
-        .order_by(Media.inserted_at.desc(), Media.id.desc())
     )
-
-    if cursor:
-        try:
-            val_str, id_str = cursor.split("_", 1)
-            cursor_datetime = datetime.fromisoformat(val_str)
-            cursor_id = int(id_str)
-        except ValueError:
-            raise HTTPException(
-                status_code=400, detail="Invalid cursor format."
-            )
-        stmt = stmt.where(
-            or_(
-                Media.inserted_at < cursor_datetime,
-                and_(
-                    Media.inserted_at == cursor_datetime,
-                    Media.id < cursor_id,
-                ),
-            )
-        )
-
-    stmt = stmt.limit(limit)
-
-    results = session.exec(stmt).all()
-
-    next_cursor = None
-    if len(results) == limit:
-        last = results[-1]
-        next_cursor = f"{last.inserted_at.isoformat()}_{last.id}"
+    results, next_cursor = paginate(
+        session, stmt, _media_sort_keys("latest"), cursor=cursor, limit=limit
+    )
 
     return CursorPage(items=results, next_cursor=next_cursor)
 
@@ -318,10 +298,7 @@ def list_media(
     sort: Annotated[str, Query(enum=["newest", "latest"])] = "newest",
     cursor: str | None = Query(
         None,
-        description=(
-            "encoded as `<value>_<id>`; e.g. `2025-05-05T12:34:56.789012_1234` or"
-            " `2500_1234`"
-        ),
+        description="Opaque cursor from the previous page's `next_cursor`",
     ),
     limit: int = Query(100, ge=1, le=200),
     session: Session = Depends(get_session),
@@ -350,33 +327,6 @@ def list_media(
         elif not recursive:
             q = q.where(~normalized_path_expr.like("%/%"))
 
-    if sort == "newest":
-        sort_col = Media.created_at
-        parse_val_from_cursor = lambda val_str: datetime.fromisoformat(val_str)
-    elif sort == "latest":
-        sort_col = Media.inserted_at
-        parse_val_from_cursor = lambda val_str: datetime.fromisoformat(val_str)
-    else:
-        raise ValueError(f"Unsupported sort option: {sort}")
-
-    q = q.order_by(sort_col.desc(), Media.id.desc())
-
-    if cursor:
-        try:
-            val_str, id_str = cursor.split("_", 1)
-            prev_cursor_val = parse_val_from_cursor(val_str)
-            prev_cursor_id = int(id_str)
-        except ValueError:
-            logger.warning("Warning: Invalid cursor format: %s", cursor)
-        else:
-            q = q.where(
-                or_(
-                    sort_col < prev_cursor_val,
-                    and_(
-                        sort_col == prev_cursor_val, Media.id < prev_cursor_id
-                    ),
-                )
-            )
     if person_id:
         media_links_union = union_all(
             select(Face.media_id.label("media_id")).where(
@@ -388,14 +338,9 @@ def list_media(
         ).subquery()
         q = q.where(Media.id.in_(select(media_links_union.c.media_id)))
 
-    results = session.exec(q.limit(limit)).all()
-    if len(results) == limit:
-        last = results[-1]
-        v = getattr(last, "created_at" if sort == "newest" else "inserted_at")
-        val_token = v.isoformat()
-        next_cursor = f"{val_token}_{last.id}"
-    else:
-        next_cursor = None
+    results, next_cursor = paginate(
+        session, q, _media_sort_keys(sort), cursor=cursor, limit=limit, tag=sort
+    )
     return CursorPage(items=results, next_cursor=next_cursor)
 
 
@@ -597,52 +542,16 @@ def list_images(
     sort: Annotated[str, Query(enum=["newest", "latest"])] = "newest",
     cursor: str | None = Query(
         None,
-        description=(
-            "encoded as `<value>_<id>`; e.g. `2025-05-05T12:34:56.789012_1234` or"
-            " `2500_1234`"
-        ),
+        description="Opaque cursor from the previous page's `next_cursor`",
     ),
 ):
     stmt = select(Media).where(
         Media.duration.is_(None), col(Media.processing_error).is_(None)
     )  # images have no duration
 
-    if sort == "newest":
-        sort_col = Media.created_at
-        parse_val_from_cursor = lambda val_str: datetime.fromisoformat(val_str)
-    elif sort == "latest":
-        sort_col = Media.inserted_at
-        parse_val_from_cursor = lambda val_str: datetime.fromisoformat(val_str)
-    else:
-        raise ValueError(f"Unsupported sort option: {sort}")
-
-    stmt = stmt.order_by(sort_col.desc(), Media.id.desc())
-
-    if cursor:
-        try:
-            val_str, id_str = cursor.split("_", 1)
-            prev_cursor_val = parse_val_from_cursor(val_str)
-            prev_cursor_id = int(id_str)
-        except ValueError:
-            logger.warning("Warning: Invalid cursor format: %s", cursor)
-        else:
-            stmt = stmt.where(
-                or_(
-                    sort_col < prev_cursor_val,
-                    and_(
-                        sort_col == prev_cursor_val, Media.id < prev_cursor_id
-                    ),
-                )
-            )
-
-    medias = session.exec(stmt.limit(limit)).all()
-    if len(medias) == limit:
-        last = medias[-1]
-        v = getattr(last, "created_at" if sort == "newest" else "inserted_at")
-        val_token = v.isoformat()
-        next_cursor = f"{val_token}_{last.id}"
-    else:
-        next_cursor = None
+    medias, next_cursor = paginate(
+        session, stmt, _media_sort_keys(sort), cursor=cursor, limit=limit, tag=sort
+    )
     return CursorPage(items=medias, next_cursor=next_cursor)
 
 
@@ -652,39 +561,15 @@ def list_videos(
     session: Session = Depends(get_session),
     cursor: str | None = Query(
         None,
-        description=(
-            "encoded as `<value>_<id>`; e.g. `2025-05-05T12:34:56.789012_1234`"
-        ),
+        description="Opaque cursor from the previous page's `next_cursor`",
     ),
 ):
     stmt = select(Media).where(
         Media.duration != None, col(Media.processing_error).is_(None)
     )  # videos have a duration
-    stmt = stmt.order_by(Media.inserted_at.desc(), Media.id.desc())
-    if cursor:
-        try:
-            val_str, id_str = cursor.split("_", 1)
-            prev_cursor_val = datetime.fromisoformat(val_str)
-            prev_cursor_id = int(id_str)
-        except ValueError:
-            raise HTTPException(
-                status_code=400, detail="Invalid cursor format."
-            )
-        stmt = stmt.where(
-            or_(
-                Media.inserted_at < prev_cursor_val,
-                and_(
-                    Media.inserted_at == prev_cursor_val,
-                    Media.id < prev_cursor_id,
-                ),
-            )
-        )
-    results = session.exec(stmt.limit(limit)).all()
-    if len(results) == limit:
-        last = results[-1]
-        next_cursor = f"{last.inserted_at.isoformat()}_{last.id}"
-    else:
-        next_cursor = None
+    results, next_cursor = paginate(
+        session, stmt, _media_sort_keys("latest"), cursor=cursor, limit=limit
+    )
     return CursorPage(items=results, next_cursor=next_cursor)
 
 
@@ -697,52 +582,16 @@ def list_favorites(
     sort: Annotated[str, Query(enum=["newest", "latest"])] = "newest",
     cursor: str | None = Query(
         None,
-        description=(
-            "encoded as `<value>_<id>`; e.g. `2025-05-05T12:34:56.789012_1234` or"
-            " `2500_1234`"
-        ),
+        description="Opaque cursor from the previous page's `next_cursor`",
     ),
 ):
     stmt = select(Media).where(
         Media.is_favorite == True, col(Media.processing_error).is_(None)
     )
 
-    if sort == "newest":
-        sort_col = Media.created_at
-        parse_val_from_cursor = lambda val_str: datetime.fromisoformat(val_str)
-    elif sort == "latest":
-        sort_col = Media.inserted_at
-        parse_val_from_cursor = lambda val_str: datetime.fromisoformat(val_str)
-    else:
-        raise ValueError(f"Unsupported sort option: {sort}")
-
-    stmt = stmt.order_by(sort_col.desc(), Media.id.desc())
-
-    if cursor:
-        try:
-            val_str, id_str = cursor.split("_", 1)
-            prev_cursor_val = parse_val_from_cursor(val_str)
-            prev_cursor_id = int(id_str)
-        except ValueError:
-            logger.warning("Warning: Invalid cursor format: %s", cursor)
-        else:
-            stmt = stmt.where(
-                or_(
-                    sort_col < prev_cursor_val,
-                    and_(
-                        sort_col == prev_cursor_val, Media.id < prev_cursor_id
-                    ),
-                )
-            )
-
-    medias = session.exec(stmt.limit(limit)).all()
-    if len(medias) == limit:
-        last = medias[-1]
-        v = getattr(last, "created_at" if sort == "newest" else "inserted_at")
-        val_token = v.isoformat()
-        next_cursor = f"{val_token}_{last.id}"
-    else:
-        next_cursor = None
+    medias, next_cursor = paginate(
+        session, stmt, _media_sort_keys(sort), cursor=cursor, limit=limit, tag=sort
+    )
     return CursorPage(items=medias, next_cursor=next_cursor)
 
 
@@ -963,8 +812,7 @@ def get_media(media_id: int, session: Session = Depends(get_session)):
                     ),
                 )
             )
-    orphans = safe_execute(
-        session,
+    orphans = session.exec(
         select(Face).where(
             Face.media_id == media_id, Face.person_id.is_(None)
         ),
@@ -1012,11 +860,6 @@ def scenes_vtt(
     status_code=status.HTTP_204_NO_CONTENT,
 )
 def delete_media_file(media_id: int, session: Session = Depends(get_session)):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in settings.general.presentation_mode mode.",
-        )
     delete_file(session, media_id)
 
 
@@ -1029,11 +872,6 @@ def delete_media_record(
     media_id: int,
     session: Session = Depends(get_session),
 ):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in settings.general.presentation_mode mode.",
-        )
     delete_record(media_id, session)
 
 
@@ -1168,8 +1006,6 @@ def create_scene(
     background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
 ):
-    if settings.general.presentation_mode:
-        raise HTTPException(403, "Not allowed in presentation mode")
     media = session.get(Media, media_id)
     if not media:
         raise HTTPException(404, "Media not found")
@@ -1241,8 +1077,6 @@ def delete_scene(
     scene_id: int,
     session: Session = Depends(get_session),
 ):
-    if settings.general.presentation_mode:
-        raise HTTPException(403, "Not allowed in presentation mode")
     scene = session.exec(
         select(Scene).where(Scene.id == scene_id, Scene.media_id == media_id)
     ).first()
@@ -1258,11 +1092,6 @@ def update_geolocation(
     data: GeoUpdate,
     session: Session = Depends(get_session),
 ):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in settings.general.presentation_mode mode.",
-        )
     media = session.exec(
         select(Media)
         .options(selectinload(Media.exif))
@@ -1294,8 +1123,6 @@ def update_favorite(
     data: FavoriteUpdate,
     session: Session = Depends(get_session),
 ):
-    if settings.general.presentation_mode:
-        raise HTTPException(403, "Not allowed in presentation mode")
     media = session.get(Media, media_id)
     if not media:
         raise HTTPException(404, "Media not found")

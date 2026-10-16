@@ -28,13 +28,14 @@ from scenedetect import (
     open_video,
 )
 from scenedetect.video_splitter import TimecodePair
-from sqlalchemy import and_, delete, distinct, func, or_, text, union_all
+from sqlalchemy import and_, distinct, func, or_, union_all
 from sqlmodel import Session, delete, select, text, update
 
 from app.config import settings
 from app.database import safe_commit
 from app.ffmpeg import ensure_ffmpeg_available
 from app.logger import logger
+from app.presentation import ensure_writable
 from app.models import (
     Album,
     AlbumMediaLink,
@@ -836,83 +837,136 @@ def generate_thumbnail(media: Media) -> tuple[str | None, str | None]:
     )
 
 
-def get_person_embedding(
-    session: Session,
-    person_id: int,
-    face_embeddings: list | None = None,
-    new: bool = False,
-) -> bytes | None:
-    if not face_embeddings:
-        if not new:
-            person_embedding = session.exec(
-                text(
-                    "SELECT embedding FROM person_embeddings WHERE person_id=:p_id"
-                ).bindparams(p_id=person_id)
-            ).first()
-            if person_embedding:
-                blob = vector_to_blob(person_embedding[0])
-                if blob:
-                    return blob
-
-        face_embeddings = [
-            row[0]
-            for row in session.exec(
-                text(
-                    "SELECT embedding FROM face_embeddings WHERE person_id = :p_id"
-                ).bindparams(p_id=person_id)
-            ).all()
-        ]
-
-    if not face_embeddings:
-        logger.warning("No embeddings found for person %s", person_id)
-        return None
-
+def _normalized_person_face_vectors(
+    session: Session, person_id: int
+) -> list[np.ndarray]:
+    """Unit-length embeddings of every face assigned to the person, skipping
+    missing, empty or degenerate vectors."""
+    rows = session.exec(
+        text("SELECT embedding FROM face_embeddings WHERE person_id = :pid").bindparams(
+            pid=person_id
+        )
+    ).all()
     vectors: list[np.ndarray] = []
-    for emb in face_embeddings:
-        vec = vector_from_stored(emb)
-        if vec is None:
+    for (stored,) in rows:
+        vec = vector_from_stored(stored)
+        if vec is None or vec.size == 0:
             continue
-        vectors.append(vec.astype(np.float32, copy=False))
+        norm = float(np.linalg.norm(vec))
+        if not np.isfinite(norm) or norm == 0.0:
+            continue
+        vectors.append((vec / norm).astype(np.float32, copy=False))
+    return vectors
 
+
+def compute_person_centroid(session: Session, person_id: int) -> np.ndarray | None:
+    """Normalized mean of the person's normalized face embeddings, or None if
+    the person has no usable face embeddings."""
+    vectors = _normalized_person_face_vectors(session, person_id)
     if not vectors:
-        logger.warning("All embeddings were invalid for person %s", person_id)
         return None
-
-    embeddings_array = np.stack(vectors)
-    centroid = embeddings_array.mean(axis=0)
+    centroid = np.vstack(vectors).mean(axis=0)
     norm = float(np.linalg.norm(centroid))
-    if np.isfinite(norm) and norm > 0.0:
-        centroid /= norm
-
-    blob = vector_to_blob(centroid)
-    return blob
+    if norm > 0.0 and np.isfinite(norm):
+        centroid = centroid / norm
+    return centroid.astype(np.float32, copy=False)
 
 
-def update_person_embedding(session: Session, person_id: int):
-    centroid = get_person_embedding(session, person_id, new=True)
+def get_person_embedding(session: Session, person_id: int) -> bytes | None:
+    """The person's stored centroid, computed on the fly if none is stored."""
+    row = session.exec(
+        text("SELECT embedding FROM person_embeddings WHERE person_id=:p_id").bindparams(
+            p_id=person_id
+        )
+    ).first()
+    if row:
+        blob = vector_to_blob(row[0])
+        if blob:
+            return blob
+    centroid = compute_person_centroid(session, person_id)
     if centroid is None:
-        return
-    del_sql = text(
-        """
-        DELETE FROM person_embeddings WHERE person_id=:p_id
-    """
-    ).bindparams(p_id=person_id)
-    session.exec(del_sql)
-    sql = text(
-        """
-        INSERT INTO person_embeddings(person_id, embedding)
-        VALUES (:p_id, :emb)
-    """
-    ).bindparams(p_id=person_id, emb=centroid)
-    session.exec(sql)
-    safe_commit(session)
+        logger.debug("No usable face embeddings for person %s", person_id)
+        return None
+    return vector_to_blob(centroid)
 
 
-def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
-    na, nb = np.linalg.norm(a), np.linalg.norm(b)
-    if na == 0 or nb == 0:
-        return 0.0
-    return float(a.dot(b) / (na * nb))
+def person_has_appearances(session: Session, person_id: int) -> bool:
+    """True if any face or manual media link still points at the person."""
+    if session.exec(select(Face.id).where(Face.person_id == person_id)).first():
+        return True
+    return (
+        session.exec(
+            select(PersonMediaLink.media_id).where(
+                PersonMediaLink.person_id == person_id
+            )
+        ).first()
+        is not None
+    )
+
+
+def rebuild_person_embedding(session: Session, person_id: int) -> bool:
+    """Recompute and store the person's centroid after their faces changed.
+
+    Also cleans up after the change: a person left without any faces or
+    manual media links is removed, and a profile face that no longer belongs
+    to the person is re-selected. Returns False if the person no longer
+    exists. Does not commit.
+    """
+    person = session.get(Person, person_id)
+    if person is None:
+        return False
+    session.flush()
+    if not person_has_appearances(session, person_id):
+        remove_person(person_id, session)
+        return False
+
+    session.exec(
+        text("DELETE FROM person_embeddings WHERE person_id = :pid").bindparams(
+            pid=person_id
+        )
+    )
+    centroid = compute_person_centroid(session, person_id)
+    blob = vector_to_blob(centroid) if centroid is not None else None
+    if blob is not None:
+        session.exec(
+            text(
+                """
+                INSERT INTO person_embeddings(person_id, embedding)
+                VALUES (:pid, :emb)
+                """
+            ).bindparams(pid=person_id, emb=blob)
+        )
+
+    profile = person.profile_face
+    if person.profile_face_id is None or profile is None or (
+        profile.person_id != person_id
+    ):
+        auto_select_profile_face(session, person_id)
+    return True
+
+
+def set_face_embedding_person(
+    session: Session, face_ids: Iterable[int], person_id: int | None
+) -> None:
+    """Mirror face→person assignments into the face_embeddings vec table
+    (-1 means unassigned)."""
+    params = [
+        {"p_id": person_id if person_id is not None else -1, "f_id": fid}
+        for fid in face_ids
+    ]
+    if params:
+        session.connection().execute(
+            text("UPDATE face_embeddings SET person_id=:p_id WHERE face_id=:f_id"),
+            params,
+        )
+
+
+def delete_face_embeddings(session: Session, face_ids: Iterable[int]) -> None:
+    params = [{"f_id": fid} for fid in face_ids]
+    if params:
+        session.connection().execute(
+            text("DELETE FROM face_embeddings WHERE face_id=:f_id"), params
+        )
 
 
 def _split_by_scenes(
@@ -1883,11 +1937,9 @@ def delete_file(session: Session, media_id: int):
 
 
 def remove_person(person_id, session):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in settings.general.presentation_mode mode.",
-        )
+    """Delete a person, unassigning their faces and dropping everything that
+    references them. Does not commit."""
+    ensure_writable()
     person = session.get(Person, person_id)
     if not person:
         raise HTTPException(status_code=404, detail="Person not found")
@@ -1895,14 +1947,8 @@ def remove_person(person_id, session):
     faces = session.exec(select(Face).where(Face.person_id == person_id)).all()
     for face in faces:
         face.person_id = None
-        sql = text(
-            """
-                Update face_embeddings
-                SET person_id=-1
-                WHERE face_id=:f_id
-                """
-        ).bindparams(f_id=face.id)
-        session.exec(sql)
+        session.add(face)
+    set_face_embedding_person(session, [face.id for face in faces], None)
     sql = text(
         """
         DELETE FROM person_embeddings
@@ -1928,7 +1974,6 @@ def remove_person(person_id, session):
         delete(PersonMediaLink).where(PersonMediaLink.person_id == person_id)
     )
     session.delete(person)
-    safe_commit(session)
 
 
 def _distance_to_similarity(dist: float) -> float:

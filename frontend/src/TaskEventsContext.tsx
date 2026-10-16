@@ -26,6 +26,7 @@ const INITIAL_COUNTERS: Record<TaskType, number> = {
   generate_hashes: 0,
   build_events: 0,
   geocode_places: 0,
+  export_person_media: 0,
 };
 
 const BASE_POLL_INTERVAL_MS = 2000;

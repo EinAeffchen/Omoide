@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, func, or_
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import and_
 from sqlmodel import Session, select
 
 from app.api._resolve import resolve_media_action
 from app.database import get_session
 from app.models import Media
+from app.pagination import count_rows, paginate
 from app.schemas.blur import BlurMediaItem, BlurPage, BlurResolveRequest
 
 router = APIRouter()
@@ -38,30 +39,14 @@ def get_blurry_media(
     """Paginated list of media with laplacian_score below the threshold, ordered blurriest-first."""
     base_filter = _base_filter(threshold, media_type)
 
-    total = session.exec(select(func.count(Media.id)).where(base_filter)).first() or 0
-
-    query = select(Media).where(base_filter).order_by(
-        Media.laplacian_score.asc(), Media.id.asc()
+    total = count_rows(session, Media.id, base_filter)
+    rows, next_cursor = paginate(
+        session,
+        select(Media).where(base_filter),
+        [(Media.laplacian_score, True), (Media.id, True)],
+        cursor=cursor,
+        limit=limit,
     )
-
-    if cursor:
-        try:
-            score_str, id_str = cursor.split("_", 1)
-            cursor_score = float(score_str)
-            cursor_id = int(id_str)
-            query = query.where(
-                or_(
-                    Media.laplacian_score > cursor_score,
-                    and_(
-                        Media.laplacian_score == cursor_score,
-                        Media.id > cursor_id,
-                    ),
-                )
-            )
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid cursor format.")
-
-    rows = session.exec(query.limit(limit)).all()
 
     items = [
         BlurMediaItem(
@@ -78,11 +63,6 @@ def get_blurry_media(
         )
         for m in rows
     ]
-
-    next_cursor = None
-    if len(rows) == limit:
-        last = rows[-1]
-        next_cursor = f"{last.laplacian_score}_{last.id}"
 
     return BlurPage(items=items, next_cursor=next_cursor, total=total)
 

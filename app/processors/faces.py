@@ -7,14 +7,12 @@ import numpy as np
 from cv2.typing import MatLike
 from PIL import Image, ImageOps
 from sqlmodel import select, text
-from tqdm import tqdm
 
 from app.accelerators import resolve_onnx_providers
-from app.api.media import delete_media_record
 from app.config import FaceDetectionModel, settings
 from app.database import safe_commit
 from app.logger import logger
-from app.models import ExifData, Face, Media, Person, Scene
+from app.models import Face, Media, Person, Scene
 from app.processors.base import MediaProcessor
 from app.utils import (
     PROCESSING_MAX_DIM,
@@ -295,7 +293,8 @@ class FaceProcessor(MediaProcessor):
             )
             scenes = [scenes[i] for i in indices]
 
-        for scene in tqdm(scenes):
+        unreadable_scenes = 0
+        for scene in scenes:
             scene_timestamp: float | None = None
             try:
                 if isinstance(scene, tuple):
@@ -322,10 +321,14 @@ class FaceProcessor(MediaProcessor):
                 else:
                     # photo: already oriented RGB at processing size
                     scene = scene.rgb
-            except OSError:
-                logger.warning("FAILED ON %s", media.path)
-                delete_media_record(media.id, session)
-                return False
+            except OSError as exc:
+                # One unreadable scene thumbnail doesn't make the media broken;
+                # skip it and only flag the media if no scene was readable.
+                logger.warning(
+                    "Could not read scene frame for %s: %s", media.path, exc
+                )
+                unreadable_scenes += 1
+                continue
 
             # Guard against invalid/empty frames
             if scene is None:
@@ -415,6 +418,12 @@ class FaceProcessor(MediaProcessor):
                         """
                 ).bindparams(id=face_obj.id, emb=blob)
                 session.exec(sql)
+        if scenes and unreadable_scenes == len(scenes):
+            media.processing_error = (
+                "Face detection failed: none of the scene frames could be read."
+            )
+            session.add(media)
+            return False
         media.faces_extracted = True
         session.add(media)
         safe_commit(session)
@@ -459,8 +468,9 @@ class FaceProcessor(MediaProcessor):
         model = FaceAnalysis(
             "buffalo_l",
             root=root,
-            # Avoid 3D landmark module which can error on some frames.
-            allowed_modules=["detection", "landmark_2d_106", "recognition"],
+            # Alignment and frontality only use the detector's 5-point kps,
+            # so the landmark models would be dead weight per face.
+            allowed_modules=["detection", "recognition"],
             providers=providers,
         )
         detector = settings.face_recognition.face_detection_model
@@ -481,9 +491,7 @@ class FaceProcessor(MediaProcessor):
         pass  # Keep InsightFace warm to avoid reload cost on the next run
 
     def get_results(self, media_id: int, session):
-        return session.exec(
-            select(ExifData).where(ExifData.media_id == media_id)
-        ).first()
+        return session.exec(select(Face).where(Face.media_id == media_id)).all()
 
     def get_pending_condition(self):
         return Media.faces_extracted == False  # noqa: E712

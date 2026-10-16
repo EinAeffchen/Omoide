@@ -26,7 +26,7 @@ def load_processors() -> list[MediaProcessor]:
     if processors:
         return processors
 
-    # Lazy import to avoid importing heavy deps (torch/onnx) on startup
+    # Lazy import to avoid importing heavy deps (onnxruntime) on startup
     from app.processors.blur import BlurProcessor
     from app.processors.exif import ExifProcessor
     from app.processors.embedding_extractor import EmbeddingExtractor

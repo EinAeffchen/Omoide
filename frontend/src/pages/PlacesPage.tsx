@@ -14,7 +14,7 @@ import {
 import PublicIcon from "@mui/icons-material/Public";
 import TravelExploreIcon from "@mui/icons-material/TravelExplore";
 import { Link } from "react-router-dom";
-import { API } from "../config";
+import config, { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
 import { EmptyState } from "../components/EmptyState";
 import { getPlaces, startGeocodePlaces } from "../services/features";
@@ -63,13 +63,15 @@ export default function PlacesPage() {
             Places
           </Typography>
         </Box>
-        <Button
-          variant="outlined"
-          startIcon={<TravelExploreIcon />}
-          onClick={handleGeocode}
-        >
-          Geocode new media
-        </Button>
+        {!config.PRESENTATION_MODE && (
+          <Button
+            variant="outlined"
+            startIcon={<TravelExploreIcon />}
+            onClick={handleGeocode}
+          >
+            Geocode new media
+          </Button>
+        )}
       </Box>
 
       {error && (
@@ -86,7 +88,11 @@ export default function PlacesPage() {
         <EmptyState
           icon={<PublicIcon />}
           title="No places yet"
-          description="Run “Geocode new media” to turn GPS data into browsable cities and countries (offline)."
+          description={
+            config.PRESENTATION_MODE
+              ? undefined
+              : "Run “Geocode new media” to turn GPS data into browsable cities and countries (offline)."
+          }
         />
       ) : (
         places.map((country) => (

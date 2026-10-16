@@ -139,7 +139,7 @@ export default function EventDetailPage() {
             <Typography variant="h5" fontWeight={700}>
               {event?.title || dateRange || "Event"}
             </Typography>
-            {event && (
+            {event && !config.PRESENTATION_MODE && (
               <IconButton size="small" onClick={startRenaming}>
                 <EditIcon fontSize="small" />
               </IconButton>
@@ -147,7 +147,7 @@ export default function EventDetailPage() {
           </>
         )}
         <Box flexGrow={1} />
-        {event && (
+        {event && !config.PRESENTATION_MODE && (
           <Button
             variant="outlined"
             size="small"

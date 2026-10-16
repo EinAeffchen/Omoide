@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, func, or_
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import and_
 from sqlmodel import Session, select
 
 from app.api._resolve import resolve_media_action
 from app.database import get_session
 from app.models import Media
+from app.pagination import count_rows, paginate
 from app.schemas.shortvideos import ShortVideoItem, ShortVideoPage, ShortVideoResolveRequest
 
 router = APIRouter()
@@ -32,30 +33,14 @@ def get_short_videos(
     """Paginated list of videos shorter than max_duration seconds, ordered shortest-first."""
     base_filter = _base_filter(max_duration)
 
-    total = session.exec(select(func.count(Media.id)).where(base_filter)).first() or 0
-
-    query = select(Media).where(base_filter).order_by(
-        Media.duration.asc(), Media.id.asc()
+    total = count_rows(session, Media.id, base_filter)
+    rows, next_cursor = paginate(
+        session,
+        select(Media).where(base_filter),
+        [(Media.duration, True), (Media.id, True)],
+        cursor=cursor,
+        limit=limit,
     )
-
-    if cursor:
-        try:
-            dur_str, id_str = cursor.split("_", 1)
-            cursor_dur = float(dur_str)
-            cursor_id = int(id_str)
-            query = query.where(
-                or_(
-                    Media.duration > cursor_dur,
-                    and_(
-                        Media.duration == cursor_dur,
-                        Media.id > cursor_id,
-                    ),
-                )
-            )
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid cursor format.")
-
-    rows = session.exec(query.limit(limit)).all()
 
     items = [
         ShortVideoItem(
@@ -71,11 +56,6 @@ def get_short_videos(
         )
         for m in rows
     ]
-
-    next_cursor = None
-    if len(rows) == limit:
-        last = rows[-1]
-        next_cursor = f"{last.duration}_{last.id}"
 
     return ShortVideoPage(items=items, next_cursor=next_cursor, total=total)
 

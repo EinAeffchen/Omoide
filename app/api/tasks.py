@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
@@ -12,7 +11,7 @@ from sqlmodel import Session, select
 from app.config import settings
 from app.database import get_session, safe_commit
 from app.logger import logger
-from app.models import Media, ProcessingTask, ProcessingTaskRead
+from app.models import ProcessingTask, ProcessingTaskRead
 from app.tasks import (
     clean_missing_files,
     compute_blur_scores,
@@ -37,7 +36,6 @@ from app.tasks import (
 from app.tasks import (
     state as task_state,
 )
-from app.utils import get_image_taken_date, get_video_taken_date
 
 router = APIRouter()
 
@@ -58,43 +56,6 @@ async def start_media_processing(
         task_type="process_media",
         callable_task=run_media_processing,
     )
-
-
-@router.post(
-    "/refresh_creation_date",
-    summary="Refresh creation timestamps for media without EXIF info",
-)
-async def start_creation_refresh(
-    session: Session = Depends(get_session),
-):
-    logger.info("Starting creation_date refresh!")
-    batch_size = 100
-    batch_count = 0
-    offset = 0
-    while True:
-        media_batch = session.exec(select(Media).offset(offset).limit(batch_size)).all()
-
-        if not media_batch:
-            break
-
-        for media in media_batch:
-            media_path_obj = Path(media.path)
-            if not media_path_obj.exists():
-                continue
-            if media.duration is not None:
-                # Keep the existing date when the container has no usable
-                # creation_time instead of resetting it to file ctime.
-                video_date = get_video_taken_date(media_path_obj)
-                if video_date is not None:
-                    media.created_at = video_date
-            else:
-                media.created_at = get_image_taken_date(media_path_obj)
-
-        offset += batch_size
-        session.commit()
-        batch_count += 1
-        logger.info("Finished batch: %s", batch_count)
-    return {"status": "ok"}
 
 
 @router.post(
@@ -123,7 +84,9 @@ def start_scan(
     session: Session = Depends(get_session),
 ):
     if not settings.general.media_dirs:
-        raise HTTPException(status_code=400, detail="No media directories configured.")
+        raise HTTPException(
+            status_code=400, detail="No media directories configured."
+        )
     task = create_and_run_task(
         session=session,
         background_tasks=background_tasks,
@@ -147,7 +110,9 @@ def start_duplicate_detection(
         session=session,
         background_tasks=background_tasks,
         task_type="find_duplicates",
-        callable_task=lambda task_id: run_duplicate_detection(task_id, threshold),
+        callable_task=lambda task_id: run_duplicate_detection(
+            task_id, threshold
+        ),
     )
     return task
 
@@ -311,21 +276,11 @@ async def start_backfill_face_quality(
 
 @router.post("/reset/processing", summary="Resets media processing status")
 def reset_processing(session: Session = Depends(get_session)):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in settings.general.presentation_mode mode.",
-        )
     return reset_processing_task(session)
 
 
 @router.post("/reset/clustering", summary="Resets person clustering")
 def reset_clustering(session: Session = Depends(get_session)):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in settings.general.presentation_mode mode.",
-        )
     return reset_clustering_task(session)
 
 
@@ -334,11 +289,6 @@ def cancel_task(
     task_id: str,
     session: Session = Depends(get_session),
 ):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in settings.general.presentation_mode mode.",
-        )
     task = session.get(ProcessingTask, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -348,7 +298,7 @@ def cancel_task(
             detail=f"Cannot cancel task in status {task.status}",
         )
     task.status = "cancelled"
-    task.finished_at = datetime.now(timezone.utc)
+    task.finished_at = datetime.now(UTC)
     session.add(task)
     safe_commit(session)
     return task
@@ -388,7 +338,9 @@ def list_active_tasks(session: Session = Depends(get_session)):
     response_model=list[task_state.TaskFailure],
     summary="List captured errors for a task",
 )
-def get_task_failures_endpoint(task_id: str, session: Session = Depends(get_session)):
+def get_task_failures_endpoint(
+    task_id: str, session: Session = Depends(get_session)
+):
     task = session.get(ProcessingTask, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")

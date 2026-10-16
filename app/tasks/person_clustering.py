@@ -13,7 +13,6 @@ from sklearn.decomposition import PCA
 from sklearn.neighbors import NearestNeighbors
 from sqlalchemy import func, text, update
 from sqlmodel import Session, select
-from tqdm import tqdm
 
 import app.database as db
 from app.concurrency import heavy_writer
@@ -29,8 +28,10 @@ from app.models import (
 from app.utils import (
     _distance_to_similarity,
     complete_task,
+    rebuild_person_embedding,
     recalculate_person_appearance_counts,
     remove_person,
+    set_face_embedding_person,
     vector_from_stored,
     vector_to_blob,
 )
@@ -486,68 +487,6 @@ def _run_clustering(
     return labels, cluster_count, noise_ratio, elapsed
 
 
-def rebuild_person_embedding(session: Session, person_id: int) -> None:
-    rows = session.exec(
-        text("SELECT embedding FROM face_embeddings WHERE person_id = :pid").bindparams(
-            pid=person_id
-        )
-    ).all()
-    vectors: list[np.ndarray] = []
-    for (stored,) in rows:
-        vec = vector_from_stored(stored)
-        if vec is None or vec.size == 0:
-            continue
-        norm = float(np.linalg.norm(vec))
-        if not np.isfinite(norm) or norm == 0.0:
-            continue
-        vectors.append((vec / norm).astype(np.float32, copy=False))
-
-    # In case the person we try to recalculate the embedding for has no faces,
-    # we can safely remove that person, otherwise only remove the person embeddings
-    # so it can be recalculated later, when face embeddings are calculated
-    if not vectors:
-        faces_count_row = session.exec(
-            select(func.count(Face.id)).where(Face.person_id == person_id)
-        ).one()
-        faces_count = (
-            int(faces_count_row[0])
-            if isinstance(faces_count_row, tuple)
-            else int(faces_count_row)
-        )
-        if faces_count == 0:
-            remove_person(person_id, session)
-        else:
-            logger.debug(
-                "Skipping centroid rebuild for person %s; no embeddings available yet",
-                person_id,
-            )
-        return
-
-    session.exec(
-        text("DELETE FROM person_embeddings WHERE person_id = :pid").bindparams(
-            pid=person_id
-        )
-    )
-
-    centroid = np.vstack(vectors).mean(axis=0)
-    norm = float(np.linalg.norm(centroid))
-    if norm > 0.0 and np.isfinite(norm):
-        centroid = (centroid / norm).astype(np.float32, copy=False)
-    else:
-        centroid = centroid.astype(np.float32, copy=False)
-
-    blob = vector_to_blob(centroid)
-    if blob is not None:
-        session.exec(
-            text(
-                """
-                INSERT INTO person_embeddings(person_id, embedding)
-                VALUES (:pid, :emb)
-                """
-            ).bindparams(pid=person_id, emb=blob)
-        )
-
-
 def _merge_person_pair(
     session: Session, id_a: int, id_b: int
 ) -> tuple[int, int] | None:
@@ -875,7 +814,7 @@ def _assign_faces_to_clusters(
     new_person_ids: list[int] = []
     min_face_count = int(settings.face_recognition.person_min_face_count)
     max_radius = float(settings.face_recognition.person_cluster_max_l2_radius)
-    for face_ids, embeddings in tqdm(clusters.values()):
+    for face_ids, embeddings in clusters.values():
         if len(face_ids) < min_face_count:
             continue
 
@@ -949,40 +888,13 @@ def _assign_faces_to_clusters(
             created += 1
             new_person_ids.append(new_person.id)
 
-            for face_id in face_ids:
-                face = session.get(Face, face_id)
-                if face:
-                    face.person_id = new_person.id
-                    session.add(face)
-
-            for face_id in face_ids:
-                sql_face_emb = text(
-                    "UPDATE face_embeddings SET person_id = :p_id WHERE face_id= :f_id"
-                ).bindparams(p_id=new_person.id, f_id=face_id)
-                session.exec(sql_face_emb)
-
-            session.exec(
-                text(
-                    """
-                    DELETE FROM person_embeddings WHERE person_id=:p_id
-                    """
-                ).bindparams(p_id=new_person.id)
-            )
-            centroid_blob = vector_to_blob(centroid)
-            if centroid_blob is None:
-                logger.warning(
-                    "Unable to serialize centroid for new person %s; skipping embedding"
-                    " write",
-                    new_person.id,
-                )
-            else:
-                sql_person_emb = text(
-                    """
-                    INSERT INTO person_embeddings(person_id, embedding)
-                    VALUES (:p_id, :emb)
-                    """
-                ).bindparams(p_id=new_person.id, emb=centroid_blob)
-                session.exec(sql_person_emb)
+            for face in session.exec(
+                select(Face).where(Face.id.in_(face_ids))
+            ).all():
+                face.person_id = new_person.id
+                session.add(face)
+            set_face_embedding_person(session, face_ids, new_person.id)
+            rebuild_person_embedding(session, new_person.id)
 
             if update_progress and task is not None:
                 task.processed += len(face_ids)

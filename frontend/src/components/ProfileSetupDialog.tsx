@@ -31,6 +31,7 @@ import {
 } from "../services/config";
 import { getActiveTasks } from "../services/taskActions";
 import type { AppConfig, ProfileListResponse } from "../types";
+import config from "../config";
 
 const LS_KEY = "omoide.profile.onboarding.v1";
 
@@ -59,6 +60,11 @@ export default function ProfileSetupDialog() {
 
   useEffect(() => {
     let cancelled = false;
+    // Read-only showcase: never prompt for profile setup
+    if (config.PRESENTATION_MODE) {
+      setLoading(false);
+      return;
+    }
     const init = async () => {
       try {
         setLoading(true);
@@ -66,7 +72,7 @@ export default function ProfileSetupDialog() {
         if (cancelled) return;
         setCfg(c);
 
-        if (c.general.is_docker) {
+        if (c.general.is_docker || c.general.presentation_mode) {
           // Profiles unsupported in Docker; never show dialog
           setOpen(false);
           return;

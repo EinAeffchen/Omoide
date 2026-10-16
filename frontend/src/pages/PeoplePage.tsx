@@ -295,27 +295,31 @@ export default function PeoplePage() {
             ))}
           </TextField>
           <PersonThumbSizeToggle value={thumbSize} onChange={setThumbSize} />
-          {selectionMode && (
-            <Typography variant="body2" color="text.secondary">
-              {selectedCount} selected
-            </Typography>
+          {!config.PRESENTATION_MODE && (
+            <>
+              {selectionMode && (
+                <Typography variant="body2" color="text.secondary">
+                  {selectedCount} selected
+                </Typography>
+              )}
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={handleSelectionModeToggle}
+              >
+                {selectionMode ? "Cancel Selection" : "Select People"}
+              </Button>
+              <Button
+                variant="contained"
+                color="error"
+                size="small"
+                onClick={handleDeleteSelected}
+                disabled={!selectionMode || selectedCount === 0 || isDeleting}
+              >
+                {isDeleting ? "Deleting..." : "Delete Selected"}
+              </Button>
+            </>
           )}
-          <Button
-            variant="outlined"
-            size="small"
-            onClick={handleSelectionModeToggle}
-          >
-            {selectionMode ? "Cancel Selection" : "Select People"}
-          </Button>
-          <Button
-            variant="contained"
-            color="error"
-            size="small"
-            onClick={handleDeleteSelected}
-            disabled={!selectionMode || selectedCount === 0 || isDeleting}
-          >
-            {isDeleting ? "Deleting..." : "Delete Selected"}
-          </Button>
         </Stack>
       </Stack>
 

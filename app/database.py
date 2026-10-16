@@ -2,12 +2,9 @@ import ctypes
 import ctypes.util
 import os
 import sys
-import time
 from pathlib import Path
 
 from sqlalchemy import event
-from sqlalchemy.engine.result import ScalarResult
-from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, create_engine
 
 from app.config import settings
@@ -100,30 +97,36 @@ def _ctypes_load_extension(conn, ext_path: str) -> None:
         enable_fn(db_ptr, 0)
 
 
+def _default_frozen_vec_path() -> None:
+    """In a frozen build, point SQLITE_VEC_PATH at the bundled vec0 binary
+    unless the user already set it."""
+    if not (getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS")):
+        return
+    if os.environ.get("SQLITE_VEC_PATH"):
+        return
+    base = Path(sys._MEIPASS)
+    candidates: list[Path] = []
+    try:
+        for pat in ("vec0*.dll", "vec0*.so", "vec0*.dylib"):
+            candidates += list(base.glob(pat))
+    except Exception:
+        candidates = []
+    if candidates:
+        os.environ["SQLITE_VEC_PATH"] = str(candidates[0])
+        return
+    vec_name = {
+        "win32": "vec0.dll",
+        "cygwin": "vec0.dll",
+        "darwin": "vec0.dylib",
+    }.get(sys.platform, "vec0.so")
+    os.environ["SQLITE_VEC_PATH"] = str(base / vec_name)
+
+
 def _attach_engine_listeners(eng):
     """Attach sqlite-vec loader and PRAGMA setup to the given engine."""
 
     def _load_sqlite_extensions(dbapi_conn, connection_record):
-        # Resolve path to the bundled vec0 binary (frozen build only).
-        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-            base = Path(sys._MEIPASS)
-            if not os.environ.get("SQLITE_VEC_PATH"):
-                candidates: list[Path] = []
-                try:
-                    for pat in ("vec0*.dll", "vec0*.so", "vec0*.dylib"):
-                        candidates += list(base.glob(pat))
-                except Exception:
-                    candidates = []
-                if candidates:
-                    os.environ["SQLITE_VEC_PATH"] = str(candidates[0])
-                else:
-                    vec_name = {
-                        "win32": "vec0.dll",
-                        "cygwin": "vec0.dll",
-                        "darwin": "vec0.dylib",
-                    }.get(sys.platform, "vec0.so")
-                    os.environ["SQLITE_VEC_PATH"] = str(base / vec_name)
-
+        _default_frozen_vec_path()
         vec_path = os.environ.get("SQLITE_VEC_PATH")
 
         if hasattr(dbapi_conn, "enable_load_extension"):
@@ -196,13 +199,10 @@ def reset_engine(new_url: str):
 
 
 def run_migrations():
-    """Ensure schema exists for the current database.
+    """Upgrade the current database to the latest Alembic revision.
 
-    Prefer Alembic migrations; if unavailable or failing (e.g., env
-    requires external sqlite-vec path), fall back to creating tables
-    via SQLModel metadata to support fresh/empty databases.
+    Failures are logged rather than raised so the app can still start.
     """
-    # Try Alembic first
     try:
         from alembic.config import Config
 
@@ -235,26 +235,7 @@ def run_migrations():
 
 def ensure_vec_tables():
     """Ensure vec0 virtual tables exist (idempotent)."""
-    # Try best to ensure the sqlite-vec extension can be located in binary mode
-    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-        # Provide default path to bundled vec0 binary if not set
-        base = Path(sys._MEIPASS)
-        if not os.environ.get("SQLITE_VEC_PATH"):
-            candidates = []
-            try:
-                for pat in ("vec0*.dll", "vec0*.so", "vec0*.dylib"):
-                    candidates += list(base.glob(pat))
-            except Exception:
-                candidates = []
-            if candidates:
-                os.environ["SQLITE_VEC_PATH"] = str(candidates[0])
-            else:
-                vec_name = {
-                    "win32": "vec0.dll",
-                    "cygwin": "vec0.dll",
-                    "darwin": "vec0.dylib",
-                }.get(sys.platform, "vec0.so")
-                os.environ.setdefault("SQLITE_VEC_PATH", str(base / vec_name))
+    _default_frozen_vec_path()
 
     dim_media = settings.ai.clip_model_embedding_size
     with engine.begin() as conn:
@@ -298,36 +279,21 @@ def ensure_vec_tables():
         )
 
 
-def safe_commit(session, retries=5, delay=0.5):
-    for i in range(retries):
-        try:
-            session.commit()
-            return
-        except OperationalError as e:
-            logger.error("OPERATION ERROR: %s", str(e))
-            if "locked" in str(e):
-                session.rollback()
-                if i < retries - 1:
-                    time.sleep(delay * (2**i))
-                    continue
-            session.rollback()
-            raise
-    raise RuntimeError("Failed to commit due to database lock.")
+def safe_commit(session: Session) -> None:
+    """Commit, rolling the session back if the commit fails.
 
-
-def safe_execute(session: Session, query, retries=5, delay=0.5) -> ScalarResult:
-    for i in range(retries):
-        try:
-            return session.exec(query)
-        except OperationalError as e:
-            if "locked" in str(e):
-                session.rollback()
-                if i < retries - 1:
-                    time.sleep(delay * (2**i))
-                    continue
-            session.rollback()
-            raise
-    raise RuntimeError("Failed to commit due to database lock.")
+    Lock contention is already absorbed by SQLite's busy timeout (see
+    ``_make_engine``). A failed commit cannot be retried in place: SQLAlchemy
+    requires a rollback first, and that rollback discards the pending
+    changes. So on failure we roll back to keep the session usable and
+    re-raise, letting the caller decide whether to redo its unit of work.
+    """
+    try:
+        session.commit()
+    except Exception:
+        logger.exception("Database commit failed; rolling back")
+        session.rollback()
+        raise
 
 
 def get_session():

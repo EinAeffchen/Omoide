@@ -18,7 +18,7 @@ import {
 import PhotoAlbumIcon from "@mui/icons-material/PhotoAlbum";
 import AddIcon from "@mui/icons-material/Add";
 import { Link } from "react-router-dom";
-import { API } from "../config";
+import config, { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
 import { EmptyState } from "../components/EmptyState";
 import { createAlbum, getAlbums } from "../services/features";
@@ -78,14 +78,16 @@ export default function AlbumsPage() {
             Albums
           </Typography>
         </Box>
-        <Button
-          variant="contained"
-          disableElevation
-          startIcon={<AddIcon />}
-          onClick={() => setCreateOpen(true)}
-        >
-          New Album
-        </Button>
+        {!config.PRESENTATION_MODE && (
+          <Button
+            variant="contained"
+            disableElevation
+            startIcon={<AddIcon />}
+            onClick={() => setCreateOpen(true)}
+          >
+            New Album
+          </Button>
+        )}
       </Box>
 
       {error && (
@@ -102,7 +104,11 @@ export default function AlbumsPage() {
         <EmptyState
           icon={<PhotoAlbumIcon />}
           title="No albums yet"
-          description="Create an album, then add media via Select Mode."
+          description={
+            config.PRESENTATION_MODE
+              ? undefined
+              : "Create an album, then add media via Select Mode."
+          }
         />
       ) : (
         <Box

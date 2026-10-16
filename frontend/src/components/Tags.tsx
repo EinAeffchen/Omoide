@@ -7,6 +7,7 @@ import {
   removeTagFromMedia,
   removeTagFromPerson,
 } from "../services/tagActions";
+import config from "../config";
 
 export interface TagsProps {
   media?: Media;
@@ -54,11 +55,15 @@ export function Tags({ media, person, onUpdate }: Readonly<TagsProps>) {
             to={`/tag/${tag.id}`}
             clickable
             // The onDelete prop adds a delete icon and handles the click
-            onDelete={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              handleRemove(tag);
-            }}
+            onDelete={
+              config.PRESENTATION_MODE
+                ? undefined
+                : (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    handleRemove(tag);
+                  }
+            }
             // Use the theme's accent color for a consistent look
             sx={{
               color: "accent.dark",

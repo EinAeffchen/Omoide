@@ -204,16 +204,18 @@ export function Header() {
           <ThemeToggleButton />
         </Box>
 
-        <Tooltip title={isSelecting ? `Select mode — ${selectedIds.size} selected` : "Select items"}>
-          <IconButton
-            onClick={toggleSelecting}
-            color={isSelecting ? "primary" : "default"}
-            size="large"
-            sx={{ p: 1 }}
-          >
-            {isSelecting ? <CheckBoxIcon /> : <CheckBoxOutlineBlankIcon />}
-          </IconButton>
-        </Tooltip>
+        {!config.PRESENTATION_MODE && (
+          <Tooltip title={isSelecting ? `Select mode — ${selectedIds.size} selected` : "Select items"}>
+            <IconButton
+              onClick={toggleSelecting}
+              color={isSelecting ? "primary" : "default"}
+              size="large"
+              sx={{ p: 1 }}
+            >
+              {isSelecting ? <CheckBoxIcon /> : <CheckBoxOutlineBlankIcon />}
+            </IconButton>
+          </Tooltip>
+        )}
 
         {!config.PRESENTATION_MODE && (
           <TaskStatusButton onClick={() => setIsControlPanelOpen(true)} />

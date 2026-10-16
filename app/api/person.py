@@ -1,13 +1,11 @@
-import base64
 from collections import deque
 from datetime import date, datetime
-import json
 from pathlib import Path
-import shutil
 from typing import Literal
 
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Body,
     Depends,
     HTTPException,
@@ -19,17 +17,16 @@ from sqlalchemy import (
     ColumnElement,
     and_,
     case,
-    desc,
     func,
     literal_column,
     or_,
-    tuple_,
     union_all,
 )
 from sqlmodel import Session, delete, distinct, select, text, update
 
 from app.config import settings
-from app.database import get_session, safe_commit, safe_execute
+from app.api.media import _is_local_request
+from app.database import get_session, safe_commit
 from app.logger import logger
 from app.models import (
     Face,
@@ -38,6 +35,7 @@ from app.models import (
     PersonMediaLink,
     PersonRelationship,
     PersonTagLink,
+    ProcessingTask,
     Tag,
     TimelineEvent,
 )
@@ -68,60 +66,21 @@ from app.schemas.timeline import (
     TimelineEventUpdate,
     TimelinePage,
 )
+from app.tasks import create_and_run_task
+from app.tasks.export import run_person_media_export
+from app.pagination import media_newest_first, paginate
 from app.utils import (
     _distance_to_similarity,
     auto_select_profile_face,
     get_person_embedding,
     name_contains_all_terms,
+    rebuild_person_embedding,
     recalculate_person_appearance_counts,
     remove_person,
-    update_person_embedding,
+    set_face_embedding_person,
 )
 
 router = APIRouter()
-
-
-def _is_local_request(request: Request) -> bool:
-    try:
-        host = request.client.host if request.client else ""
-    except Exception:
-        return False
-    return host in {"127.0.0.1", "::1", "localhost"}
-
-
-def _resolve_media_source(path_value: str) -> Path | None:
-    """Resolve a stored media path against the configured media directories."""
-    raw_path = Path(path_value).expanduser()
-    candidates = [raw_path] if raw_path.is_absolute() else []
-    candidates.extend(
-        media_dir / raw_path
-        for media_dir, _read_only in settings.general.resolved_media_dirs()
-    )
-    for candidate in candidates:
-        try:
-            resolved = candidate.resolve(strict=False)
-        except (OSError, RuntimeError):
-            continue
-        if resolved.is_file():
-            return resolved
-    return None
-
-
-def _available_destination(destination_dir: Path, filename: str) -> Path:
-    """Return a non-existing destination path without overwriting a file."""
-    requested = Path(filename)
-    candidate = destination_dir / requested.name
-    if not candidate.exists():
-        return candidate
-
-    stem = requested.stem or "media"
-    suffix = requested.suffix
-    index = 1
-    while True:
-        candidate = destination_dir / f"{stem} ({index}){suffix}"
-        if not candidate.exists():
-            return candidate
-        index += 1
 
 
 # Timeline events
@@ -361,35 +320,6 @@ def _person_sort_keys(sort: PersonSort) -> list[tuple[ColumnElement, bool]]:
     return [(appearances, False), (Person.id, False)]
 
 
-def _keyset_after(keys: list[tuple[ColumnElement, bool]], values: list):
-    """Rows strictly after `values` in the (possibly mixed-direction) ordering."""
-    clauses = []
-    for i, (expr, ascending) in enumerate(keys):
-        prefix = [keys[j][0] == values[j] for j in range(i)]
-        step = expr > values[i] if ascending else expr < values[i]
-        clauses.append(and_(*prefix, step))
-    return or_(*clauses)
-
-
-def _encode_person_cursor(sort: str, values: list) -> str:
-    raw = json.dumps([sort, *values], separators=(",", ":")).encode()
-    return base64.urlsafe_b64encode(raw).decode()
-
-
-def _decode_person_cursor(cursor: str, sort: str, key_count: int) -> list:
-    try:
-        decoded = json.loads(base64.urlsafe_b64decode(cursor.encode()))
-    except (ValueError, TypeError):
-        raise HTTPException(400, "Invalid cursor format")
-    if (
-        not isinstance(decoded, list)
-        or len(decoded) != key_count + 1
-        or decoded[0] != sort
-    ):
-        raise HTTPException(400, "Cursor does not match the requested sort")
-    return decoded[1:]
-
-
 @router.get("/", response_model=CursorPage)
 def list_persons(
     name: str | None = Query(
@@ -402,22 +332,15 @@ def list_persons(
     limit: int = 50,
     session: Session = Depends(get_session),
 ):
-    keys = _person_sort_keys(sort)
-    q = select(Person, *(expr.label(f"k{i}") for i, (expr, _) in enumerate(keys)))
-
+    q = select(Person)
     if name:
         name_clause = name_contains_all_terms(Person.name, name)
         if name_clause is not None:
             q = q.where(name_clause)
 
-    if cursor:
-        after = _decode_person_cursor(cursor, sort, len(keys))
-        q = q.where(_keyset_after(keys, after))
-
-    q = q.order_by(
-        *(expr.asc() if ascending else expr.desc() for expr, ascending in keys)
+    persons, next_cursor = paginate(
+        session, q, _person_sort_keys(sort), cursor=cursor, limit=limit, tag=sort
     )
-    rows = session.exec(q.limit(limit)).all()
     items = [
         PersonRead(
             **person.model_dump(),
@@ -427,13 +350,8 @@ def list_persons(
                 else None
             ),
         )
-        for person, *_ in rows
+        for person in persons
     ]
-
-    next_cursor = None
-    if len(rows) == limit:
-        next_cursor = _encode_person_cursor(sort, list(rows[-1][1:]))
-
     return CursorPage(next_cursor=next_cursor, items=items)
 
 
@@ -492,23 +410,16 @@ def detach_media_from_person(
     session: Session = Depends(get_session),
 ):
     """Detach all faces linking this person to this media, and remove any manual PersonMediaLink."""
-    if settings.general.presentation_mode:
-        raise HTTPException(status_code=403, detail="Not allowed in presentation mode.")
-
-    from app.api.face import update_face_embedding
-
-    faces = safe_execute(
-        session,
+    faces = session.exec(
         select(Face).where(Face.person_id == person_id, Face.media_id == media_id),
     ).all()
 
     for face in faces:
         face.person_id = None
         session.add(face)
-        update_face_embedding(session, face.id, -1)
+    set_face_embedding_person(session, [face.id for face in faces], None)
 
-    link = safe_execute(
-        session,
+    link = session.exec(
         select(PersonMediaLink).where(
             PersonMediaLink.person_id == person_id,
             PersonMediaLink.media_id == media_id,
@@ -518,8 +429,7 @@ def detach_media_from_person(
         session.delete(link)
 
     recalculate_person_appearance_counts(session, {person_id})
-    if session.get(Person, person_id):
-        update_person_embedding(session, person_id)
+    rebuild_person_embedding(session, person_id)
     safe_commit(session)
     return {"message": "Media detached from person"}
 
@@ -538,64 +448,25 @@ def get_faces(
         raise HTTPException(status_code=404, detail="Person not found")
 
     if media_id is not None:
-        faces = safe_execute(
-            session,
+        faces = session.exec(
             select(Face).where(Face.person_id == person_id, Face.media_id == media_id),
         ).all()
         return FaceCursorPage(next_cursor=None, items=faces)
 
     if sort_by in ("date_desc", "date_asc"):
+        ascending = sort_by == "date_asc"
         q = (
             select(Face)
             .join(Media, Face.media_id == Media.id)
             .where(Face.person_id == person_id)
         )
-        if sort_by == "date_desc":
-            q = q.order_by(Media.created_at.desc().nullslast(), Face.id.desc())
-        else:
-            q = q.order_by(Media.created_at.asc().nullsfirst(), Face.id.asc())
-
-        if cursor:
-            parts = cursor.rsplit("_", 1)
-            if len(parts) == 2:
-                try:
-                    cursor_dt = datetime.fromisoformat(parts[0])
-                    cursor_face_id = int(parts[1])
-                    if sort_by == "date_desc":
-                        q = q.where(
-                            or_(
-                                Media.created_at < cursor_dt,
-                                and_(Media.created_at == cursor_dt, Face.id < cursor_face_id),
-                            )
-                        )
-                    else:
-                        q = q.where(
-                            or_(
-                                Media.created_at > cursor_dt,
-                                and_(Media.created_at == cursor_dt, Face.id > cursor_face_id),
-                            )
-                        )
-                except (ValueError, IndexError):
-                    pass
-
-        faces = safe_execute(session, q.limit(limit)).all()
-        if len(faces) == limit:
-            last_face = faces[-1]
-            last_media = session.get(Media, last_face.media_id)
-            next_cursor = (
-                f"{last_media.created_at.isoformat()}_{last_face.id}"
-                if last_media and last_media.created_at
-                else None
-            )
-        else:
-            next_cursor = None
+        keys = [(Media.created_at, ascending), (Face.id, ascending)]
     else:
-        before_id = int(cursor) if cursor else None
-        q = select(Face).where(Face.person_id == person_id).order_by(Face.id.desc())
-        if before_id:
-            q = q.where(Face.id < before_id)
-        faces = safe_execute(session, q.limit(limit)).all()
-        next_cursor = str(faces[-1].id) if len(faces) == limit else None
+        q = select(Face).where(Face.person_id == person_id)
+        keys = [(Face.id, False)]
+    faces, next_cursor = paginate(
+        session, q, keys, cursor=cursor, limit=limit, tag=sort_by
+    )
 
     return FaceCursorPage(next_cursor=next_cursor, items=faces)
 
@@ -619,9 +490,7 @@ def get_appearances(
     limit: int = 30,
     cursor: str | None = Query(
         None,
-        description=(
-            "encoded as `<id>`; e.g. `2025-05-05T12:34:56.789012_1234` or `2500_1234`"
-        ),
+        description="Opaque cursor from the previous page's `next_cursor`",
     ),
     session: Session = Depends(get_session),
 ):
@@ -651,16 +520,7 @@ def get_appearances(
             == required_ids_count
         )
     )
-    matching_media_ids = session.exec(media_id_q).all()
-
-    if not matching_media_ids:
-        return MediaCursorPage(items=[], next_cursor=None)
-
-    q = (
-        select(Media)
-        .where(Media.id.in_(matching_media_ids))
-        .order_by(Media.created_at.desc())
-    )
+    q = select(Media).where(Media.id.in_(media_id_q))
     if tags:
         tag_media_ids = (
             select(Media.id)
@@ -670,45 +530,23 @@ def get_appearances(
         )
         q = q.where(Media.id.in_(tag_media_ids))
 
-    if cursor:
-        try:
-            created_at_str, media_id_str = cursor.rsplit("_", 1)
-            logger.debug(cursor)
-            logger.debug(created_at_str)
-            cursor_created_at = datetime.fromisoformat(created_at_str)
-            cursor_media_id = int(media_id_str)
-            q = q.where(
-                tuple_(Media.created_at, Media.id)
-                < (cursor_created_at, cursor_media_id)
-            )
-        except (ValueError, TypeError):
-            raise HTTPException(status_code=400, detail="Invalid cursor format")
-
-    q = q.order_by(desc(Media.created_at), desc(Media.id)).limit(limit)
-
-    items = session.exec(q).all()
-
-    next_cursor = None
-    if len(items) == limit:
-        last_item = items[-1]
-        next_cursor = f"{last_item.created_at.isoformat()}_{last_item.id}"
+    items, next_cursor = paginate(
+        session, q, media_newest_first(), cursor=cursor, limit=limit
+    )
 
     return MediaCursorPage(next_cursor=next_cursor, items=items)
 
 
-@router.post("/{person_id}/export-media")
+@router.post("/{person_id}/export-media", response_model=ProcessingTask)
 def export_person_media(
     person_id: int,
     export: PersonMediaExportRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
 ):
-    """Copy or move each unique original containing this person's appearance."""
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Exporting media is not available in presentation mode.",
-        )
+    """Start a background task copying or moving each unique original
+    containing this person's appearance."""
     if settings.general.is_docker:
         raise HTTPException(
             status_code=400,
@@ -720,8 +558,7 @@ def export_person_media(
             detail="Exporting media is only allowed in the desktop app or local session.",
         )
 
-    person = session.get(Person, person_id)
-    if not person:
+    if not session.get(Person, person_id):
         raise HTTPException(status_code=404, detail="Person not found")
 
     try:
@@ -733,82 +570,26 @@ def export_person_media(
     if not destination_dir.is_dir():
         raise HTTPException(status_code=400, detail="Selected path is not a folder")
 
-    media_ids = union_all(
-        select(Face.media_id.label("media_id")).where(Face.person_id == person_id),
-        select(PersonMediaLink.media_id.label("media_id")).where(
-            PersonMediaLink.person_id == person_id
+    # create_and_run_task would hand back a running export for a different
+    # person or folder, so refuse instead of silently reusing it.
+    if session.exec(
+        select(ProcessingTask.id).where(
+            ProcessingTask.task_type == "export_person_media",
+            ProcessingTask.status == "running",
+        )
+    ).first():
+        raise HTTPException(
+            status_code=409, detail="Another media export is still running."
+        )
+
+    return create_and_run_task(
+        session=session,
+        background_tasks=background_tasks,
+        task_type="export_person_media",
+        callable_task=lambda task_id: run_person_media_export(
+            task_id, person_id, destination_dir, export.mode
         ),
-    ).subquery()
-    media_items = session.exec(
-        select(Media)
-        .where(Media.id.in_(select(media_ids.c.media_id).distinct()))
-        .order_by(Media.id)
-    ).all()
-
-    completed = 0
-    skipped: list[dict[str, str]] = []
-    for media in media_items:
-        source_path = _resolve_media_source(media.path)
-        if source_path is None:
-            skipped.append({"filename": media.filename, "reason": "File not found"})
-            continue
-        if source_path.parent == destination_dir:
-            skipped.append(
-                {
-                    "filename": media.filename,
-                    "reason": "File is already in the selected folder",
-                }
-            )
-            continue
-        if export.mode == "move":
-            try:
-                settings.general.ensure_media_path_writable(source_path)
-            except PermissionError as exc:
-                skipped.append({"filename": media.filename, "reason": str(exc)})
-                continue
-
-        target_path = _available_destination(destination_dir, media.filename)
-        try:
-            if export.mode == "copy":
-                shutil.copy2(source_path, target_path)
-            else:
-                shutil.move(str(source_path), str(target_path))
-                old_path, old_filename = media.path, media.filename
-                media.path = str(target_path)
-                media.filename = target_path.name
-                session.add(media)
-                try:
-                    safe_commit(session)
-                except Exception:
-                    session.rollback()
-                    # Keep the database and filesystem in sync if persisting the
-                    # new path fails after the file has been moved.
-                    try:
-                        shutil.move(str(target_path), str(source_path))
-                    except Exception as rollback_exc:
-                        logger.error(
-                            "Failed to roll back moved media %s: %s",
-                            target_path,
-                            rollback_exc,
-                        )
-                    media.path, media.filename = old_path, old_filename
-                    raise
-            completed += 1
-        except Exception as exc:
-            logger.warning(
-                "Failed to %s media %s for person %s: %s",
-                export.mode,
-                source_path,
-                person_id,
-                exc,
-            )
-            skipped.append({"filename": media.filename, "reason": str(exc)})
-
-    return {
-        "mode": export.mode,
-        "completed": completed,
-        "skipped": skipped,
-    }
+    )
 
 
 @router.post(
@@ -821,12 +602,6 @@ def add_media_appearance(
     media_id: int = Body(..., embed=True),
     session: Session = Depends(get_session),
 ):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in settings.general.presentation_mode mode.",
-        )
-
     person = session.get(Person, person_id)
     if not person:
         raise HTTPException(status_code=404, detail="Person not found")
@@ -872,11 +647,14 @@ def get_person(person_id: int, session: Session = Depends(get_session)):
     if not person:
         raise HTTPException(status_code=404, detail="Person not found")
 
-    if person.profile_face_id and not person.profile_face:
-        person.profile_face_id = None
-        session.add(person)
-        session.commit()
-        session.refresh(person)
+    profile_face = person.profile_face
+    if person.profile_face_id and not profile_face:
+        # Self-heal a dangling profile face, except in read-only mode.
+        if not settings.general.presentation_mode:
+            person.profile_face_id = None
+            session.add(person)
+            safe_commit(session)
+            session.refresh(person)
     media_ids_union = union_all(
         select(Face.media_id.label("media_id")).where(Face.person_id == person_id),
         select(PersonMediaLink.media_id.label("media_id")).where(
@@ -886,17 +664,15 @@ def get_person(person_id: int, session: Session = Depends(get_session)):
     media_count = session.scalar(
         select(func.count(distinct(media_ids_union.c.media_id)))
     )
-    if person.profile_face:
+    if profile_face:
         profile_face = ProfileFace(
-            id=person.profile_face.id,
-            thumbnail_path=person.profile_face.thumbnail_path,
+            id=profile_face.id,
+            thumbnail_path=profile_face.thumbnail_path,
         )
-    else:
-        profile_face = None
     return PersonDetail(
         id=person.id,
         name=person.name,
-        profile_face_id=person.profile_face_id,
+        profile_face_id=profile_face.id if profile_face else None,
         profile_face=profile_face,
         tags=person.tags,
         appearance_count=int(media_count or 0),
@@ -914,11 +690,6 @@ def update_person(
     data: PersonUpdate,
     session: Session = Depends(get_session),
 ):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in settings.general.presentation_mode mode.",
-        )
     person = session.get(Person, person_id)
     if not person:
         raise HTTPException(404, "Person not found")
@@ -937,8 +708,6 @@ def update_person_favorite(
     data: FavoriteUpdate,
     session: Session = Depends(get_session),
 ):
-    if settings.general.presentation_mode:
-        raise HTTPException(403, "Not allowed in presentation mode")
     person = session.get(Person, person_id)
     if not person:
         raise HTTPException(404, "Person not found")
@@ -955,11 +724,6 @@ def set_profile_face(
     face_id: int | None,
     session: Session = Depends(get_session),
 ):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in settings.general.presentation_mode mode.",
-        )
     person = session.get(Person, person_id)
     if not person:
         raise HTTPException(404, "Person not found")
@@ -978,11 +742,6 @@ def auto_profile_face(
     person_id: int,
     session: Session = Depends(get_session),
 ):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in settings.general.presentation_mode mode.",
-        )
     person = session.get(Person, person_id)
     if not person:
         raise HTTPException(404, "Person not found")
@@ -1130,9 +889,6 @@ def _merge_person_into_target(
         auto_select_profile_face(session, target.id)
 
     session.delete(source)
-    safe_commit(session)
-
-    update_person_embedding(session, target_id)
     session.exec(
         text(
             """
@@ -1142,6 +898,7 @@ def _merge_person_into_target(
         ).bindparams(p_id=source_id)
     )
     recalculate_person_appearance_counts(session, [target_id])
+    rebuild_person_embedding(session, target_id)
     safe_commit(session)
     session.refresh(target)
     return target
@@ -1156,11 +913,6 @@ def merge_persons(
     body: MergePersonsRequest,
     session: Session = Depends(get_session),
 ):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in settings.general.presentation_mode mode.",
-        )
     merged = _merge_person_into_target(session, body.source_id, body.target_id)
     return merged
 
@@ -1175,11 +927,6 @@ def merge_multiple_persons(
     request: MergePersonsBulkRequest,
     session: Session = Depends(get_session),
 ):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in settings.general.presentation_mode mode.",
-        )
     merged_ids: list[int] = []
     skipped_ids: list[int] = []
     seen: set[int] = set()
@@ -1210,12 +957,6 @@ def delete_persons_bulk(
     payload: PersonBulkDeleteRequest,
     session: Session = Depends(get_session),
 ):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not allowed in settings.general.presentation_mode mode.",
-        )
-
     deleted_ids: list[int] = []
     skipped_ids: list[int] = []
     seen: set[int] = set()
@@ -1226,14 +967,14 @@ def delete_persons_bulk(
         seen.add(person_id)
 
         try:
-            result = remove_person(person_id, session)
-            if isinstance(result, HTTPException):
-                raise result
+            remove_person(person_id, session)
+            safe_commit(session)
             deleted_ids.append(person_id)
             session.expire_all()
         except HTTPException as exc:
             if exc.status_code == status.HTTP_403_FORBIDDEN:
                 raise
+            session.rollback()
             skipped_ids.append(person_id)
             logger.warning(
                 "Skipping deletion of person %s due to API error: %s",
@@ -1241,6 +982,7 @@ def delete_persons_bulk(
                 exc.detail,
             )
         except Exception:  # pragma: no cover - defensive
+            session.rollback()
             skipped_ids.append(person_id)
             logger.exception("Unexpected error while deleting person %s", person_id)
 
@@ -1256,7 +998,8 @@ def delete_persons_bulk(
     status_code=status.HTTP_204_NO_CONTENT,
 )
 def delete_person(person_id: int, session: Session = Depends(get_session)):
-    return remove_person(person_id, session)
+    remove_person(person_id, session)
+    safe_commit(session)
 
 
 @router.get(
@@ -1338,12 +1081,6 @@ def auto_merge_similar_persons(
     person_id: int,
     session: Session = Depends(get_session),
 ):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in settings.general.presentation_mode mode.",
-        )
-
     threshold = float(
         getattr(
             settings.face_recognition,

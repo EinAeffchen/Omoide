@@ -48,7 +48,6 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     libgl1 \
-    build-essential \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
@@ -60,13 +59,17 @@ ENV PYTHONUNBUFFERED=1 \
 
 # Further ENV VARS for application
 ENV SQLITE_VEC_PATH=/usr/local/lib/python3.12/site-packages/sqlite_vec/vec0.so
-ENV HF_HOME=${DATA_DIR}/.omoide/models \
-    TORCH_HOME=${DATA_DIR}/.omoide/models 
+ENV HF_HOME=${DATA_DIR}/.omoide/models
 
 # --- OPTIMIZED LAYER ORDER ---
 
 COPY pyproject.toml uv.lock* ./
-RUN uv sync --frozen --no-dev --no-cache
+# The compiler is only needed to build sdists (insightface); install and purge
+# it in the same layer so it never ends up in the image.
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential && \
+    uv sync --frozen --no-dev --no-cache && \
+    apt-get purge -y --auto-remove build-essential && \
+    rm -rf /var/lib/apt/lists/*
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     if [ "${ARCH}" = "arm64" ] || [ "${ARCH}" = "aarch64" ]; then \
         UV_NO_CACHE=1 uv pip install --system "sqlite-vec==${SQLITE_VEC_ARM64_VERSION}"; \
@@ -75,7 +78,6 @@ RUN if [ "${OMOIDE_BUILD_FLAVOR}" = "gpu" ]; then \
         python -m pip uninstall -y onnxruntime || true; \
         python -m pip install "onnxruntime-gpu[cuda,cudnn]==1.27.0"; \
     fi
-RUN apt-get remove -y build-essential || true
 # 4. Copy application source code, setting ownership directly.
 # This is now separate from the dependency layers.
 COPY --chown=appuser:appgroup ./app ./app

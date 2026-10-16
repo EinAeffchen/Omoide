@@ -35,7 +35,9 @@ class MediaTagLink(SQLModel, table=True):
     media_id: int = Field(
         default=None, foreign_key="media.id", primary_key=True
     )
-    tag_id: int = Field(default=None, foreign_key="tag.id", primary_key=True)
+    tag_id: int = Field(
+        default=None, foreign_key="tag.id", primary_key=True, index=True
+    )
     auto_score: float | None = Field(default=None)
 
 
@@ -44,7 +46,7 @@ class PersonMediaLink(SQLModel, table=True):
         default=None, foreign_key="person.id", primary_key=True
     )
     media_id: int = Field(
-        default=None, foreign_key="media.id", primary_key=True
+        default=None, foreign_key="media.id", primary_key=True, index=True
     )
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -61,7 +63,9 @@ class PersonTagLink(SQLModel, table=True):
     person_id: int = Field(
         default=None, foreign_key="person.id", primary_key=True
     )
-    tag_id: int = Field(default=None, foreign_key="tag.id", primary_key=True)
+    tag_id: int = Field(
+        default=None, foreign_key="tag.id", primary_key=True, index=True
+    )
 
 
 class Tag(SQLModel, table=True):
@@ -283,7 +287,7 @@ class DuplicateGroup(SQLModel, table=True):
 
 class DuplicateIgnore(SQLModel, table=True):
     media_id_a: int = Field(foreign_key="media.id", primary_key=True)
-    media_id_b: int = Field(foreign_key="media.id", primary_key=True)
+    media_id_b: int = Field(foreign_key="media.id", primary_key=True, index=True)
     created_at: datetime = Field(default_factory=datetime.now)
 
     class Config:
@@ -292,7 +296,7 @@ class DuplicateIgnore(SQLModel, table=True):
 
 class DuplicateMedia(SQLModel, table=True):
     group_id: int = Field(foreign_key="duplicategroup.id", primary_key=True)
-    media_id: int = Field(foreign_key="media.id", primary_key=True)
+    media_id: int = Field(foreign_key="media.id", primary_key=True, index=True)
 
     group: DuplicateGroup = Relationship(back_populates="media_links")
     media: Media = Relationship(back_populates="duplicate_entries")
@@ -302,7 +306,9 @@ class PersonRelationship(SQLModel, table=True):
     __tablename__ = "person_relationship"
 
     person_a_id: int = Field(foreign_key="person.id", primary_key=True)
-    person_b_id: int = Field(foreign_key="person.id", primary_key=True)
+    person_b_id: int = Field(
+        foreign_key="person.id", primary_key=True, index=True
+    )
     coappearance_count: int = Field(default=0, index=True)
     last_media_id: int | None = Field(default=None, foreign_key="media.id")
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -323,7 +329,7 @@ class Album(SQLModel, table=True):
 
 class AlbumMediaLink(SQLModel, table=True):
     album_id: int = Field(foreign_key="album.id", primary_key=True)
-    media_id: int = Field(foreign_key="media.id", primary_key=True)
+    media_id: int = Field(foreign_key="media.id", primary_key=True, index=True)
     created_at: datetime = Field(default_factory=datetime.now)
 
 
@@ -349,4 +355,4 @@ class Event(SQLModel, table=True):
 
 class EventMediaLink(SQLModel, table=True):
     event_id: int = Field(foreign_key="event.id", primary_key=True)
-    media_id: int = Field(foreign_key="media.id", primary_key=True)
+    media_id: int = Field(foreign_key="media.id", primary_key=True, index=True)

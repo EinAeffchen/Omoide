@@ -9,10 +9,10 @@ from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, select
 
 import app.database as db
-from app.config import settings
 from app.database import safe_commit
 from app.logger import logger
 from app.models import ProcessingTask
+from app.presentation import ensure_writable
 
 from .state import clear_task_progress
 
@@ -63,6 +63,7 @@ def create_and_run_task(
         "backfill_face_timestamps",
         "build_events",
         "geocode_places",
+        "export_person_media",
     ],
     callable_task: Callable[[str], None],
 ) -> ProcessingTask:
@@ -70,10 +71,7 @@ def create_and_run_task(
     Creates a processing task in the database and adds the actual job to the
     background task queue.
     """
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403, detail="Not allowed in presentation_mode mode."
-        )
+    ensure_writable()
 
     try:
         existing_task = session.exec(

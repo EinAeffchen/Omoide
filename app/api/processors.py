@@ -51,11 +51,6 @@ def start_conversion(
     background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
 ):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in settings.general.presentation_mode mode.",
-        )
     media = session.get(Media, media_id)
     if not media:
         raise HTTPException(404, "Media not found")

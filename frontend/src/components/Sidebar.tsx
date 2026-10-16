@@ -188,6 +188,7 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
       <Divider sx={{ mb: 2 }} />
 
       <List component="nav" sx={{ px: 2 }}>
+        {!config.PRESENTATION_MODE && (
         <Box sx={{ px: 2, py: 1.5 }}>
           <ListItemButton
             onClick={toggleSelecting}
@@ -223,6 +224,7 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
             />
           </ListItemButton>
         </Box>
+        )}
         {navSections.map((section) => (
           <React.Fragment key={section.label}>
             <ListSubheader

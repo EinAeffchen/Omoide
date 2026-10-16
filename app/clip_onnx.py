@@ -12,6 +12,7 @@ from __future__ import annotations
 import html
 import json
 import shutil
+import threading
 from collections.abc import Sequence
 from pathlib import Path
 from urllib.request import urlopen
@@ -208,3 +209,31 @@ class ClipEncoder:
             tokens = tokens.astype(np.int64)
         features = self._run(self._textual, self._textual_input, tokens)
         return _normalize(features)
+
+
+_clip_lock = threading.Lock()
+_clip_encoder: ClipEncoder | None = None
+
+
+def get_clip_encoder() -> ClipEncoder:
+    """Shared encoder for the configured CLIP model, loaded on first use."""
+    global _clip_encoder
+    with _clip_lock:
+        if _clip_encoder is None:
+            from app.config import settings
+
+            logger.info("Loading CLIP encoder (lazy)...")
+            model_dir = ensure_model_files(
+                settings.ai.clip_model.hf_repo, settings.general.models_dir
+            )
+            _clip_encoder = ClipEncoder(
+                model_dir, prefer_gpu=settings.processors.prefer_gpu
+            )
+        return _clip_encoder
+
+
+def reset_clip_encoder() -> None:
+    """Drop the shared encoder so the next use loads the configured model."""
+    global _clip_encoder
+    with _clip_lock:
+        _clip_encoder = None

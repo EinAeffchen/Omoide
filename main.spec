@@ -215,21 +215,6 @@ try:
 except Exception:
     pass
 
-# Bundle OpenCV Haar cascade files so cv2.data.haarcascades works in PyInstaller.
-try:
-    import cv2  # type: ignore
-
-    casc_dir = getattr(getattr(cv2, 'data', None), 'haarcascades', None)
-    if not casc_dir:
-        # Fallback to typical layout: <cv2>/data
-        casc_dir = os.path.join(os.path.dirname(cv2.__file__), 'data')
-    if os.path.isdir(casc_dir):
-        for xml in glob.glob(os.path.join(casc_dir, '*.xml')):
-            datas.append((xml, 'cv2/data'))
-except Exception:
-    # If cv2 is not present during build, skip gracefully.
-    pass
-
 # Include optional Qt config if present to help PySide6 discover plugins.
 if not platform_is_windows and Path('qt.conf').exists():
     datas.append(('qt.conf', '.'))
@@ -291,38 +276,8 @@ if not platform_is_windows:
     except Exception:
         pass
 
-# Optionally include dlib model files if present in repo
-possible_model_dirs = [
-    Path('models'),
-    Path('.data/models'),
-]
-for base in possible_model_dirs:
-    sp = base / 'shape_predictor_5_face_landmarks.dat'
-    fr = base / 'dlib_face_recognition_resnet_model_v1.dat'
-    ssd_pt = base / 'deploy.prototxt'
-    ssd_caffemodel = base / 'res10_300x300_ssd_iter_140000.caffemodel'
-    if sp.exists():
-        datas.append((str(sp), 'models'))
-    if fr.exists():
-        datas.append((str(fr), 'models'))
-    if ssd_pt.exists():
-        datas.append((str(ssd_pt), 'models'))
-    if ssd_caffemodel.exists():
-        datas.append((str(ssd_caffemodel), 'models'))
-
-import importlib.util as _importlib_util
-import sys as _sys
 import tomllib as _tomllib
 from datetime import datetime as _dt
-
-# Conditionally include optional heavy modules only if present to avoid build failures.
-optional_mods = ['dlib']
-for _m in optional_mods:
-    try:
-        if _importlib_util.find_spec(_m):
-            hiddenimports_list.append(_m)
-    except Exception:
-        pass
 
 def _resolve_version():
     # 1) Prefer CI-provided env var

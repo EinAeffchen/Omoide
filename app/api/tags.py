@@ -3,9 +3,9 @@ from sqlalchemy import delete
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
-from app.config import settings
 from app.database import get_session, safe_commit
 from app.models import Media, MediaTagLink, Person, PersonTagLink, Tag
+from app.pagination import paginate
 from app.schemas.tag import CursorPage, TagRead
 
 router = APIRouter()
@@ -15,30 +15,17 @@ router = APIRouter()
 def list_tags(
     limit: int = 50,
     cursor: str | None = Query(
-        None,
-        description=(
-            "encoded as `<value>_<id>`; e.g. `2025-05-05T12:34:56.789012_1234` or"
-            " `2500_1234`"
-        ),
+        None, description="Opaque cursor from the previous page's `next_cursor`"
     ),
     session: Session = Depends(get_session),
 ):
-    before_id = None
-    if cursor:
-        before_id = int(cursor)
-    query = (
-        select(Tag)
-        .options(selectinload(Tag.media))
-        .order_by(Tag.id.desc())
-        .limit(limit)
+    results, next_cursor = paginate(
+        session,
+        select(Tag).options(selectinload(Tag.media)),
+        [(Tag.id, False)],
+        cursor=cursor,
+        limit=limit,
     )
-    if before_id:
-        query = query.where(Tag.id < before_id)
-    results = session.exec(query).all()
-    if len(results) == limit:
-        next_cursor = str(results[-1].id)
-    else:
-        next_cursor = None
     return CursorPage(next_cursor=next_cursor, items=results)
 
 
@@ -82,11 +69,6 @@ def create_tag(
     name: str = Body(..., embed=True),
     session: Session = Depends(get_session),
 ):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in settings.general.presentation_mode mode.",
-        )
     tag = get_or_create_tag(name, session)
     return tag
 
@@ -105,11 +87,6 @@ def get_tag(tag_id: int, session: Session = Depends(get_session)):
 def add_tag_to_media(
     media_id: int, tag_id: int, session: Session = Depends(get_session)
 ):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in settings.general.presentation_mode mode.",
-        )
     attach_tag_to_media(media_id, tag_id, session)
 
 
@@ -117,11 +94,6 @@ def add_tag_to_media(
 def remove_tag_from_media(
     media_id: int, tag_id: int, session: Session = Depends(get_session)
 ):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in settings.general.presentation_mode mode.",
-        )
     session.exec(
         delete(MediaTagLink).where(
             MediaTagLink.media_id == media_id, MediaTagLink.tag_id == tag_id
@@ -132,11 +104,6 @@ def remove_tag_from_media(
 
 @router.delete("/{tag_id}", status_code=status.HTTP_204_NO_CONTENT)
 def remove_tag(tag_id: int, session: Session = Depends(get_session)):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in settings.general.presentation_mode mode.",
-        )
     session.exec(delete(MediaTagLink).where(MediaTagLink.tag_id == tag_id))
     session.exec(delete(Tag).where(Tag.id == tag_id))
     safe_commit(session)
@@ -147,11 +114,6 @@ def remove_tag(tag_id: int, session: Session = Depends(get_session)):
 def add_tag_to_person(
     person_id: int, tag_id: int, session: Session = Depends(get_session)
 ):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in settings.general.presentation_mode mode.",
-        )
     if not session.get(Person, person_id):
         raise HTTPException(404, "Person not found")
     if not session.get(Tag, tag_id):
@@ -165,11 +127,6 @@ def add_tag_to_person(
 def remove_tag_from_person(
     person_id: int, tag_id: int, session: Session = Depends(get_session)
 ):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in settings.general.presentation_mode mode.",
-        )
     session.exec(
         delete(PersonTagLink).where(
             PersonTagLink.person_id == person_id,

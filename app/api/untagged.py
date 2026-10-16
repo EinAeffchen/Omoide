@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, func
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import and_
 from sqlmodel import Session, select
 
 from app.api._resolve import resolve_media_action
 from app.database import get_session
 from app.models import Media, MediaTagLink
+from app.pagination import count_rows, paginate
 from app.schemas.untagged import UntaggedMediaItem, UntaggedPage, UntaggedResolveRequest
 
 router = APIRouter()
@@ -33,18 +34,14 @@ def get_untagged_media(
     """Paginated list of media with no tags assigned, ordered newest-first."""
     base_filter = _base_filter(media_type)
 
-    total = session.exec(select(func.count(Media.id)).where(base_filter)).first() or 0
-
-    query = select(Media).where(base_filter).order_by(Media.id.desc())
-
-    if cursor:
-        try:
-            cursor_id = int(cursor)
-            query = query.where(Media.id < cursor_id)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid cursor format.")
-
-    rows = session.exec(query.limit(limit)).all()
+    total = count_rows(session, Media.id, base_filter)
+    rows, next_cursor = paginate(
+        session,
+        select(Media).where(base_filter),
+        [(Media.id, False)],
+        cursor=cursor,
+        limit=limit,
+    )
 
     items = [
         UntaggedMediaItem(
@@ -60,10 +57,6 @@ def get_untagged_media(
         )
         for m in rows
     ]
-
-    next_cursor = None
-    if len(rows) == limit:
-        next_cursor = str(rows[-1].id)
 
     return UntaggedPage(items=items, next_cursor=next_cursor, total=total)
 

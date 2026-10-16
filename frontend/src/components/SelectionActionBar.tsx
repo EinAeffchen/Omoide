@@ -13,6 +13,7 @@ import PhotoAlbumIcon from "@mui/icons-material/PhotoAlbum";
 import { useSelection } from "../context/SelectionContext";
 import { RerunProcessorsDialog } from "./RerunProcessorsDialog";
 import { AddToAlbumDialog } from "./AddToAlbumDialog";
+import config from "../config";
 
 export const SelectionActionBar: React.FC = () => {
   const { selectedIds, clear } = useSelection();
@@ -24,6 +25,8 @@ export const SelectionActionBar: React.FC = () => {
   }>({ open: false, message: "" });
 
   const count = selectedIds.size;
+
+  if (config.PRESENTATION_MODE) return null;
 
   return (
     <>

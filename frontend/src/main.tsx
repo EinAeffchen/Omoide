@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 
 import { AppThemeProvider } from './ThemeContext';
+import { installPresentationGuard } from './presentationGuard';
 
 import 'leaflet/dist/leaflet.css';
 import './index.css';
@@ -18,6 +19,8 @@ L.Icon.Default.mergeOptions({
   iconUrl,
   shadowUrl,
 });
+
+installPresentationGuard();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

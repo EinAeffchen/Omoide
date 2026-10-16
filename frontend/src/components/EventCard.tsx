@@ -15,8 +15,8 @@ import CakeIcon from "@mui/icons-material/Cake";
 
 interface EventCardProps {
   event: TimelineEvent;
-  onEdit: () => void;
-  onDelete: () => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
 }
 
 export const EventCard: React.FC<EventCardProps> = ({
@@ -56,16 +56,20 @@ export const EventCard: React.FC<EventCardProps> = ({
             )}
           </Box>
           <Box>
-            <Tooltip title="Edit Event">
-              <IconButton size="small" onClick={onEdit}>
-                <EditIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
-            <Tooltip title="Delete Event">
-              <IconButton size="small" onClick={onDelete}>
-                <DeleteIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
+            {onEdit && (
+              <Tooltip title="Edit Event">
+                <IconButton size="small" onClick={onEdit}>
+                  <EditIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            )}
+            {onDelete && (
+              <Tooltip title="Delete Event">
+                <IconButton size="small" onClick={onDelete}>
+                  <DeleteIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            )}
           </Box>
         </Box>
       </CardContent>

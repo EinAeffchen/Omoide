@@ -1,9 +1,7 @@
-import gc
 import math
 import os
 import shutil
 import sys
-import threading
 from enum import Enum
 from pathlib import Path
 from typing import Annotated, Any, TypeVar
@@ -20,7 +18,14 @@ from pydantic import (
 from app.logger import configure_file_logging, logger
 
 E = TypeVar("E", bound=Enum)
-IS_DOCKER = os.getenv("IS_DOCKER", False)
+
+
+def _env_flag(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+# Set by the Docker image (ENV IS_DOCKER=true); the single source of truth.
+IS_DOCKER = _env_flag("IS_DOCKER")
 ENV_PREFIX = "OMOIDE_"
 
 
@@ -166,7 +171,7 @@ def get_static_assets_dir() -> Path:
         static_dir = base_path / "dist"
 
     # 2. Check if running inside our Docker container via an env var
-    elif os.environ.get("IS_DOCKER"):
+    elif IS_DOCKER:
         # The path is absolute within the container
         static_dir = Path("/app/static")
 
@@ -323,7 +328,7 @@ class GeneralSettings(BaseModel):
     # Enable face recognition and other person related features
     enable_people: bool = True
     meme_mode: bool = False
-    is_docker: bool = bool(os.environ.get("IS_DOCKER", False))
+    is_docker: bool = IS_DOCKER
     # Whether the app is running as a packaged/binary executable (e.g., PyInstaller)
     is_binary: bool = bool(getattr(sys, "frozen", False))
     # Prefer GPU acceleration when available.
@@ -546,11 +551,6 @@ class AISettings(BaseModel):
     @property
     def clip_model_embedding_size(self) -> int:
         return self.clip_model.embedding_size
-
-    # @computed_field
-    @property
-    def clip_model_pretrained(self) -> str:
-        return self.clip_model.pretrained
 
     # Strictness of the search results. Higher -> more accurate but less hits.
     # Internally: max_dist = 2.0 - min_search_dist. For L2 distance on unit
@@ -926,7 +926,7 @@ def load_settings() -> AppSettings:
     settings_model = AppSettings.model_validate(config_data)
     # Runtime-only flags should not be overridden by persisted config.
     settings_model.general.is_binary = bool(getattr(sys, "frozen", False))
-    settings_model.general.is_docker = bool(os.environ.get("IS_DOCKER", False))
+    settings_model.general.is_docker = IS_DOCKER
     return settings_model
 
 
@@ -970,88 +970,9 @@ def save_settings(settings_model: AppSettings):
         )
 
 
-def get_model(settings: AppSettings):
-    """Create a new ONNX CLIP encoder on the selected device.
-
-    Note: This constructs a fresh model; callers should prefer the
-    acquire_clip()/get_clip_encoder() helpers below to reuse a shared instance.
-    """
-    from app.clip_onnx import ClipEncoder, ensure_model_files
-
-    model_dir = ensure_model_files(
-        settings.ai.clip_model.hf_repo, settings.general.models_dir
-    )
-    return ClipEncoder(model_dir, prefer_gpu=settings.processors.prefer_gpu)
-
-
-# ----- Lazy, shared CLIP encoder management -----
-_clip_lock = threading.RLock()
-_clip_encoder = None
-_clip_refs = 0
-
-
-def get_clip_encoder():
-    """Return the shared CLIP encoder, loading it lazily if needed.
-
-    Does not change the reference count; use acquire_clip()/release_clip()
-    when you want lifecycle management (e.g., processors and long tasks).
-    """
-    global _clip_encoder
-    with _clip_lock:
-        if _clip_encoder is None:
-            logger.info("Loading CLIP encoder (lazy)...")
-            _clip_encoder = get_model(settings)
-        return _clip_encoder
-
-
-def acquire_clip():
-    """Acquire a reference to the shared CLIP encoder and return it.
-
-    While at least one reference is held, the encoder remains loaded.
-    """
-    global _clip_refs
-    with _clip_lock:
-        encoder = get_clip_encoder()
-        _clip_refs += 1
-        return encoder
-
-
-def release_clip():
-    """Release a previously acquired CLIP encoder reference.
-
-    When the refcount drops to zero, unload the encoder to free memory.
-    """
-    global _clip_refs, _clip_encoder
-    with _clip_lock:
-        if _clip_refs > 0:
-            _clip_refs -= 1
-        if _clip_refs == 0 and _clip_encoder is not None:
-            logger.info("Releasing CLIP encoder from memory")
-            try:
-                _clip_encoder = None
-            finally:
-                gc.collect()
-
-
-def _reset_clip_after_settings_change():
-    """Clear the shared CLIP encoder if nothing is using it.
-
-    If references are held, defer reset until they are released.
-    """
-    global _clip_encoder
-    with _clip_lock:
-        if _clip_refs == 0:
-            _clip_encoder = None
-        else:
-            logger.info(
-                "Deferring CLIP reload until current users release it (refs=%s)",
-                _clip_refs,
-            )
-
-
 def reload_settings():
     """Reloads the settings and the model."""
-    global settings, model, preprocess, tokenizer
+    global settings
     logger.info("Reloading settings...")
     new_settings = load_settings()
     # Always anchor data_dir to the active profile from bootstrap, ignoring
@@ -1119,7 +1040,9 @@ def reload_settings():
         )
 
     # Invalidate CLIP encoder to reflect possible AI model changes; will reload lazily
-    _reset_clip_after_settings_change()
+    from app.clip_onnx import reset_clip_encoder
+
+    reset_clip_encoder()
     try:
         from app.processor_registry import reset_processors
 

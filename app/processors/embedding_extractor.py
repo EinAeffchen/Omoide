@@ -3,10 +3,9 @@ from cv2.typing import MatLike
 from PIL import Image
 from sqlalchemy import text
 from sqlmodel import select
-from tqdm import tqdm
 
-from app.api.media import delete_media_record
-from app.config import settings, get_clip_encoder
+from app.clip_onnx import get_clip_encoder
+from app.config import settings
 from app.logger import logger
 from app.models import Media, Scene, Tag
 from app.processors.base import MediaProcessor
@@ -83,7 +82,7 @@ class EmbeddingExtractor(MediaProcessor):
 
         # Fast path: scenes are already-stored Scene DB objects — load from DB
         if scenes and isinstance(scenes[0], Scene):
-            for scene in tqdm(scenes):
+            for scene in scenes:
                 row = session.exec(
                     text(
                         "SELECT embedding FROM scene_embeddings WHERE scene_id = :sid"
@@ -157,8 +156,11 @@ class EmbeddingExtractor(MediaProcessor):
                             "EmbeddingExtractor: model returned empty embedding for %s",
                             media.path,
                         )
-                        delete_media_record(media.id, session)
-                        safe_commit(session)
+                        media.processing_error = (
+                            "Embedding extraction failed: the model returned"
+                            " no embedding for a scene frame."
+                        )
+                        session.add(media)
                         return False
 
                     embeddings.append(embedding)

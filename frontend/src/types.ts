@@ -153,7 +153,8 @@ export type TaskType =
   | "backfill_face_timestamps"
   | "backfill_face_quality"
   | "build_events"
-  | "geocode_places";
+  | "geocode_places"
+  | "export_person_media";
 export type TaskStatus =
   | "pending"
   | "running"

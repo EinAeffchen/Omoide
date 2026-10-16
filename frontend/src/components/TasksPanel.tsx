@@ -72,6 +72,7 @@ const TASK_LABELS: TaskLabels = {
   backfill_face_quality: "Rate Face Quality",
   build_events: "Cluster Events",
   geocode_places: "Geocode Places",
+  export_person_media: "Export Person Media",
 };
 
 const PROCESSOR_ACTIONS = [

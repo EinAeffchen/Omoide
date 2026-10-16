@@ -5,7 +5,6 @@ from typing import Any
 from fastapi import HTTPException
 from sqlmodel import Session, select
 
-from app.config import settings
 from app.logger import logger
 from app.models import Blacklist, Media
 from app.utils import delete_file, delete_record
@@ -28,12 +27,6 @@ def resolve_media_action(
     that filter. This prevents a stale review selection from affecting media
     outside the currently selected review category.
     """
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in presentation mode.",
-        )
-
     if action not in ("DELETE_FILES", "DELETE_RECORDS", "BLACKLIST_RECORDS"):
         raise HTTPException(
             status_code=400, detail=f"Unknown action: {action}"
