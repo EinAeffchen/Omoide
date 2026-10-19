@@ -133,8 +133,10 @@ omoide.db
 .venv
 .env
 **/viewer/images
-media
-media2
+# Local sample media folders at the repo root only (a bare `media` also
+# matched app/api/media/ and kept its modules out of git).
+/media
+/media2
 app/models/*.tar
 app/models/*.txt
 node_modules/

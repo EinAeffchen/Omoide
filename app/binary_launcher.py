@@ -294,12 +294,43 @@ def _shutdown() -> None:
         time.sleep(1)
 
 
+def _show_boot_error(exc: BaseException) -> None:
+    """Replace the endless spinner with the error and where to find details."""
+    import html
+
+    message = html.escape(f"{type(exc).__name__}: {exc}")
+    log_path = html.escape(os.fspath(_boot_log_path()))
+    try:
+        _window.load_html(
+            "<html><body style=\"font-family:sans-serif;background:#111;"
+            "color:#eee;padding:32px\">"
+            "<h2>omoide failed to start</h2>"
+            f"<pre style=\"white-space:pre-wrap;color:#f88\">{message}</pre>"
+            f"<p>The full error is in <code>{log_path}</code>.</p>"
+            "</body></html>"
+        )
+    except Exception as show_exc:
+        _boot_log(f"boot: could not show the error page: {show_exc}")
+
+
 def _boot_and_switch() -> None:
     """Runs in the pywebview background thread while the spinner is visible.
 
-    Imports the full application stack, runs migrations, starts the HTTP
-    server, then switches the window to the running app.
+    An exception here would otherwise die with the thread: stderr is
+    discarded in the windowed build and the spinner would never go away.
     """
+    try:
+        _boot()
+    except BaseException as exc:
+        import traceback
+
+        _boot_log("boot: FAILED\n" + traceback.format_exc())
+        _show_boot_error(exc)
+
+
+def _boot() -> None:
+    """Imports the full application stack, runs migrations, starts the HTTP
+    server, then switches the window to the running app."""
     _boot_log("boot: background thread started")
 
     # This single import triggers the full app initialisation:
