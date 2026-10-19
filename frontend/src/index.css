@@ -1,6 +1,17 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* The few global resets the app relied on from the Tailwind preflight it used
+   to load (MUI's CssBaseline covers the rest). */
+*,
+::before,
+::after {
+  border-width: 0;
+  border-style: solid;
+}
+img,
+video {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
 
 .custom-fullscreen-active video {
   max-height: 100vh !important; /* Or max-height: none !important; */

@@ -79,7 +79,6 @@ type GraphEdge = {
   layoutWeight: number;
   intensity: number;
   formattedLabel: string;
-  label?: string;
   style: Partial<BaseEdgeStyleProps>;
   data: {
     weight: number;
@@ -177,7 +176,7 @@ const clearElementStates = (graph: G6Graph) => {
     void graph.setElementState(node.id, []);
   });
   graph.getEdgeData().forEach((edge) => {
-    void graph.setElementState(edge.id, []);
+    if (edge.id) void graph.setElementState(edge.id, []);
   });
 };
 
@@ -426,7 +425,7 @@ const highlightEdge = (graph: G6Graph, edgeId: string) => {
   });
 
   graph.getEdgeData().forEach((edgeData) => {
-    if (edgeData.id !== edgeId) {
+    if (edgeData.id && edgeData.id !== edgeId) {
       void graph.setElementState(edgeData.id, ["inactive"]);
     }
   });
@@ -465,10 +464,7 @@ const sharedNeighborCount = (
   return count;
 };
 
-const applyClustering = (
-  data: GraphData,
-  palette: string[]
-): ClusteredGraph => {
+const applyClustering = (data: GraphData): ClusteredGraph => {
   const nodes: GraphNode[] = ((data.nodes ?? []) as GraphNode[]).map(
     (node) => ({
       ...node,
@@ -822,7 +818,7 @@ const applyClustering = (
         ...node.style,
         fill,
         stroke,
-        lineWidth: Math.max(node.style?.lineWidth ?? 2, node.isRoot ? 3.6 : 2.4),
+        lineWidth: Math.max(Number(node.style?.lineWidth ?? 2), node.isRoot ? 3.6 : 2.4),
         shadowColor: shadow,
         shadowBlur: clusterShadowBlur,
       };
@@ -832,7 +828,7 @@ const applyClustering = (
       node.style = {
         ...node.style,
         stroke: "#FFFFFF",
-        lineWidth: Math.max(node.style?.lineWidth ?? 0, 4),
+        lineWidth: Math.max(Number(node.style?.lineWidth ?? 0), 4),
         shadowColor: alpha("#FFFFFF", denseGraph ? 0.4 : 0.5),
         shadowBlur: rootShadowBlur,
       };
@@ -880,11 +876,7 @@ const PersonRelationshipGraph: React.FC<PersonRelationshipGraphProps> = ({
   const setContainerRef = useCallback(
     (node: HTMLDivElement | null) => {
       containerRef.current = node;
-      if (typeof resizeRef === "function") {
-        resizeRef(node);
-      } else if (resizeRef && "current" in resizeRef) {
-        resizeRef.current = node;
-      }
+      resizeRef(node);
     },
     [resizeRef]
   );
@@ -1120,8 +1112,8 @@ const PersonRelationshipGraph: React.FC<PersonRelationshipGraphProps> = ({
         visualWidth,
         intensity,
         formattedLabel,
-        label: showEdgeLabelsRef.current ? formattedLabel : "",
         style: {
+          labelText: showEdgeLabelsRef.current ? formattedLabel : "",
           stroke: color,
           lineWidth: denseGraph
             ? Math.max(1.8, visualWidth * 0.88)
@@ -1149,6 +1141,7 @@ const PersonRelationshipGraph: React.FC<PersonRelationshipGraphProps> = ({
     graph,
     minWeight,
     theme.palette.grey,
+    theme.palette.mode,
     theme.palette.primary,
     weightSummary,
   ]);
@@ -1157,7 +1150,7 @@ const PersonRelationshipGraph: React.FC<PersonRelationshipGraphProps> = ({
     if (!processedData) {
       return undefined;
     }
-    return applyClustering(processedData, CLUSTER_COLORS);
+    return applyClustering(processedData);
   }, [processedData]);
 
   const graphData: GraphData | undefined = useMemo(() => {
@@ -1176,8 +1169,10 @@ const PersonRelationshipGraph: React.FC<PersonRelationshipGraphProps> = ({
       container: containerRef.current,
       width: sizeRef.current.width,
       height: sizeRef.current.height,
-      pixelRatio: Math.min(2, window.devicePixelRatio * 1.1),
+      devicePixelRatio: Math.min(2, window.devicePixelRatio * 1.1),
       behaviors: ["drag-element", "drag-canvas", "zoom-canvas", "scroll-canvas"],
+      // Margin kept free around the graph by fitView().
+      padding: 48,
       edge: {
         type: "quadratic",
         style: {
@@ -1187,19 +1182,15 @@ const PersonRelationshipGraph: React.FC<PersonRelationshipGraphProps> = ({
           lineAppendWidth: 8,
           lineCap: "round",
           lineJoin: "round",
-        },
-        label: {
-          style: {
-            fill: "#E8ECF3",
-            fontSize: 10,
-            fontWeight: 500,
-            opacity: 0.9,
-            background: {
-              fill: alpha("#0D1321", 0.7),
-              padding: [2, 4, 2, 4],
-              radius: 4,
-            },
-          },
+          // G6 v5 takes label options as prefixed style keys.
+          labelFill: "#E8ECF3",
+          labelFontSize: 10,
+          labelFontWeight: 500,
+          labelOpacity: 0.9,
+          labelBackground: true,
+          labelBackgroundFill: alpha("#0D1321", 0.7),
+          labelBackgroundRadius: 4,
+          labelPadding: [2, 4, 2, 4],
         },
         state: {
           highlight: {
@@ -1288,11 +1279,10 @@ const PersonRelationshipGraph: React.FC<PersonRelationshipGraphProps> = ({
       if (cancelled) {
         return;
       }
-      await graphInstance.fitView({ padding: 48 });
+      await graphInstance.fitView();
     };
 
     run().catch((error) => {
-      // eslint-disable-next-line no-console
       console.error("[PersonRelationshipGraph] Failed to render graph", error);
     });
 
@@ -1305,7 +1295,7 @@ const PersonRelationshipGraph: React.FC<PersonRelationshipGraphProps> = ({
     const graphInstance = g6GraphRef.current;
     if (!graphInstance) return;
     graphInstance.setSize(width, height);
-    void graphInstance.fitView({ padding: 48 });
+    void graphInstance.fitView();
   }, [width, height]);
 
   useEffect(() => {
@@ -1316,7 +1306,7 @@ const PersonRelationshipGraph: React.FC<PersonRelationshipGraphProps> = ({
     graphInstance.updateEdgeData(
       edges.map((edge) => ({
         id: edge.id,
-        label: showEdgeLabels ? edge.formattedLabel : "",
+        style: { labelText: showEdgeLabels ? edge.formattedLabel : "" },
       }))
     );
     void graphInstance.draw();
@@ -1332,7 +1322,7 @@ const PersonRelationshipGraph: React.FC<PersonRelationshipGraphProps> = ({
   const handleResetView = () => {
     const graphInstance = g6GraphRef.current;
     if (!graphInstance) return;
-    void graphInstance.fitView({ padding: 48 });
+    void graphInstance.fitView();
     clearElementStates(graphInstance);
   };
 

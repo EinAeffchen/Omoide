@@ -60,7 +60,8 @@ export default function AlbumDetailPage() {
   }, [albumId, refreshToken]);
 
   const fetcher = useCallback(
-    (cursor: string | null) => getAlbumMedia(albumId, cursor),
+    (cursor: string | null, signal: AbortSignal) =>
+      getAlbumMedia(albumId, cursor, signal),
     [albumId]
   );
 

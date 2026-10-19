@@ -35,8 +35,8 @@ interface DetectedFacesProps {
   isProcessing: boolean;
   faces: FaceRead[];
   title: string;
-  onDelete: (faceIds: number[]) => void | Promise<void>;
-  onDetach: (faceIds: number[]) => void | Promise<void>;
+  onDelete?: (faceIds: number[]) => void | Promise<void>;
+  onDetach?: (faceIds: number[]) => void | Promise<void>;
   onAssign: (faceIds: number[], personId: number) => void | Promise<void>;
   onCreateMultiple?: (faceIds: number[], name?: string) => Promise<Person | void>;
   personId?: number;
@@ -171,8 +171,11 @@ export default function DetectedFaces({
     };
   }, [lastCardNode, hasMore, isLoadingMore, onLoadMore]);
 
+  // Selections belong to one person; reset only when the person changes
+  // (the callback is recreated by the parent on every render).
   useEffect(() => {
     onClearSelection();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [personId]);
 
   useEffect(() => {
@@ -297,7 +300,7 @@ export default function DetectedFaces({
     : {};
 
   const faceItems: React.ReactNode[] = groupByVideo
-    ? groupedItems.flatMap((item, groupIndex) => {
+    ? groupedItems.flatMap<React.ReactNode>((item, groupIndex) => {
         const isLastGroup = groupIndex === groupedItems.length - 1;
         if (item.faces.length > 1) {
           const isExpanded = expandedGroupIds.has(item.mediaId);
@@ -331,7 +334,7 @@ export default function DetectedFaces({
                 {item.faces.map((face) => (
                   <FaceCard
                     key={face.id}
-                    face={face as any}
+                    face={face}
                     isProfile={face.id === profileFaceId}
                     onSetProfile={canMutate ? onSetProfile : undefined}
                     selected={canMutate && selectedFaceIds.includes(face.id)}
@@ -348,7 +351,7 @@ export default function DetectedFaces({
             ref={!disableInternalScroll && isLastGroup ? lastCardRef : null}
           >
             <FaceCard
-              face={item.faces[0] as any}
+              face={item.faces[0]}
               isProfile={item.faces[0].id === profileFaceId}
               onSetProfile={canMutate ? onSetProfile : undefined}
               selected={canMutate && selectedFaceIds.includes(item.faces[0].id)}
@@ -365,7 +368,7 @@ export default function DetectedFaces({
             ref={!disableInternalScroll && isLast ? lastCardRef : null}
           >
             <FaceCard
-              face={face as any}
+              face={face}
               isProfile={face.id === profileFaceId}
               onSetProfile={canMutate ? onSetProfile : undefined}
               selected={canMutate && selectedFaceIds.includes(face.id)}
@@ -580,7 +583,7 @@ export default function DetectedFaces({
             {pinnedFaces.map((face) => (
               <FaceCard
                 key={face.id}
-                face={face as any}
+                face={face}
                 isProfile={face.id === profileFaceId}
                 onSetProfile={canMutate ? onSetProfile : undefined}
                 selected={canMutate && selectedFaceIds.includes(face.id)}

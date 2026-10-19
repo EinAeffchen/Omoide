@@ -1,5 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { useInView } from "react-intersection-observer";
+import { useState, useEffect } from "react";
 import {
   MapContainer,
   TileLayer,
@@ -8,7 +7,7 @@ import {
   useMapEvents,
   useMap,
 } from "react-leaflet";
-import "leaflet/dist/leaflet.css";
+import "../leafletSetup";
 import {
   Box,
   Typography,
@@ -29,7 +28,7 @@ import {
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import CancelIcon from "@mui/icons-material/Cancel";
 import L from "leaflet";
-import { useListStore, defaultListState } from "../stores/useListStore";
+import { usePagedList } from "../hooks/usePagedList";
 import { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
 
@@ -38,10 +37,10 @@ function MapClickHandler({
   onMapClick,
 }: {
   selected: MediaPreview | null;
-  onMapClick: (latlng: typeof L.LatLng) => void;
+  onMapClick: (latlng: L.LatLng) => void;
 }) {
   useMapEvents({
-    click(e: any) {
+    click(e: L.LeafletMouseEvent) {
       if (selected) {
         onMapClick(e.latlng);
       }
@@ -50,7 +49,16 @@ function MapClickHandler({
   return null;
 }
 
-function FitBounds({ bounds }: { bounds: any | null }) {
+/** Subset of a Nominatim `/search?format=json` result used by this page. */
+interface NominatimResult {
+  display_name: string;
+  lat: string;
+  lon: string;
+  /** [south, north, west, east] as decimal strings. */
+  boundingbox?: string[];
+}
+
+function FitBounds({ bounds }: { bounds: L.LatLngBoundsExpression | null }) {
   const map = useMap();
   useEffect(() => {
     if (bounds) {
@@ -68,21 +76,26 @@ export default function MapEditorPage() {
     items: orphans,
     hasMore,
     isLoading,
-  } = useListStore((state) => state.lists[listKey] || defaultListState);
-  const { fetchInitial, loadMore, removeItem } = useListStore();
-  const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
+    error,
+    loaderRef,
+    removeItems,
+  } = usePagedList<MediaPreview>(listKey, (cursor, signal) =>
+    getMissingGeoMedia(cursor, signal)
+  );
 
   const [selectedMedia, setSelectedMedia] = useState<MediaPreview | null>(null);
-  const [newPosition, setNewPosition] = useState<typeof L.LatLng | null>(null);
+  const [newPosition, setNewPosition] = useState<L.LatLng | null>(null);
   const [saving, setSaving] = useState(false);
 
   // Search State
   const [searchInput, setSearchInput] = useState("");
-  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [searchResults, setSearchResults] = useState<NominatimResult[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
 
   // Map State
-  const [mapBounds, setMapBounds] = useState<any | null>(null);
+  const [mapBounds, setMapBounds] = useState<L.LatLngBoundsExpression | null>(
+    null
+  );
 
   // UI State
   const [snackbar, setSnackbar] = useState<{
@@ -91,15 +104,6 @@ export default function MapEditorPage() {
     severity: "success" | "error";
   }>({ open: false, message: "", severity: "success" });
   const theme = useTheme();
-
-  useEffect(() => {
-    fetchInitial(listKey, () => getMissingGeoMedia(null));
-  }, [listKey, fetchInitial]);
-  useEffect(() => {
-    if (inView && hasMore && !isLoading) {
-      loadMore(listKey, (cursor) => getMissingGeoMedia(cursor));
-    }
-  }, [inView, hasMore, isLoading, loadMore, listKey]);
 
   // Debounced search for locations using Nominatim API
   useEffect(() => {
@@ -115,7 +119,7 @@ export default function MapEditorPage() {
         )}`
       )
         .then((res) => res.json())
-        .then((data) => setSearchResults(data))
+        .then((data: NominatimResult[]) => setSearchResults(data))
         .catch(console.error)
         .finally(() => setSearchLoading(false));
     }, 500);
@@ -127,7 +131,7 @@ export default function MapEditorPage() {
     setNewPosition(null);
   };
 
-  const handleMapClick = (latlng: typeof L.LatLng) => {
+  const handleMapClick = (latlng: L.LatLng) => {
     setNewPosition(latlng);
   };
 
@@ -141,8 +145,8 @@ export default function MapEditorPage() {
         newPosition.lng
       );
 
-      // 9. Use the store's action to optimistically update the list
-      removeItem(listKey, selectedMedia.id);
+      // The media now has a location: drop it from the cached list
+      removeItems([selectedMedia.id]);
 
       setSnackbar({
         open: true,
@@ -151,7 +155,7 @@ export default function MapEditorPage() {
       });
       setSelectedMedia(null);
       setNewPosition(null);
-    } catch (err) {
+    } catch {
       setSnackbar({
         open: true,
         message: "Failed to save location",
@@ -166,12 +170,12 @@ export default function MapEditorPage() {
     setNewPosition(null);
   };
 
-  const handleSearchSelect = (value: any) => {
+  const handleSearchSelect = (value: NominatimResult | null) => {
     if (!value) return;
     const lat = parseFloat(value.lat);
     const lon = parseFloat(value.lon);
     if (value.boundingbox) {
-      const [south, north, west, east] = (value.boundingbox as string[]).map(
+      const [south, north, west, east] = value.boundingbox.map(
         parseFloat
       );
       setMapBounds([
@@ -293,7 +297,12 @@ export default function MapEditorPage() {
               <CircularProgress size={24} />
             </Box>
           )}
-          {hasMore && <Box ref={loaderRef} sx={{ height: "1px" }} />}
+          {error && (
+            <Alert severity="error" sx={{ mt: 1 }}>
+              {error}
+            </Alert>
+          )}
+          {hasMore && !error && <Box ref={loaderRef} sx={{ height: "1px" }} />}
         </Box>
       </Paper>
 

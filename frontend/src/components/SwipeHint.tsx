@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from "react";
 import { Box, Fade, Typography } from "@mui/material";
-import SwipeIcon from "@mui/icons-material/Swipe"; // Ensure this icon exists or use alternative
 import TouchAppIcon from "@mui/icons-material/TouchApp";
 
 export function SwipeHint() {

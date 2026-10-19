@@ -1,37 +1,20 @@
-import { useCallback, useEffect } from "react";
 import { Container, Typography, Box, CircularProgress } from "@mui/material";
 import Grid from "@mui/material/Grid";
 
-import { useInView } from "react-intersection-observer";
 import TagCard from "../components/TagCard";
-import { useListStore, defaultListState } from "../stores/useListStore";
+import { usePagedList } from "../hooks/usePagedList";
 import { getTags } from "../services/tag";
+import { Tag } from "../types";
 
 export default function TagsPage() {
   const listKey = "tags-all";
 
-  const { items, hasMore, isLoading } = useListStore(
-    (state) => state.lists[listKey] || defaultListState
-  );
-  const { fetchInitial, loadMore, removeItem } = useListStore();
+  const { items, hasMore, isLoading, error, loaderRef, removeItems } =
+    usePagedList<Tag>(listKey, (cursor, signal) => getTags(cursor, signal));
 
-  const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
-
-  useEffect(() => {
-    fetchInitial(listKey, () => getTags(null));
-  }, [fetchInitial, listKey]);
-
-  useEffect(() => {
-    if (inView && hasMore && !isLoading) {
-      loadMore(listKey, (cursor) => getTags(cursor));
-    }
-  }, [inView, hasMore, isLoading, loadMore, listKey]);
-  const handleTagDeleted = useCallback(
-    (deletedTagId: number) => {
-      removeItem(listKey, deletedTagId);
-    },
-    [removeItem, listKey]
-  );
+  const handleTagDeleted = (deletedTagId: number) => {
+    removeItems([deletedTagId]);
+  };
   return (
     <Container maxWidth="lg" sx={{ pt: 4, pb: 6 }}>
       <Typography variant="h4" gutterBottom>
@@ -53,7 +36,7 @@ export default function TagsPage() {
         </Box>
       )}
 
-      {!isLoading && hasMore && (
+      {!isLoading && hasMore && !error && (
         <Box
           ref={loaderRef}
           textAlign="center"

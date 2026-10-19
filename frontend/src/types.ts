@@ -1,3 +1,6 @@
+/** Sort orders offered for a person's detected faces. */
+export type FacesSortBy = "id_desc" | "date_desc" | "date_asc";
+
 export interface Media {
   id: number;
   path: string;
@@ -10,7 +13,7 @@ export interface Media {
   inserted_at: string;
   tags: Tag[];
   faces: Face[];
-  thumbnail_path?: string;
+  thumbnail_path?: string | null;
   extracted_scenes: boolean;
   is_favorite: boolean;
 }
@@ -55,7 +58,7 @@ export interface ProfileFace {
 export interface PersonReadSimple {
   id: number;
   name?: string;
-  profile_face: ProfileFace;
+  profile_face?: ProfileFace | null;
   appearance_count?: number;
   is_favorite?: boolean;
 }
@@ -83,10 +86,6 @@ export interface Person {
   is_favorite?: boolean;
 }
 
-export interface PersonIndex {
-  id: number;
-  name?: string;
-}
 export interface Face {
   id: number;
   media_id: number;
@@ -273,7 +272,7 @@ export interface MediaPreview {
   filename: string;
   path: string;
   size: number;
-  thumbnail_path: string;
+  thumbnail_path?: string | null;
   duration?: number;
   width?: number;
   height?: number;
@@ -337,24 +336,6 @@ export interface MediaLocation {
   latitude: number;
   longitude: number;
   thumbnail: string;
-}
-
-export interface SearchResult {
-  media: Media[];
-  persons: Person[];
-  tags: Tag[];
-}
-
-export interface MediaIndex {
-  id: number;
-  path: string;
-  filename: string;
-  size: number;
-  duration?: number;
-  width?: number;
-  height?: number;
-  views: number;
-  inserted_at: string; // ISO date
 }
 
 export interface CursorPage<T> {
@@ -425,115 +406,35 @@ export interface DuplicatePage {
   next_cursor: string | null;
 }
 
-export interface BlurMediaItem {
+/** A media row in the maintenance review lists. */
+export interface ReviewMediaItem {
   id: number;
   filename: string;
   path: string;
   size: number;
   thumbnail_path: string | null;
+  width: number | null;
+  height: number | null;
+  duration: number | null;
+  inserted_at: string;
+}
+
+export interface BlurMediaItem extends ReviewMediaItem {
   laplacian_score: number;
-  width: number | null;
-  height: number | null;
-  duration: number | null;
-  inserted_at: string;
 }
 
-export interface BlurPage {
-  items: BlurMediaItem[];
-  next_cursor: string | null;
-  total: number;
-}
-
-export interface NoPersonsMediaItem {
-  id: number;
-  filename: string;
-  path: string;
-  size: number;
-  thumbnail_path: string | null;
-  width: number | null;
-  height: number | null;
-  duration: number | null;
-  inserted_at: string;
-  faces_extracted: boolean;
-}
-
-export interface NoPersonsPage {
-  items: NoPersonsMediaItem[];
-  next_cursor: string | null;
-  total: number;
-}
-
-export interface UntaggedMediaItem {
-  id: number;
-  filename: string;
-  path: string;
-  size: number;
-  thumbnail_path: string | null;
-  width: number | null;
-  height: number | null;
-  duration: number | null;
-  inserted_at: string;
-}
-
-export interface UntaggedPage {
-  items: UntaggedMediaItem[];
-  next_cursor: string | null;
-  total: number;
-}
-
-export interface ShortVideoItem {
-  id: number;
-  filename: string;
-  path: string;
-  size: number;
-  thumbnail_path: string | null;
-  width: number | null;
-  height: number | null;
-  duration: number;
-  inserted_at: string;
-}
-
-export interface ShortVideoPage {
-  items: ShortVideoItem[];
-  next_cursor: string | null;
-  total: number;
-}
-
-export interface LowResMediaItem {
-  id: number;
-  filename: string;
-  path: string;
-  size: number;
-  thumbnail_path: string | null;
+export interface LowResMediaItem extends ReviewMediaItem {
   width: number;
   height: number;
   pixel_count: number;
-  duration: number | null;
-  inserted_at: string;
 }
 
-export interface LowResPage {
-  items: LowResMediaItem[];
-  next_cursor: string | null;
-  total: number;
+export interface NoPersonsMediaItem extends ReviewMediaItem {
+  faces_extracted: boolean;
 }
 
-export interface NoExifDateItem {
-  id: number;
-  filename: string;
-  path: string;
-  size: number;
-  thumbnail_path: string | null;
-  width: number | null;
-  height: number | null;
-  duration: number | null;
-  inserted_at: string;
-}
-
-export interface NoExifDatePage {
-  items: NoExifDateItem[];
-  next_cursor: string | null;
-  total: number;
+export interface ShortVideoItem extends ReviewMediaItem {
+  duration: number;
 }
 
 // Timeline
@@ -554,11 +455,6 @@ export interface TimelineMediaItem {
   items: MediaPreview;
 }
 
-export interface TimelineEventItem {
-  type: "event";
-  date: string;
-  items: TimelineEvent;
-}
 export interface MediaItemGroup {
   type: "media_group";
   date: string;
@@ -572,7 +468,8 @@ export interface EventDisplayItem {
   event: TimelineEvent;
 }
 
-export type TimelineItem = TimelineMediaItem | TimelineEventItem;
+/** One row of `/api/person/{id}/timeline`: a single media item or an event. */
+export type TimelineEntry = TimelineMediaItem | EventDisplayItem;
 export type TimelineDisplayItem = MediaItemGroup | EventDisplayItem;
 
 export interface VersionUpdateInfo {
@@ -710,4 +607,25 @@ export interface ProfileHealth {
   active_exists: boolean;
   has_db: boolean;
   has_thumbs: boolean;
+}
+
+/**
+ * EXIF record returned by `GET /api/media/{id}/processors/exif` (the endpoint
+ * returns `null` when no EXIF row exists). Missing values may arrive as JSON
+ * `null`; consumers only test them for truthiness, so they are typed optional.
+ */
+export interface ExifData {
+  id?: number;
+  media_id?: number;
+  make?: string | null;
+  model?: string | null;
+  timestamp?: string | null;
+  aperture?: string | null;
+  exposure_time?: string | null;
+  iso?: number | null;
+  focal_length?: number | null;
+  lat?: number | null;
+  lon?: number | null;
+  city?: string | null;
+  country?: string | null;
 }

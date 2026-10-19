@@ -1,22 +1,19 @@
-import { API } from "../config";
+import { apiFetch } from "./api";
 
-export const removeTagFromMedia = async (mediaId: number, tagId: number) => {
-  const res = await fetch(`${API}/api/tags/media/${mediaId}/${tagId}`, {
+export const removeTagFromMedia = async (mediaId: number, tagId: number) =>
+  apiFetch<void>(`/api/tags/media/${mediaId}/${tagId}`, {
     method: "DELETE",
+    errorMessage: "Failed to remove tag from media",
   });
-  if (!res.ok) throw new Error("Failed to remove tag from media");
-};
 
-export const removeTagFromPerson = async (personId: number, tagId: number) => {
-  const res = await fetch(`${API}/api/tags/person/${personId}/${tagId}`, {
+export const removeTagFromPerson = async (personId: number, tagId: number) =>
+  apiFetch<void>(`/api/tags/person/${personId}/${tagId}`, {
     method: "DELETE",
+    errorMessage: "Failed to remove tag from person",
   });
-  if (!res.ok) throw new Error("Failed to remove tag from person");
-};
 
-export const deleteTag = async (tagId: number) => {
-  const res = await fetch(`${API}/api/tags/${tagId}`, {
+export const deleteTag = async (tagId: number) =>
+  apiFetch<void>(`/api/tags/${tagId}`, {
     method: "DELETE",
+    errorMessage: "Failed to delete tag",
   });
-  if (!res.ok) throw new Error("Failed to delete tag");
-};

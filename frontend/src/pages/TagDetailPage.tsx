@@ -1,6 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, Link as RouterLink } from "react-router-dom";
-import { useInView } from "react-intersection-observer";
 import {
   Alert,
   Box,
@@ -14,10 +13,11 @@ import {
 } from "@mui/material";
 import MediaCard from "../components/MediaCard";
 import PersonCard from "../components/PersonCard";
-import { Tag, Media, Person } from "../types";
+import { Tag, Media, Person, PersonReadSimple } from "../types";
+import { isAbortError } from "../services/api";
 import { getTag } from "../services/tag";
 import { getMediaList } from "../services/media";
-import { useListStore, defaultListState } from "../stores/useListStore";
+import { usePagedList } from "../hooks/usePagedList";
 
 const BG_SECTION = "background.default";
 const TEXT_PRIMARY = "text.primary";
@@ -31,61 +31,45 @@ export default function TagDetailPage() {
   const [tagError, setTagError] = useState<string | null>(null);
   const [retryTick, setRetryTick] = useState(0);
   const [mediaFilter, setMediaFilter] = useState<MediaFilter>("all");
-  const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
 
   useEffect(() => {
     if (!id) return;
-    let cancelled = false;
+    const controller = new AbortController();
     setTag(null);
     setTagError(null);
-    getTag(id)
-      .then((tagData) => {
-        if (!cancelled) setTag(tagData);
-      })
+    getTag(id, controller.signal)
+      .then(setTag)
       .catch((error) => {
-        if (!cancelled) {
-          setTagError(
-            error instanceof Error ? error.message : "Failed to load tag"
-          );
-        }
+        if (controller.signal.aborted || isAbortError(error)) return;
+        setTagError(
+          error instanceof Error ? error.message : "Failed to load tag"
+        );
       });
-    return () => {
-      cancelled = true;
-    };
+    return () => controller.abort();
   }, [id, retryTick]);
 
   const tagName = tag?.name ?? null;
   const listKey = tagName ? `tag-media-${tagName}` : "";
-  const listState = useListStore((state) =>
-    listKey ? state.lists[listKey] : undefined
+  const {
+    items: mediaItems,
+    hasMore,
+    isLoading,
+    error: listError,
+    loaderRef,
+    reload,
+  } = usePagedList<Media>(
+    listKey,
+    (cursor, signal) =>
+      getMediaList(cursor, "newest", [tagName ?? ""], null, true, null, signal),
+    { enabled: tagName !== null }
   );
-  const mediaItems = listState?.items ?? defaultListState.items;
-  const hasMore = listState?.hasMore ?? defaultListState.hasMore;
-  const isLoading = listState?.isLoading ?? defaultListState.isLoading;
-  const listError = listState?.error ?? defaultListState.error;
-  const { fetchInitial, loadMore, clearList } = useListStore();
-
-  useEffect(() => {
-    if (!tagName || !listKey) return;
-    fetchInitial(listKey, () => getMediaList(null, "newest", [tagName]));
-  }, [tagName, listKey, fetchInitial]);
-
-  useEffect(() => {
-    if (!tagName || !listKey) return;
-    if (inView && hasMore && !isLoading && !listError) {
-      loadMore(listKey, (cursor) =>
-        getMediaList(cursor ?? null, "newest", [tagName])
-      );
-    }
-  }, [inView, hasMore, isLoading, listError, listKey, loadMore, tagName]);
 
   const filteredMediaItems = useMemo(() => {
-    const items = mediaItems as Media[];
-    if (mediaFilter === "all") return items;
+    if (mediaFilter === "all") return mediaItems;
     if (mediaFilter === "video") {
-      return items.filter((item) => typeof item.duration === "number");
+      return mediaItems.filter((item) => typeof item.duration === "number");
     }
-    return items.filter((item) => typeof item.duration !== "number");
+    return mediaItems.filter((item) => typeof item.duration !== "number");
   }, [mediaFilter, mediaItems]);
   const mediaIds = useMemo(
     () => filteredMediaItems.map((m) => m.id),
@@ -162,12 +146,7 @@ export default function TagDetailPage() {
               <Button
                 color="inherit"
                 size="small"
-                onClick={() => {
-                  clearList(listKey);
-                  fetchInitial(listKey, () =>
-                    getMediaList(null, "newest", [tag.name])
-                  );
-                }}
+                onClick={reload}
               >
                 Retry
               </Button>
@@ -211,7 +190,7 @@ export default function TagDetailPage() {
                 to={`/person/${p.id}`}
                 sx={{ textDecoration: "none" }}
               >
-                <PersonCard person={p} />
+                <PersonCard person={p as PersonReadSimple} />
               </Box>
             </Grid>
           ))}

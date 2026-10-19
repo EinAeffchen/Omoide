@@ -22,11 +22,6 @@ from app.tasks.state import set_task_progress
 router = APIRouter()
 
 
-@router.get("/media/{media_id}/processors", summary="List all processors")
-def list_processors():
-    return [p.name for p in load_processors()]
-
-
 @router.get(
     "/media/{media_id}/processors/{processor_name}",
     summary="Get a processor’s output",

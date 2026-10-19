@@ -9,9 +9,9 @@ import {
   Box,
   TextField,
   List,
-  ListItem,
   ListItemText,
   Radio,
+  ListItemButton,
   ListItemIcon,
   Snackbar,
   Alert,
@@ -95,11 +95,11 @@ export default function ProfileSetupDialog() {
             if (!cancelled) setHasActiveTasks(tasks.length > 0);
           } catch {}
           setOpen(true);
-        } catch (e) {
+        } catch {
           // If listing fails (unlikely), don't block the app
           setOpen(false);
         }
-      } catch (e) {
+      } catch {
         setError("Failed to initialize profile setup.");
         setOpen(false);
       } finally {
@@ -132,8 +132,12 @@ export default function ProfileSetupDialog() {
       setProfiles(updated);
       setSelectedPath(p);
       setSnack({ open: true, msg: "Profile added.", sev: "success" });
-    } catch (e: any) {
-      setSnack({ open: true, msg: e?.message || "Failed to add profile", sev: "error" });
+    } catch (e) {
+      setSnack({
+        open: true,
+        msg: (e instanceof Error && e.message) || "Failed to add profile",
+        sev: "error",
+      });
     }
   };
 
@@ -153,8 +157,12 @@ export default function ProfileSetupDialog() {
       try {
         window.location.reload();
       } catch {}
-    } catch (e: any) {
-      setSnack({ open: true, msg: e?.message || "Failed to switch profile", sev: "error" });
+    } catch (e) {
+      setSnack({
+        open: true,
+        msg: (e instanceof Error && e.message) || "Failed to switch profile",
+        sev: "error",
+      });
     } finally {
       setSaving(false);
     }
@@ -169,8 +177,12 @@ export default function ProfileSetupDialog() {
       await reloadConfig();
       setSnack({ open: true, msg: "Profile created.", sev: "success" });
       markDoneAndClose();
-    } catch (e: any) {
-      setSnack({ open: true, msg: e?.message || "Failed to create profile", sev: "error" });
+    } catch (e) {
+      setSnack({
+        open: true,
+        msg: (e instanceof Error && e.message) || "Failed to create profile",
+        sev: "error",
+      });
     } finally {
       setCreating(false);
     }
@@ -269,9 +281,8 @@ export default function ProfileSetupDialog() {
                   </Box>
                   <List dense>
                     {profiles?.profiles?.map((p) => (
-                      <ListItem
+                      <ListItemButton
                         key={p.path}
-                        button
                         onClick={() => setSelectedPath(p.path)}
                         selected={selectedPath === p.path}
                       >
@@ -282,7 +293,7 @@ export default function ProfileSetupDialog() {
                           primary={p.name || "Profile"}
                           secondary={p.path}
                         />
-                      </ListItem>
+                      </ListItemButton>
                     ))}
                   </List>
                   <Box sx={{ display: "flex", gap: 1, alignItems: "center", mt: 1 }}>

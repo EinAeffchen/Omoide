@@ -91,7 +91,7 @@ export default function PersonCard({
     onToggleSelect?.(person.id);
   };
 
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLElement>) => {
     if (!isSelectable) return;
     if (event.key === " " || event.key === "Enter") {
       handleSelectionToggle(event);

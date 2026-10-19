@@ -2,6 +2,8 @@ interface RuntimeConfig {
   VITE_API_PRESENTATION_MODE: string;
   VITE_API_ENABLE_PEOPLE: string;
   VITE_API_MEME_MODE: string;
+  VITE_API_EVENTS_ENABLED?: string;
+  VITE_GROUP_FACES_BY_VIDEO?: string;
   PERSON_RELATIONSHIP_MAX_NODES?: string;
   APP_VERSION: string;
 }

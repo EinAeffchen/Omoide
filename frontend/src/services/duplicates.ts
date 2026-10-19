@@ -1,50 +1,46 @@
-import { API } from "../config";
-import { DuplicatePage, Task, DuplicateStats } from "../types";
+import { DuplicatePage, DuplicateStats } from "../types";
+import { apiFetch } from "./api";
 
 export const getDuplicates = async (
   cursor: string | null = null,
   sortBy: "count" | "size" = "count",
   mediaType?: "image" | "video",
   limit: number = 10,
-  minCount: number = 2
-): Promise<DuplicatePage> => {
-  const params = new URLSearchParams();
-  if (cursor) params.append("cursor", cursor);
-  params.append("limit", limit.toString());
-  if (sortBy !== "count") params.append("sort_by", sortBy);
-  if (mediaType) params.append("media_type", mediaType);
-  if (minCount > 2) params.append("min_count", minCount.toString());
-
-  const response = await fetch(`${API}/api/duplicates?${params.toString()}`);
-  if (!response.ok) {
-    throw new Error("Failed to fetch duplicates");
-  }
-  return response.json();
-};
-
-export const getDuplicateStats = async (): Promise<DuplicateStats> => {
-  const response = await fetch(API + "/api/duplicates/stats");
-  if (!response.ok) {
-    throw new Error("Failed to fetch duplicate statistics");
-  }
-  return response.json();
-};
-
-export const startDuplicateDetection = async (): Promise<Task> => {
-  const response = await fetch(`${API}/api/tasks/find_duplicates`, {
-    method: "POST",
+  minCount: number = 2,
+  signal?: AbortSignal
+): Promise<DuplicatePage> =>
+  apiFetch<DuplicatePage>("/api/duplicates", {
+    query: {
+      cursor,
+      limit,
+      sort_by: sortBy !== "count" ? sortBy : undefined,
+      media_type: mediaType,
+      min_count: minCount > 2 ? minCount : undefined,
+    },
+    errorMessage: "Failed to fetch duplicates",
+    signal,
   });
-  if (!response.ok) {
-    throw new Error("Failed to start duplicate detection");
-  }
-  return response.json();
-};
+
+export const getDuplicateStats = async (
+  signal?: AbortSignal
+): Promise<DuplicateStats> =>
+  apiFetch<DuplicateStats>("/api/duplicates/stats", {
+    errorMessage: "Failed to fetch duplicate statistics",
+    signal,
+  });
 
 export type ResolveAction =
   | "DELETE_FILES"
   | "DELETE_RECORDS"
   | "BLACKLIST_RECORDS"
   | "MARK_NOT_DUPLICATE";
+
+/** Response of `POST /api/duplicates/resolve`. */
+export interface ResolveDuplicatesResult {
+  message: string;
+  skipped_read_only: number;
+}
+
 export const resolveDuplicates = async (
   groupId: number,
   action: ResolveAction,
@@ -56,18 +52,9 @@ export const resolveDuplicates = async (
     action: action,
   };
 
-  const response = await fetch(`${API}/api/duplicates/resolve`, {
+  return apiFetch<ResolveDuplicatesResult>("/api/duplicates/resolve", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
+    body: payload,
+    errorMessage: "Failed to resolve duplicate group.",
   });
-
-  if (!response.ok) {
-    const errorData = await response.json();
-    throw new Error(errorData.detail || "Failed to resolve duplicate group.");
-  }
-
-  return await response.json();
 };

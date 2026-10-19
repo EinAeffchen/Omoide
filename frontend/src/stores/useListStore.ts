@@ -1,250 +1,284 @@
 import { create } from "zustand";
-import { CursorPage } from "../types";
+import { isAbortError } from "../services/api";
 
-// A generic state shape for any paginated list
+/** One page of a cursor-paginated list, as returned by the backend. */
+export interface PageResponse<T> {
+  items: T[];
+  next_cursor: string | null;
+  total?: number;
+}
+
+/** Loads one page; `cursor` is null for the first page. */
+export type PageFetcher<T> = (
+  cursor: string | null,
+  signal: AbortSignal
+) => Promise<PageResponse<T>>;
+
+export type ItemId = number | string;
+
 export interface ListState<T> {
   items: T[];
   nextCursor: string | null;
   hasMore: boolean;
   isLoading: boolean;
   error: string | null;
+  /** Server-reported total, when the endpoint provides one. */
+  total: number | null;
 }
 
-// The state for the entire store, holding multiple lists
 interface ListStoreState {
-  // lists is a dictionary where the key is a unique string (e.g., an API endpoint)
-  // and the value is the state of that list.
-  lists: Record<string, ListState<any>>;
+  /** Lists keyed by a caller-chosen key (e.g. "favorites-newest"). */
+  lists: Record<string, ListState<unknown>>;
 
-  // Generic actions that work with any data type T
+  /** Load the first page unless the list is cached or already loading.
+   * `force` drops the cached list and refetches. */
   fetchInitial: <T>(
     listKey: string,
-    fetcher: () => Promise<CursorPage<T>>
+    fetcher: PageFetcher<T>,
+    options?: { force?: boolean; signal?: AbortSignal }
   ) => Promise<void>;
+  /** Append the next page; ignored while a request is in flight. */
   loadMore: <T>(
     listKey: string,
-    fetcher: (cursor?: string) => Promise<CursorPage<T>>
+    fetcher: PageFetcher<T>,
+    options?: { signal?: AbortSignal }
   ) => Promise<void>;
-  removeItem: (listKey: string, itemId: number | string) => void;
-  removeItems: (listKey: string, itemIds: (number | string)[]) => void;
+  /** Abort the in-flight request of a list, if any. */
+  cancel: (listKey: string) => void;
+  removeItems: (
+    listKey: string,
+    ids: Iterable<ItemId>,
+    options?: { removedCount?: number }
+  ) => void;
+  updateItems: <T>(listKey: string, update: (item: T) => T) => void;
+  addItem: <T>(listKey: string, item: T, position?: "start" | "end") => void;
   clearList: (listKey: string) => void;
   clearListsByPrefix: (prefix: string) => void;
-  addItem: <T>(listKey: string, item: T, position?: "start" | "end") => void;
-  updateItem: <T extends { id: any }>(listKey: string, item: T) => void;
 }
 
-// The default state for any new list
-export const defaultListState: ListState<any> = {
+export const defaultListState: ListState<never> = {
   items: [],
   nextCursor: null,
   hasMore: true,
   isLoading: false,
   error: null,
+  total: null,
 };
 
-export const useListStore = create<ListStoreState>((set, get) => ({
-  lists: {},
+/** Duplicate groups are keyed by `group_id`, everything else by `id`. */
+export const itemIdOf = (item: unknown): ItemId => {
+  const record = item as { id?: ItemId; group_id?: ItemId };
+  return (record.group_id ?? record.id) as ItemId;
+};
 
-  fetchInitial: async <T>(
-    listKey: string,
-    fetcher: () => Promise<CursorPage<T>>
-  ) => {
-    const existingList = get().lists[listKey];
-    // Do not fetch if the list is already loading or if it already has content.
-    // A new search will have a new listKey, so this check will allow the fetch.
-    if (
-      existingList?.isLoading ||
-      (existingList && existingList.items.length > 0)
-    ) {
-      return;
-    }
+// In-flight requests per list. Kept outside the store state so aborting
+// never triggers a render.
+const controllers = new Map<string, AbortController>();
 
-    set((state) => ({
-      lists: {
-        ...state.lists,
-        [listKey]: { ...defaultListState, isLoading: true },
-      },
-    }));
-
-    try {
-      const response = await fetcher();
-      set((state) => ({
-        lists: {
-          ...state.lists,
-          [listKey]: {
-            items: response.items,
-            nextCursor: response.next_cursor,
-            hasMore: response.next_cursor !== null,
-            isLoading: false,
-            error: null,
-          },
-        },
-      }));
-    } catch (error) {
-      console.error(`Failed to fetch initial data for ${listKey}:`, error);
-      set((state) => ({
-        lists: {
-          ...state.lists,
-          [listKey]: {
-            ...defaultListState,
-            isLoading: false,
-            hasMore: false,
-            error: error instanceof Error ? error.message : String(error),
-          },
-        },
-      }));
-    }
-  },
-
-  loadMore: async <T>(
-    listKey: string,
-    fetcher: (cursor: string | null) => Promise<CursorPage<T>>
-  ) => {
-    const currentList = get().lists[listKey] as ListState<T> | undefined;
-    if (!currentList || currentList.isLoading || !currentList.hasMore) return;
-
-    set((state) => ({
-      lists: { ...state.lists, [listKey]: { ...currentList, isLoading: true } },
-    }));
-
-    try {
-      const response = await fetcher(currentList.nextCursor);
-      // Merge from the latest state, not the pre-await snapshot: items removed
-      // (or lists cleared) while the page was in flight must stay removed.
-      set((state) => {
-        const latest = state.lists[listKey];
-        if (!latest) return state;
-        return {
-          lists: {
-            ...state.lists,
-            [listKey]: {
-              ...latest,
-              items: [...latest.items, ...response.items],
-              nextCursor: response.next_cursor,
-              hasMore: response.next_cursor !== null,
-              isLoading: false,
-              error: null,
-            },
-          },
-        };
+function startRequest(listKey: string, external?: AbortSignal) {
+  controllers.get(listKey)?.abort();
+  const controller = new AbortController();
+  controllers.set(listKey, controller);
+  if (external) {
+    if (external.aborted) controller.abort();
+    else
+      external.addEventListener("abort", () => controller.abort(), {
+        once: true,
       });
-    } catch (error) {
-      console.error(`Failed to load more data for ${listKey}:`, error);
-      set((state) => {
-        const latest = state.lists[listKey];
-        if (!latest) return state;
-        return {
-          lists: {
-            ...state.lists,
-            [listKey]: {
-              ...latest,
-              isLoading: false,
-              hasMore: false,
-              error: error instanceof Error ? error.message : String(error),
-            },
-          },
-        };
-      });
-    }
-  },
-  removeItem: (listKey: string, itemId: number | string) => {
+  }
+  return controller;
+}
+
+const isCurrent = (listKey: string, controller: AbortController) =>
+  controllers.get(listKey) === controller && !controller.signal.aborted;
+
+const errorText = (error: unknown) =>
+  error instanceof Error ? error.message : String(error);
+
+export const useListStore = create<ListStoreState>((set, get) => {
+  const patch = (listKey: string, change: Partial<ListState<unknown>>) =>
     set((state) => {
-      const currentList = state.lists[listKey];
-      if (!currentList) return state; // If the list doesn't exist, do nothing
-
-      const updatedItems = currentList.items.filter((item: any) => {
-        const itemIdentifier =
-          item.group_id !== undefined ? item.group_id : item.id;
-
-        return itemIdentifier !== itemId;
-      });
-
+      const current = state.lists[listKey];
+      if (!current) return state;
       return {
-        lists: {
-          ...state.lists,
-          [listKey]: {
-            ...currentList,
-            items: updatedItems,
-          },
-        },
+        lists: { ...state.lists, [listKey]: { ...current, ...change } },
       };
     });
-  },
-  removeItems: (listKey, itemIds) => {
-    set((state) => {
-      const currentList = state.lists[listKey];
-      if (!currentList) return state;
 
-      // Create a Set of IDs for efficient lookup
-      const idsToRemove = new Set(itemIds);
-      const updatedItems = currentList.items.filter(
-        (item: any) => !idsToRemove.has(item.id)
-      );
+  const finish = (listKey: string, controller: AbortController) => {
+    if (controllers.get(listKey) === controller) controllers.delete(listKey);
+  };
 
-      return {
-        lists: {
-          ...state.lists,
-          [listKey]: {
-            ...currentList,
-            items: updatedItems,
-          },
-        },
-      };
-    });
-  },
-  clearList: (listKey: string) => {
-    set((state) => {
-      const newLists = { ...state.lists };
-      delete newLists[listKey];
-      return { lists: newLists };
-    });
-  },
-  // Drops every cached list whose key starts with the prefix, so stale
-  // variants (e.g. the other sort order) refetch on their next mount.
-  clearListsByPrefix: (prefix: string) => {
-    set((state) => {
-      const newLists: Record<string, ListState<any>> = {};
-      for (const [key, value] of Object.entries(state.lists)) {
-        if (!key.startsWith(prefix)) newLists[key] = value;
+  return {
+    lists: {},
+
+    fetchInitial: async (listKey, fetcher, options = {}) => {
+      const existing = get().lists[listKey];
+      if (
+        !options.force &&
+        existing &&
+        (existing.isLoading || existing.items.length > 0)
+      ) {
+        return;
       }
-      return { lists: newLists };
-    });
-  },
-  addItem: (listKey, item, position = "end") => {
-    set((state) => {
-      const currentList = state.lists[listKey];
-      if (!currentList) return state;
-
-      const updatedItems =
-        position === "start"
-          ? [item, ...currentList.items]
-          : [...currentList.items, item];
-
-      return {
+      const controller = startRequest(listKey, options.signal);
+      set((state) => ({
         lists: {
           ...state.lists,
-          [listKey]: {
-            ...currentList,
-            items: updatedItems,
+          [listKey]: { ...defaultListState, isLoading: true },
+        },
+      }));
+      try {
+        const page = await fetcher(null, controller.signal);
+        if (!isCurrent(listKey, controller)) return;
+        patch(listKey, {
+          items: page.items,
+          nextCursor: page.next_cursor,
+          hasMore: page.next_cursor !== null,
+          isLoading: false,
+          error: null,
+          total: page.total ?? null,
+        });
+      } catch (error) {
+        if (isAbortError(error) || controller.signal.aborted) {
+          // Leave an empty, idle list so the next mount fetches again.
+          if (controllers.get(listKey) === controller)
+            patch(listKey, { isLoading: false });
+          return;
+        }
+        if (!isCurrent(listKey, controller)) return;
+        console.error(`Failed to load ${listKey}:`, error);
+        patch(listKey, {
+          isLoading: false,
+          hasMore: false,
+          error: errorText(error),
+        });
+      } finally {
+        finish(listKey, controller);
+      }
+    },
+
+    loadMore: async (listKey, fetcher, options = {}) => {
+      const current = get().lists[listKey];
+      if (!current || current.isLoading || !current.hasMore) return;
+      const controller = startRequest(listKey, options.signal);
+      patch(listKey, { isLoading: true });
+      try {
+        const page = await fetcher(current.nextCursor, controller.signal);
+        if (!isCurrent(listKey, controller)) return;
+        // Merge into the latest state, not the pre-await snapshot: items
+        // removed while the page was in flight must stay removed.
+        set((state) => {
+          const latest = state.lists[listKey];
+          if (!latest) return state;
+          return {
+            lists: {
+              ...state.lists,
+              [listKey]: {
+                ...latest,
+                items: [...latest.items, ...page.items],
+                nextCursor: page.next_cursor,
+                hasMore: page.next_cursor !== null,
+                isLoading: false,
+                error: null,
+                total: page.total ?? latest.total,
+              },
+            },
+          };
+        });
+      } catch (error) {
+        if (isAbortError(error) || controller.signal.aborted) {
+          if (controllers.get(listKey) === controller)
+            patch(listKey, { isLoading: false });
+          return;
+        }
+        if (!isCurrent(listKey, controller)) return;
+        console.error(`Failed to load more of ${listKey}:`, error);
+        patch(listKey, {
+          isLoading: false,
+          hasMore: false,
+          error: errorText(error),
+        });
+      } finally {
+        finish(listKey, controller);
+      }
+    },
+
+    cancel: (listKey) => controllers.get(listKey)?.abort(),
+
+    removeItems: (listKey, ids, options = {}) => {
+      const idSet = new Set(ids);
+      set((state) => {
+        const current = state.lists[listKey];
+        if (!current) return state;
+        const items = current.items.filter((item) => !idSet.has(itemIdOf(item)));
+        const removed = options.removedCount ?? current.items.length - items.length;
+        return {
+          lists: {
+            ...state.lists,
+            [listKey]: {
+              ...current,
+              items,
+              total:
+                current.total === null
+                  ? null
+                  : Math.max(0, current.total - removed),
+            },
           },
-        },
-      };
-    });
-  },
+        };
+      });
+    },
 
-  updateItem: (listKey, updatedItem) => {
-    set((state) => {
-      const currentList = state.lists[listKey];
-      if (!currentList) return state;
-      const updatedItems = currentList.items.map((item: any) =>
-        item.data.id === updatedItem.id ? { ...item, data: updatedItem } : item
-      );
-      return {
-        lists: {
-          ...state.lists,
-          [listKey]: { ...currentList, items: updatedItems },
-        },
-      };
-    });
-  },
-}));
+    updateItems: (listKey, update) =>
+      set((state) => {
+        const current = state.lists[listKey];
+        if (!current) return state;
+        return {
+          lists: {
+            ...state.lists,
+            [listKey]: {
+              ...current,
+              items: current.items.map((item) => update(item as never)),
+            },
+          },
+        };
+      }),
+
+    addItem: (listKey, item, position = "end") =>
+      set((state) => {
+        const current = state.lists[listKey];
+        if (!current) return state;
+        const items =
+          position === "start"
+            ? [item, ...current.items]
+            : [...current.items, item];
+        return {
+          lists: { ...state.lists, [listKey]: { ...current, items } },
+        };
+      }),
+
+    clearList: (listKey) => {
+      controllers.get(listKey)?.abort();
+      set((state) => {
+        const lists = { ...state.lists };
+        delete lists[listKey];
+        return { lists };
+      });
+    },
+
+    // Drops every cached list whose key starts with the prefix, so stale
+    // variants (e.g. the other sort order) refetch on their next mount.
+    clearListsByPrefix: (prefix) => {
+      for (const [key, controller] of controllers) {
+        if (key.startsWith(prefix)) controller.abort();
+      }
+      set((state) => {
+        const lists: Record<string, ListState<unknown>> = {};
+        for (const [key, value] of Object.entries(state.lists)) {
+          if (!key.startsWith(prefix)) lists[key] = value;
+        }
+        return { lists };
+      });
+    },
+  };
+});

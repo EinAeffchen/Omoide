@@ -1,19 +1,16 @@
-import { API } from "../config";
 import { AppConfig, ProfileListResponse, ProfileHealth } from "../types";
+import { ApiError, apiFetch } from "./api";
 
 // Share a single in-flight/settled promise so concurrent and repeat callers
-// (e.g. per-navigation detail pages) reuse one request.
+// (e.g. per-navigation detail pages) reuse one request. It deliberately takes
+// no AbortSignal: one caller aborting must not cancel the shared request.
 let configPromise: Promise<AppConfig> | null = null;
 
 export const getConfig = (): Promise<AppConfig> => {
   if (!configPromise) {
-    configPromise = (async () => {
-      const response = await fetch(`${API}/api/config/`);
-      if (!response.ok) {
-        throw new Error("Failed to fetch config");
-      }
-      return response.json();
-    })().catch((error) => {
+    configPromise = apiFetch<AppConfig>("/api/config/", {
+      errorMessage: "Failed to fetch config",
+    }).catch((error) => {
       // Do not cache failures; allow the next caller to retry.
       configPromise = null;
       throw error;
@@ -30,31 +27,23 @@ export const saveConfig = async (
   config: AppConfig,
   acknowledgeMediaDirRemovals = false
 ): Promise<AppConfig> => {
-  const response = await fetch(`${API}/api/config/`, {
+  const saved = await apiFetch<AppConfig>("/api/config/", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
+    body: {
       settings: config,
       acknowledge_media_dir_removals: acknowledgeMediaDirRemovals,
-    }),
+    },
+    errorMessage: "Failed to save config",
   });
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err?.detail?.message || err?.detail || "Failed to save config");
-  }
   invalidateConfigCache();
-  return response.json();
+  return saved;
 };
 
 export const reloadConfig = async (): Promise<AppConfig> => {
-  const response = await fetch(`${API}/api/config/reload`, {
+  await apiFetch<void>("/api/config/reload", {
     method: "POST",
+    errorMessage: "Failed to reload config",
   });
-  if (!response.ok) {
-    throw new Error("Failed to reload config");
-  }
 
   // Fetch latest config from backend so we can sync frontend runtime flags
   invalidateConfigCache();
@@ -75,13 +64,13 @@ export const reloadConfig = async (): Promise<AppConfig> => {
       PERSON_RELATIONSHIP_MAX_NODES: String(
         latest.general.person_relationship_max_nodes ?? 100
       ),
-    } as any;
+    } as RuntimeConfig;
 
     // Emit a lightweight event that components can listen to if they need
     // to react to config changes proactively (e.g., force a re-render).
     try {
       window.dispatchEvent(new Event("runtime-config-updated"));
-    } catch (_) {
+    } catch {
       // no-op: dispatchEvent can fail in some test environments
     }
   }
@@ -89,92 +78,68 @@ export const reloadConfig = async (): Promise<AppConfig> => {
   return latest;
 };
 
-export const pickDirectory = async (): Promise<string | null> => {
-  const response = await fetch(`${API}/api/config/pick-directory`);
-  if (!response.ok) {
+export const pickDirectory = async (
+  signal?: AbortSignal
+): Promise<string | null> => {
+  try {
+    const data = await apiFetch<{ path?: string | null } | undefined>(
+      "/api/config/pick-directory",
+      { signal }
+    );
+    return (data?.path as string) || null;
+  } catch (error) {
     // Return null so the caller can fall back to manual entry
-    return null;
+    if (error instanceof ApiError) return null;
+    throw error;
   }
-  const data = await response.json();
-  return (data?.path as string) || null;
 };
 
-export const listProfiles = async (): Promise<ProfileListResponse> => {
-  const res = await fetch(`${API}/api/config/profiles`);
-  if (!res.ok) {
-    throw new Error("Failed to list profiles");
-  }
-  return res.json();
-};
-
-export const switchProfile = async (path: string): Promise<void> => {
-  const res = await fetch(`${API}/api/config/profiles/switch`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path }),
+export const listProfiles = async (
+  signal?: AbortSignal
+): Promise<ProfileListResponse> =>
+  apiFetch<ProfileListResponse>("/api/config/profiles", {
+    errorMessage: "Failed to list profiles",
+    signal,
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || "Failed to switch profile");
-  }
-};
+
+export const switchProfile = async (path: string): Promise<void> =>
+  apiFetch<void>("/api/config/profiles/switch", {
+    method: "POST",
+    body: { path },
+    errorMessage: "Failed to switch profile",
+  });
 
 export const createProfile = async (
   path: string,
   name: string
-): Promise<void> => {
-  const res = await fetch(`${API}/api/config/profiles/create`, {
+): Promise<void> =>
+  apiFetch<void>("/api/config/profiles/create", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path, name }),
+    body: { path, name },
+    errorMessage: "Failed to create profile",
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || "Failed to create profile");
-  }
-};
 
-export const removeProfile = async (path: string): Promise<void> => {
-  const res = await fetch(`${API}/api/config/profiles/remove`, {
+export const removeProfile = async (path: string): Promise<void> =>
+  apiFetch<void>("/api/config/profiles/remove", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path }),
+    body: { path },
+    errorMessage: "Failed to remove profile",
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || "Failed to remove profile");
-  }
-};
 
-export const moveData = async (destPath: string): Promise<void> => {
-  const res = await fetch(`${API}/api/config/move-data`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ dest_path: destPath }),
+export const getProfileHealth = async (
+  signal?: AbortSignal
+): Promise<ProfileHealth> =>
+  apiFetch<ProfileHealth>("/api/config/profile-health", {
+    errorMessage: "Failed to fetch profile health",
+    signal,
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || "Failed to move data directory");
-  }
-};
-
-export const getProfileHealth = async (): Promise<ProfileHealth> => {
-  const res = await fetch(`${API}/api/config/profile-health`);
-  if (!res.ok) throw new Error("Failed to fetch profile health");
-  return res.json();
-};
 
 export const addExistingProfile = async (
   path: string,
   name?: string
-): Promise<void> => {
-  const res = await fetch(`${API}/api/config/profiles/add`, {
+): Promise<void> =>
+  apiFetch<void>("/api/config/profiles/add", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path, name }),
+    body: { path, name },
+    errorMessage: "Failed to add profile",
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || "Failed to add profile");
-  }
-};

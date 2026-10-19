@@ -1,9 +1,8 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import Masonry from "react-masonry-css";
 import SortIcon from "@mui/icons-material/Sort";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import SearchOffIcon from "@mui/icons-material/SearchOff";
-import { useInView } from "react-intersection-observer";
 import { useSearchParams } from "react-router-dom";
 import {
   Alert,
@@ -19,9 +18,11 @@ import {
 import MediaCard from "./MediaCard";
 import { MediaSkeleton } from "./MediaSkeleton";
 import { EmptyState } from "./EmptyState";
-import { useListStore, defaultListState } from "../stores/useListStore";
+import { usePagedList } from "../hooks/usePagedList";
+import { useListStore } from "../stores/useListStore";
 import { useTaskCompletionVersion } from "../TaskEventsContext";
 import { CursorPage, Media } from "../types";
+import { useLocalStoragePreference } from "../hooks/useLocalStoragePreference";
 
 export type MediaSortOrder = "newest" | "latest";
 
@@ -42,7 +43,8 @@ interface MediaListPageProps {
   listKeyPrefix: string;
   fetcher: (
     cursor: string | null,
-    sort: MediaSortOrder
+    sort: MediaSortOrder,
+    signal?: AbortSignal
   ) => Promise<CursorPage<Media>>;
   emptyTitle: string;
   emptyDescription: string;
@@ -54,10 +56,16 @@ export default function MediaListPage({
   emptyTitle,
   emptyDescription,
 }: MediaListPageProps) {
-  const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
   const [searchParams, setSearchParams] = useSearchParams();
+  // The URL wins (links stay shareable); otherwise use the last chosen order.
+  const [savedSort, setSavedSort] = useLocalStoragePreference<MediaSortOrder>(
+    "mediaSortOrder",
+    ["newest", "latest"],
+    "newest"
+  );
+  const urlSort = searchParams.get("sort");
   const sortOrder: MediaSortOrder =
-    searchParams.get("sort") === "latest" ? "latest" : "newest";
+    urlSort === "latest" || urlSort === "newest" ? urlSort : savedSort;
   const [sortMenuAnchorEl, setSortMenuAnchorEl] = useState<null | HTMLElement>(
     null
   );
@@ -66,38 +74,23 @@ export default function MediaListPage({
     () => `${listKeyPrefix}-${sortOrder}`,
     [listKeyPrefix, sortOrder]
   );
-  const { items, hasMore, isLoading, error } = useListStore(
-    (state) => state.lists[listKey] || defaultListState
-  );
-  const { fetchInitial, loadMore, clearList, clearListsByPrefix } =
-    useListStore();
+  // Cached per key, so navigating back restores the list (and scroll
+  // position) instantly.
+  const { items, hasMore, isLoading, error, loaderRef, reload } =
+    usePagedList<Media>(listKey, (cursor, signal) =>
+      fetcher(cursor, sortOrder, signal)
+    );
+  const clearListsByPrefix = useListStore((state) => state.clearListsByPrefix);
 
   const refreshKey = useTaskCompletionVersion(["scan", "process_media"]);
   const [seenRefreshKey, setSeenRefreshKey] = useState(refreshKey);
   const hasNewItems = refreshKey !== seenRefreshKey;
 
-  // fetchInitial skips lists that already have content, so navigating back
-  // restores the cached list (and scroll position) instantly.
-  useEffect(() => {
-    fetchInitial(listKey, () => fetcher(null, sortOrder));
-  }, [listKey, fetchInitial, fetcher, sortOrder]);
-
-  useEffect(() => {
-    if (inView && hasMore && !isLoading && !error) {
-      loadMore(listKey, (cursor) => fetcher(cursor ?? null, sortOrder));
-    }
-  }, [inView, hasMore, isLoading, error, loadMore, listKey, fetcher, sortOrder]);
-
-  const refetch = () => {
-    clearList(listKey);
-    fetchInitial(listKey, () => fetcher(null, sortOrder));
-  };
-
   const handleRefresh = () => {
     setSeenRefreshKey(refreshKey);
-    // Clear both sort orders of this page's cache, not just the visible one.
+    // Drop the other sort order's cache too, then reload the visible one.
     clearListsByPrefix(`${listKeyPrefix}-`);
-    fetchInitial(listKey, () => fetcher(null, sortOrder));
+    reload();
   };
 
   const handleSortMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
@@ -107,10 +100,10 @@ export default function MediaListPage({
     setSortMenuAnchorEl(null);
   };
   const handleSortChange = (newSortOrder: MediaSortOrder) => {
+    setSavedSort(newSortOrder);
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
-      if (newSortOrder === "newest") next.delete("sort");
-      else next.set("sort", newSortOrder);
+      next.set("sort", newSortOrder);
       return next;
     });
     handleSortMenuClose();
@@ -180,7 +173,7 @@ export default function MediaListPage({
           severity="error"
           sx={{ mb: 2 }}
           action={
-            <Button color="inherit" size="small" onClick={refetch}>
+            <Button color="inherit" size="small" onClick={reload}>
               Retry
             </Button>
           }
@@ -226,7 +219,7 @@ export default function MediaListPage({
           className="my-masonry-grid"
           columnClassName="my-masonry-grid_column"
         >
-          {items.map((media: Media) => (
+          {items.map((media) => (
             <div key={media.id}>
               <MediaCard media={media} mediaListKey={listKey} />
             </div>

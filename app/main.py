@@ -532,11 +532,6 @@ def resolve_path(path):
     return base_path / path
 
 
-@app.get("/api/version", tags=["meta"])
-async def get_version():
-    return {"version": APP_VERSION}
-
-
 @app.get("/api/version/update", tags=["meta"])
 async def get_version_update():
     repo = settings.general.update_check_repo

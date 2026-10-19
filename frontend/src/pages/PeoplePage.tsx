@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Container,
   Box,
@@ -16,7 +16,7 @@ import {
 import SearchIcon from "@mui/icons-material/Search";
 import ClearIcon from "@mui/icons-material/Clear";
 import Grid from "@mui/material/Grid";
-import { CursorResponse, useInfinite } from "../hooks/useInfinite";
+import { usePagedList } from "../hooks/usePagedList";
 import PersonCard from "../components/PersonCard";
 import ConfirmDialog from "../components/ConfirmDialog";
 import {
@@ -30,6 +30,7 @@ import { getPeople, PersonSort } from "../services/person";
 import { useLocalStoragePreference } from "../hooks/useLocalStoragePreference";
 import { deletePersonsBulk } from "../services/personActions";
 import { useTaskCompletionVersion } from "../TaskEventsContext";
+import { useListStore } from "../stores/useListStore";
 
 const SORT_OPTIONS: { value: PersonSort; label: string }[] = [
   { value: "appearances_desc", label: "Most media" },
@@ -61,14 +62,6 @@ export default function PeoplePage() {
     return () => clearTimeout(handler);
   }, [nameFilter]);
 
-  const fetchPeople = useCallback(
-    async (cursor?: string): Promise<CursorResponse<PersonReadSimple>> => {
-      const data = await getPeople(cursor, debouncedNameFilter, sort);
-      return { items: data.items, next_cursor: data.next_cursor };
-    },
-    [debouncedNameFilter, sort],
-  );
-
   const refreshKey = useTaskCompletionVersion([
     "process_media",
     "cluster_persons",
@@ -80,26 +73,39 @@ export default function PeoplePage() {
   );
   const [isDeleting, setIsDeleting] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
-  const [retryKey, setRetryKey] = useState(0);
   const [snackbar, setSnackbar] = useState<{
     open: boolean;
     message: string;
     severity: "success" | "error";
   }>({ open: false, message: "", severity: "success" });
 
+  const listKey = `people-${sort}-${debouncedNameFilter}`;
   const {
     items: people,
-    setItems,
     hasMore,
-    loading,
+    isLoading: loading,
     error,
     loaderRef,
-  } = useInfinite<PersonReadSimple>(fetchPeople, [
-    refreshKey,
-    retryKey,
-    debouncedNameFilter,
-    sort,
-  ]);
+    reload,
+    removeItems,
+    updateItems,
+  } = usePagedList<PersonReadSimple>(listKey, (cursor, signal) =>
+    getPeople(cursor ?? undefined, debouncedNameFilter, sort, signal),
+  );
+
+  // People change through many other pages (merges, renames, face
+  // assignment), so the list is never served from cache: drop it when the
+  // page unmounts or the filter/sort changes, and reload it when a relevant
+  // task completes.
+  const clearList = useListStore((state) => state.clearList);
+  useEffect(() => () => clearList(listKey), [clearList, listKey]);
+
+  const lastRefreshKeyRef = useRef(refreshKey);
+  useEffect(() => {
+    if (lastRefreshKeyRef.current === refreshKey) return;
+    lastRefreshKeyRef.current = refreshKey;
+    reload();
+  }, [refreshKey, reload]);
 
   useEffect(() => {
     setSelectedIds((previous) => {
@@ -171,7 +177,7 @@ export default function PeoplePage() {
       const deletedCount = deletedSet.size;
 
       if (deletedCount > 0) {
-        setItems((prev) => prev.filter((person) => !deletedSet.has(person.id)));
+        removeItems(deletedSet);
       }
 
       setSelectedIds((prev) => {
@@ -219,10 +225,8 @@ export default function PeoplePage() {
   };
 
   const handleFavoriteChange = (personId: number, isFavorite: boolean) =>
-    setItems((prev) =>
-      prev.map((person) =>
-        person.id === personId ? { ...person, is_favorite: isFavorite } : person,
-      ),
+    updateItems((person) =>
+      person.id === personId ? { ...person, is_favorite: isFavorite } : person,
     );
 
   const handleCloseSnackbar = () =>
@@ -331,7 +335,7 @@ export default function PeoplePage() {
             <Button
               color="inherit"
               size="small"
-              onClick={() => setRetryKey((prev) => prev + 1)}
+              onClick={reload}
             >
               Retry
             </Button>

@@ -1,6 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
 import { useLocation, Link } from "react-router-dom";
-import ReactPlayer from "react-player";
 import {
   Card,
   CardActionArea,
@@ -8,7 +7,6 @@ import {
   Box,
   Checkbox,
   Typography,
-  useTheme,
 } from "@mui/material";
 import { MediaPreview } from "../types";
 import appConfig, { API } from "../config";
@@ -18,7 +16,11 @@ import PlayCircleOutlineIcon from "@mui/icons-material/PlayCircleOutline";
 import FavoriteIcon from "@mui/icons-material/Favorite";
 import FavoriteBorderIcon from "@mui/icons-material/FavoriteBorder";
 import LinkOffIcon from "@mui/icons-material/LinkOff";
-import { useSelection } from "../context/SelectionContext";
+import {
+  useIsSelected,
+  useIsSelecting,
+  useToggleSelected,
+} from "../context/SelectionContext";
 import { setMediaFavorite } from "../services/mediaActions";
 import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
@@ -82,15 +84,18 @@ interface MediaCardProps {
   unmatchLabel?: string;
 }
 
-export default function MediaCard({
+function MediaCard({
   media,
   mediaListKey,
   navigationContext,
   onUnmatch,
   unmatchLabel = "Unmatch from person",
 }: MediaCardProps) {
-  const theme = useTheme();
-  const { isSelecting, selectedIds, toggle } = useSelection();
+  // Narrow subscriptions: a card only re-renders when its own selection
+  // state (or selection mode) changes.
+  const isSelecting = useIsSelecting();
+  const toggle = useToggleSelected();
+  const isSelected = useIsSelected(media?.id);
   // This state now explicitly controls when the video player is active.
   const [isPlayerActive, setIsPlayerActive] = useState(false);
   const [playerUrl, setPlayerUrl] = useState<string | null>(null);
@@ -114,7 +119,6 @@ export default function MediaCard({
     : `${API}/static/brand/404.png`;
   const filename = media ? media.filename : "404 Not found";
   const mediaId = media ? media.id : null;
-  const isSelected = mediaId != null && selectedIds.has(mediaId);
   let thumbUrl;
   if (media) {
     if (useOriginalGif) {
@@ -292,23 +296,24 @@ export default function MediaCard({
                   // Keep pointer events to allow ReactPlayer to be interactive
                 }}
               >
-                <ReactPlayer
-                  url={playerUrl}
-                  playing={isPlayerActive}
+                {/* A plain muted, looping <video> is all a hover preview needs. */}
+                <video
+                  src={playerUrl}
+                  autoPlay={isPlayerActive}
                   loop
                   muted
-                  width="100%"
-                  height="100%"
-                  playsinline
-                  config={{
-                    file: {
-                      attributes: {
-                        crossOrigin: "anonymous",
-                        preload: "metadata",
-                      },
-                    },
+                  playsInline
+                  preload="metadata"
+                  crossOrigin="anonymous"
+                  aria-hidden="true"
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    height: "100%",
+                    objectFit: "cover",
                   }}
-                  style={{ position: "absolute", top: 0, left: 0 }}
                 />
               </Box>
             )}
@@ -413,7 +418,7 @@ export default function MediaCard({
       {media && !isSelecting && (
         <>
           {!appConfig.PRESENTATION_MODE && (
-            <IconButton
+            <IconButton aria-label={isFavorite ? "Remove from favorites" : "Add to favorites"}
               onClick={handleToggleFavorite}
               size="small"
               sx={{
@@ -507,3 +512,6 @@ export default function MediaCard({
     </Card>
   );
 }
+
+// Grids render hundreds of cards; skip re-rendering those whose props are unchanged.
+export default React.memo(MediaCard);

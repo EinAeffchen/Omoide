@@ -1,9 +1,10 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef } from "react";
 import Masonry from "react-masonry-css";
 import { Alert, Box, CircularProgress } from "@mui/material";
-import { useInView } from "react-intersection-observer";
 import MediaCard from "./MediaCard";
-import { CursorPage, Media } from "../types";
+import { usePagedList } from "../hooks/usePagedList";
+import { PageFetcher } from "../stores/useListStore";
+import { Media } from "../types";
 
 const breakpointColumnsObj = {
   default: 5,
@@ -14,79 +15,25 @@ const breakpointColumnsObj = {
 };
 
 interface Props {
+  /** Cache key of the list; media cards use it for prev/next navigation. */
   listKey: string;
-  fetcher: (cursor: string | null) => Promise<CursorPage<Media>>;
+  fetcher: PageFetcher<Media>;
   empty?: React.ReactNode;
-  /** Bumping this value clears and refetches the list. */
+  /** Changing this value reloads the list from the first page. */
   refreshToken?: unknown;
-  onItemsChange?: (items: Media[]) => void;
 }
 
-/** Self-contained cursor-paginated masonry grid (local state, no list store). */
-export function CursorMediaGrid({
-  listKey,
-  fetcher,
-  empty,
-  refreshToken,
-  onItemsChange,
-}: Props) {
-  const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
-  const [items, setItems] = useState<Media[]>([]);
-  const [cursor, setCursor] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState(true);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const requestSeq = useRef(0);
-  const inFlightRef = useRef(false);
+/** Cursor-paginated masonry grid of media, backed by the list store. */
+export function CursorMediaGrid({ listKey, fetcher, empty, refreshToken }: Props) {
+  const { items, hasMore, isLoading, error, loaderRef, reload } =
+    usePagedList<Media>(listKey, fetcher, { refetchOnMount: true });
 
-  const loadPage = useCallback(
-    async (fromCursor: string | null, replace: boolean) => {
-      if (inFlightRef.current) return;
-      const seq = ++requestSeq.current;
-      inFlightRef.current = true;
-      setIsLoading(true);
-      setError(null);
-      try {
-        const page = await fetcher(fromCursor);
-        if (seq !== requestSeq.current) return;
-        setItems((prev) => {
-          const next = replace ? page.items : [...prev, ...page.items];
-          onItemsChange?.(next);
-          return next;
-        });
-        setCursor(page.next_cursor);
-        setHasMore(page.next_cursor !== null);
-      } catch (err) {
-        if (seq !== requestSeq.current) return;
-        setError(err instanceof Error ? err.message : "Failed to load media");
-        setHasMore(false);
-      } finally {
-        if (seq === requestSeq.current) {
-          inFlightRef.current = false;
-          setIsLoading(false);
-        }
-      }
-    },
-    [fetcher, onItemsChange]
-  );
-
+  const seenToken = useRef(refreshToken);
   useEffect(() => {
-    // Invalidate any previous list request. A new list must be allowed to
-    // start immediately even if the previous list is still resolving.
-    requestSeq.current += 1;
-    inFlightRef.current = false;
-    setItems([]);
-    setCursor(null);
-    setHasMore(true);
-    void loadPage(null, true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [listKey, refreshToken, loadPage]);
-
-  useEffect(() => {
-    if (inView && hasMore && !isLoading && !inFlightRef.current && !error) {
-      void loadPage(cursor, false);
-    }
-  }, [inView, hasMore, isLoading, error, cursor, loadPage]);
+    if (seenToken.current === refreshToken) return;
+    seenToken.current = refreshToken;
+    reload();
+  }, [refreshToken, reload]);
 
   return (
     <>

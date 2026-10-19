@@ -1,5 +1,12 @@
-import { API } from "../config";
-import { Person, PersonRelationshipGraph, Task } from "../types";
+import {
+  CursorPage,
+  FaceRead,
+  Person,
+  PersonRelationshipGraph,
+  SimilarPersonWithDetails,
+  Task,
+} from "../types";
+import { apiFetch } from "./api";
 
 export interface MergeResult {
   merged_ids: number[];
@@ -22,105 +29,82 @@ export const exportPersonMedia = async (
   personId: number,
   destinationPath: string,
   mode: "copy" | "move"
-): Promise<Task> => {
-  const res = await fetch(`${API}/api/person/${personId}/export-media`, {
+): Promise<Task> =>
+  apiFetch<Task>(`/api/person/${personId}/export-media`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ destination_path: destinationPath, mode }),
+    body: { destination_path: destinationPath, mode },
+    errorMessage: `Failed to ${mode} media`,
   });
-  if (!res.ok) {
-    const error = await res.json().catch(() => ({}));
-    throw new Error(error?.detail || `Failed to ${mode} media`);
-  }
-  return res.json();
-};
 
 export const updatePerson = async (
   personId: number,
   data: { name?: string; profile_face_id?: number }
-): Promise<Person> => {
-  const res = await fetch(`${API}/api/person/${personId}`, {
+): Promise<Person> =>
+  apiFetch<Person>(`/api/person/${personId}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
+    body: data,
+    errorMessage: "Failed to update person",
   });
-  if (!res.ok) throw new Error("Failed to update person");
-  return res.json();
-};
 
 export const setPersonFavorite = async (
   personId: number,
   isFavorite: boolean
-): Promise<void> => {
-  const res = await fetch(`${API}/api/person/${personId}/favorite`, {
+): Promise<void> =>
+  apiFetch<void>(`/api/person/${personId}/favorite`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ is_favorite: isFavorite }),
+    body: { is_favorite: isFavorite },
+    errorMessage: "Failed to update favorite",
   });
-  if (!res.ok) throw new Error("Failed to update favorite");
-};
 
-export const deletePerson = async (personId: number) => {
-  const res = await fetch(`${API}/api/person/${personId}`, {
+export const deletePerson = async (personId: number) =>
+  apiFetch<void>(`/api/person/${personId}`, {
     method: "DELETE",
+    errorMessage: "Failed to delete person",
   });
-  if (!res.ok) throw new Error("Failed to delete person");
-};
 
 export const deletePersonsBulk = async (
   personIds: number[],
-): Promise<DeletePersonsResult> => {
-  const res = await fetch(`${API}/api/person/bulk-delete`, {
+): Promise<DeletePersonsResult> =>
+  apiFetch<DeletePersonsResult>("/api/person/bulk-delete", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ person_ids: personIds }),
+    body: { person_ids: personIds },
+    errorMessage: "Failed to delete selected people",
   });
-  if (!res.ok) throw new Error("Failed to delete selected people");
-  return res.json();
-};
 
-export const mergePersons = async (sourceId: number, targetId: number) => {
-  const res = await fetch(`${API}/api/person/merge`, {
+export const mergePersons = async (sourceId: number, targetId: number) =>
+  apiFetch<void>("/api/person/merge", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ source_id: sourceId, target_id: targetId }),
+    body: { source_id: sourceId, target_id: targetId },
+    errorMessage: "Failed to merge persons",
   });
-  if (!res.ok) throw new Error("Failed to merge persons");
-};
 
 export const mergeMultiplePersons = async (
   targetId: number,
   sourceIds: number[]
-): Promise<MergeResult> => {
-  const res = await fetch(`${API}/api/person/${targetId}/merge-multiple`, {
+): Promise<MergeResult> =>
+  apiFetch<MergeResult>(`/api/person/${targetId}/merge-multiple`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ source_ids: sourceIds }),
+    body: { source_ids: sourceIds },
+    errorMessage: "Failed to merge selected persons",
   });
-  if (!res.ok) throw new Error("Failed to merge selected persons");
-  return res.json();
-};
 
 export const autoMergeSimilarPersons = async (
   personId: number
-): Promise<MergeResult> => {
-  const res = await fetch(`${API}/api/person/${personId}/merge-similar`, {
+): Promise<MergeResult> =>
+  apiFetch<MergeResult>(`/api/person/${personId}/merge-similar`, {
     method: "POST",
+    errorMessage: "Failed to auto-merge similar persons",
   });
-  if (!res.ok) throw new Error("Failed to auto-merge similar persons");
-  return res.json();
-};
 
 export const searchPersonsByName = async (
   name: string,
   signal?: AbortSignal
 ): Promise<Person[]> => {
-  const res = await fetch(
-    `${API}/api/person/?name=${encodeURIComponent(name)}`,
-    { signal }
-  );
-  if (!res.ok) throw new Error("Failed to search persons");
-  const data = await res.json();
+  const data = await apiFetch<{ items: Person[] }>("/api/person/", {
+    query: { name },
+    errorMessage: "Failed to search persons",
+    signal,
+  });
   return data.items;
 };
 
@@ -128,102 +112,76 @@ export const getSuggestedFaces = async (
   personId: number,
   limit: number = 100,
   signal?: AbortSignal
-): Promise<any[]> => {
-  const res = await fetch(
-    `${API}/api/person/${personId}/suggest-faces?limit=${limit}`,
-    { signal }
-  );
-  if (!res.ok) throw new Error("Failed to fetch suggested faces");
-  return res.json();
-};
+): Promise<FaceRead[]> =>
+  apiFetch<FaceRead[]>(`/api/person/${personId}/suggest-faces`, {
+    query: { limit },
+    errorMessage: "Failed to fetch suggested faces",
+    signal,
+  });
 
 export const getSimilarPersons = async (
   personId: number,
   signal?: AbortSignal
-): Promise<any[]> => {
-  const res = await fetch(`${API}/api/person/${personId}/similarities`, {
+): Promise<SimilarPersonWithDetails[]> =>
+  apiFetch<SimilarPersonWithDetails[]>(`/api/person/${personId}/similarities`, {
+    errorMessage: "Failed to fetch similar persons",
     signal,
   });
-  if (!res.ok) throw new Error("Failed to fetch similar persons");
-  return res.json();
-};
 
 export const getPersonRelationshipGraph = async (
   personId: number,
   depth: number,
   maxNodes = 100,
   signal?: AbortSignal
-): Promise<PersonRelationshipGraph> => {
-  const params = new URLSearchParams({
-    depth: depth.toString(),
-    max_nodes: maxNodes.toString(),
-  });
-  const res = await fetch(
-    `${API}/api/person/${personId}/relationships?${params.toString()}`,
-    { signal }
+): Promise<PersonRelationshipGraph> =>
+  apiFetch<PersonRelationshipGraph>(
+    `/api/person/${personId}/relationships`,
+    {
+      query: { depth, max_nodes: maxNodes },
+      errorMessage: "Failed to fetch person relationship graph",
+      signal,
+    }
   );
-  if (!res.ok) {
-    throw new Error("Failed to fetch person relationship graph");
-  }
-  return res.json();
-};
 
 export const getPersonFaces = async (
   personId: number,
   cursor: string | null,
   limit: number,
   sortBy: string = "id_desc",
-  mediaId?: number
-): Promise<any> => {
-  const params = new URLSearchParams({
-    limit: limit.toString(),
-    sort_by: sortBy,
+  mediaId?: number,
+  signal?: AbortSignal
+): Promise<CursorPage<FaceRead>> =>
+  apiFetch<CursorPage<FaceRead>>(`/api/person/${personId}/faces`, {
+    query: { limit, sort_by: sortBy, cursor, media_id: mediaId },
+    errorMessage: "Failed to fetch person faces",
+    signal,
   });
-  if (cursor) params.append("cursor", cursor);
-  if (mediaId != null) params.append("media_id", mediaId.toString());
-  const res = await fetch(
-    `${API}/api/person/${personId}/faces?${params.toString()}`
-  );
-  if (!res.ok) throw new Error("Failed to fetch person faces");
-  return res.json();
-};
 
 export const detachMediaFromPerson = async (
   personId: number,
   mediaId: number
-): Promise<void> => {
-  const res = await fetch(
-    `${API}/api/person/${personId}/media/${mediaId}/detach`,
-    { method: "POST" }
-  );
-  if (!res.ok) throw new Error("Failed to detach media from person");
-};
+): Promise<void> =>
+  apiFetch<void>(`/api/person/${personId}/media/${mediaId}/detach`, {
+    method: "POST",
+    errorMessage: "Failed to detach media from person",
+  });
 
 export const setProfileFace = async (faceId: number, personId: number) => {
   return updatePerson(personId, { profile_face_id: faceId });
 };
 
-export const autoSelectProfileFace = async (personId: number): Promise<Person> => {
-  const res = await fetch(`${API}/api/person/${personId}/profile_face/auto`, {
+export const autoSelectProfileFace = async (personId: number): Promise<Person> =>
+  apiFetch<Person>(`/api/person/${personId}/profile_face/auto`, {
     method: "POST",
+    errorMessage: "Failed to auto-select profile image",
   });
-  if (!res.ok) {
-    throw new Error("Failed to auto-select profile image");
-  }
-  return res.json();
-};
 
 export const addMediaAppearanceToPerson = async (
   personId: number,
   mediaId: number
-): Promise<AddMediaAppearanceResult> => {
-  const res = await fetch(`${API}/api/person/${personId}/media`, {
+): Promise<AddMediaAppearanceResult> =>
+  apiFetch<AddMediaAppearanceResult>(`/api/person/${personId}/media`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ media_id: mediaId }),
+    body: { media_id: mediaId },
+    errorMessage: "Failed to add media appearance to person",
   });
-  if (!res.ok) {
-    throw new Error("Failed to add media appearance to person");
-  }
-  return res.json();
-};

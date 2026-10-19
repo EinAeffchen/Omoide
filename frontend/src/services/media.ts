@@ -1,4 +1,3 @@
-import { API } from "../config";
 import {
   CursorPage,
   Media,
@@ -6,69 +5,62 @@ import {
   MediaFolderListing,
   MediaLocation,
 } from "../types";
+import { apiFetch } from "./api";
+
 export const getMedia = async (
   id: string,
   signal?: AbortSignal
-): Promise<MediaDetail> => {
-  const response = await fetch(`${API}/api/media/${id}`, { signal });
-  if (!response.ok) throw new Error(`Failed to load media (${response.status})`);
-  return response.json();
-};
+): Promise<MediaDetail> =>
+  apiFetch<MediaDetail>(`/api/media/${id}`, {
+    errorMessage: "Failed to load media",
+    signal,
+  });
 
 export const getImages = async (
   cursor: string | null,
-  sortOrder: "newest" | "latest"
-): Promise<CursorPage<Media>> => {
-  const params = new URLSearchParams();
-  if (cursor) params.append("cursor", cursor);
-  params.append("sort", sortOrder);
-  const response = await fetch(`${API}/api/media/images?${params.toString()}`);
-  if (!response.ok) throw new Error("Failed to fetch images");
-  return response.json();
-};
+  sortOrder: "newest" | "latest",
+  signal?: AbortSignal
+): Promise<CursorPage<Media>> =>
+  apiFetch<CursorPage<Media>>("/api/media/images", {
+    query: { cursor, sort: sortOrder },
+    errorMessage: "Failed to fetch images",
+    signal,
+  });
 
 export const getVideos = async (
   cursor: string | null,
-  sortOrder: "newest" | "latest"
-): Promise<CursorPage<Media>> => {
-  const params = new URLSearchParams();
-  if (cursor) params.append("cursor", cursor);
-  params.append("sort", sortOrder);
-  const response = await fetch(`${API}/api/media/videos?${params.toString()}`);
-  if (!response.ok) throw new Error("Failed to fetch videos");
-  return response.json();
-};
+  sortOrder: "newest" | "latest",
+  signal?: AbortSignal
+): Promise<CursorPage<Media>> =>
+  apiFetch<CursorPage<Media>>("/api/media/videos", {
+    query: { cursor, sort: sortOrder },
+    errorMessage: "Failed to fetch videos",
+    signal,
+  });
 
 export const getFavorites = async (
   cursor: string | null,
-  sortOrder: "newest" | "latest"
-): Promise<CursorPage<Media>> => {
-  const params = new URLSearchParams();
-  if (cursor) params.append("cursor", cursor);
-  params.append("sort", sortOrder);
-  const response = await fetch(`${API}/api/media/favorites?${params.toString()}`);
-  if (!response.ok) throw new Error("Failed to fetch favorites");
-  return response.json();
-};
-
-export const getMapMedia = async (): Promise<MediaLocation[]> => {
-  const response = await fetch(`${API}/api/media/map`);
-  if (!response.ok) throw new Error("Failed to fetch map media");
-  return response.json();
-};
+  sortOrder: "newest" | "latest",
+  signal?: AbortSignal
+): Promise<CursorPage<Media>> =>
+  apiFetch<CursorPage<Media>>("/api/media/favorites", {
+    query: { cursor, sort: sortOrder },
+    errorMessage: "Failed to fetch favorites",
+    signal,
+  });
 
 export const getMediaLocations = async (
   north: number,
   south: number,
   east: number,
-  west: number
-): Promise<MediaLocation[]> => {
-  const response = await fetch(
-    `${API}/api/media/locations?north=${north}&south=${south}&east=${east}&west=${west}`
-  );
-  if (!response.ok) throw new Error("Failed to fetch media locations");
-  return response.json();
-};
+  west: number,
+  signal?: AbortSignal
+): Promise<MediaLocation[]> =>
+  apiFetch<MediaLocation[]>("/api/media/locations", {
+    query: { north, south, east, west },
+    errorMessage: "Failed to fetch media locations",
+    signal,
+  });
 
 export interface CameraFilter {
   make?: string | null;
@@ -81,8 +73,11 @@ export const getMediaList = async (
   tags: string[],
   folder?: string | null,
   recursive = true,
-  camera?: CameraFilter | null
+  camera?: CameraFilter | null,
+  signal?: AbortSignal
 ): Promise<CursorPage<Media>> => {
+  // An empty `folder` means "library root" to the backend, so it must be sent
+  // even when empty (apiFetch's `query` would drop ""); build it by hand.
   const params = new URLSearchParams();
   params.append("sort", sortOrder);
   if (cursor) {
@@ -101,40 +96,32 @@ export const getMediaList = async (
   if (camera?.model) {
     params.append("camera_model", camera.model);
   }
-  const response = await fetch(`${API}/api/media/?${params.toString()}`);
-  if (!response.ok) {
-    throw new Error("Failed to fetch media list");
-  }
-  return response.json();
+  return apiFetch<CursorPage<Media>>(`/api/media/?${params}`, {
+    errorMessage: "Failed to fetch media list",
+    signal,
+  });
 };
 
 export const getMediaFolders = async (
   parent?: string | null,
-  previewLimit = 4
-): Promise<MediaFolderListing> => {
-  const params = new URLSearchParams();
-  if (parent !== undefined && parent !== null) {
-    params.append("parent", parent);
-  }
-  if (previewLimit !== 4) {
-    params.append("preview_limit", String(previewLimit));
-  }
-  const response = await fetch(
-    `${API}/api/media/folders?${params.toString()}`
-  );
-  if (!response.ok) {
-    throw new Error("Failed to fetch media folders");
-  }
-  return response.json();
-};
+  previewLimit = 4,
+  signal?: AbortSignal
+): Promise<MediaFolderListing> =>
+  apiFetch<MediaFolderListing>("/api/media/folders", {
+    // An omitted and an empty `parent` both mean the library root.
+    query: {
+      parent,
+      preview_limit: previewLimit !== 4 ? previewLimit : undefined,
+    },
+    errorMessage: "Failed to fetch media folders",
+    signal,
+  });
 
 export const getSimilarMedia = async (
   mediaId: number,
   signal?: AbortSignal
-): Promise<Media[]> => {
-  const response = await fetch(`${API}/api/media/${mediaId}/get-similar`, {
+): Promise<Media[]> =>
+  apiFetch<Media[]>(`/api/media/${mediaId}/get-similar`, {
+    errorMessage: "Failed to load similar media",
     signal,
   });
-  if (!response.ok) throw new Error("Failed to load similar media");
-  return response.json();
-};

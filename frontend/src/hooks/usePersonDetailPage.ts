@@ -19,9 +19,12 @@ import {
 import { getConfig } from "../services/config";
 import appConfig from "../config";
 import type { MergeResult } from "../services/personActions";
-import { defaultListState, useListStore } from "../stores/useListStore";
+import { useListStore } from "../stores/useListStore";
+import { usePagedList } from "./usePagedList";
 import {
+  FacesSortBy,
   FaceRead,
+  Media,
   Person,
   PersonReadSimple,
   PersonRelationshipGraph,
@@ -35,6 +38,10 @@ import {
   deleteFace,
   detachFace,
 } from "../services/faceActions";
+import {
+  useLocalStorageNumber,
+  useLocalStoragePreference,
+} from "./useLocalStoragePreference";
 
 export const usePersonDetailPage = () => {
   const { id } = useParams<{ id: string }>();
@@ -61,13 +68,17 @@ export const usePersonDetailPage = () => {
   const [suggestedFaces, setSuggestedFaces] = useState<FaceRead[]>([]);
   const [isLoadingSuggestedFaces, setIsLoadingSuggestedFaces] =
     useState(false);
-  const [suggestedFacesLimit, setSuggestedFacesLimit] = useState(100);
+  const [suggestedFacesLimit, setSuggestedFacesLimit] = useLocalStorageNumber(
+    "personSuggestedFacesLimit",
+    100,
+    { min: 10, max: 300 }
+  );
   const suggestedFacesLimitRef = useRef(suggestedFacesLimit);
   suggestedFacesLimitRef.current = suggestedFacesLimit;
   const handleSuggestedFacesLimitChange = useCallback((limit: number) => {
     suggestedFacesLimitRef.current = limit;
     setSuggestedFacesLimit(limit);
-  }, []);
+  }, [setSuggestedFacesLimit]);
   const [relationshipGraph, setRelationshipGraph] =
     useState<PersonRelationshipGraph | null>(null);
   const [relationshipDepth, setRelationshipDepth] = useState(3);
@@ -95,7 +106,11 @@ export const usePersonDetailPage = () => {
     return `person-${id}-media-appearances-${filterIds}${tagKey}`;
   }, [id, filterPeople, filterTags]);
 
-  const [facesSortBy, setFacesSortBy] = useState("id_desc");
+  const [facesSortBy, setFacesSortBy] = useLocalStoragePreference(
+    "personFacesSortBy",
+    ["id_desc", "date_desc", "date_asc"] as readonly FacesSortBy[],
+    "id_desc"
+  );
   const facesSortByRef = useRef(facesSortBy);
   facesSortByRef.current = facesSortBy;
 
@@ -104,33 +119,73 @@ export const usePersonDetailPage = () => {
     [id],
   );
 
+  const clearList = useListStore((state) => state.clearList);
+
+  // DetectedFaces drives "load more" itself, so no infinite-scroll sentinel.
   const {
     items: detectedFacesList,
     hasMore: hasMoreFaces,
     isLoading: loadingMoreFaces,
-  } = useListStore(
-    (state) => state.lists[detectedFacesListKey] || defaultListState,
+    loadMore: loadMoreFaces,
+    reload: reloadDetectedFaces,
+    removeItems: removeDetectedFaces,
+  } = usePagedList<FaceRead>(
+    detectedFacesListKey,
+    (cursor, signal) =>
+      getPersonFaces(
+        Number(id),
+        cursor,
+        20,
+        facesSortByRef.current,
+        undefined,
+        signal,
+      ),
+    { enabled: Boolean(id), infiniteScroll: false },
   );
 
-  const { fetchInitial, loadMore, removeItems, clearList } = useListStore();
+  // MediaAppearances renders (and scrolls) this list under the same key; it is
+  // loaded here as well so mutations can refresh it while another tab is open.
+  const { reload: reloadMediaAppearances } = usePagedList<Media>(
+    mediaListKey,
+    (cursor, signal) =>
+      getPersonMediaAppearances(
+        Number(id),
+        cursor ?? undefined,
+        filterPeople.map((p) => p.id),
+        filterTags.map((tag) => tag.name),
+        signal,
+      ),
+    { enabled: Boolean(id), infiniteScroll: false },
+  );
 
   const refreshDetectedFaces = useCallback(async () => {
     if (!id || !detectedFacesListKey) return;
-    clearList(detectedFacesListKey);
-    await fetchInitial(detectedFacesListKey, () =>
-      getPersonFaces(Number(id), null, 20, facesSortByRef.current),
-    );
-  }, [id, detectedFacesListKey, clearList, fetchInitial]);
+    reloadDetectedFaces();
+  }, [id, detectedFacesListKey, reloadDetectedFaces]);
 
   const refreshMediaAppearances = useCallback(async () => {
     if (!id || !mediaListKey) return;
-    const filterIds = filterPeople.map((p) => p.id);
-    const tagNames = filterTags.map((tag) => tag.name);
-    clearList(mediaListKey);
-    await fetchInitial(mediaListKey, () =>
-      getPersonMediaAppearances(Number(id), undefined, filterIds, tagNames),
-    );
-  }, [id, mediaListKey, filterPeople, filterTags, clearList, fetchInitial]);
+    reloadMediaAppearances();
+  }, [id, mediaListKey, reloadMediaAppearances]);
+
+  // These lists were always refetched when the page (or the media filters)
+  // changed. A list that is cached from an earlier visit is reloaded; one
+  // whose first page is already loading is fresh and left alone.
+  useEffect(() => {
+    if (!id) return;
+    const list = useListStore.getState().lists[detectedFacesListKey];
+    if (list && !(list.isLoading && list.items.length === 0)) {
+      reloadDetectedFaces();
+    }
+  }, [id, detectedFacesListKey, reloadDetectedFaces]);
+
+  useEffect(() => {
+    if (!id) return;
+    const list = useListStore.getState().lists[mediaListKey];
+    if (list && !(list.isLoading && list.items.length === 0)) {
+      reloadMediaAppearances();
+    }
+  }, [id, mediaListKey, reloadMediaAppearances]);
 
   const [snackbar, setSnackbar] = useState<{
     open: boolean;
@@ -164,12 +219,10 @@ export const usePersonDetailPage = () => {
     [id],
   );
 
-  const loadMoreDetectedFaces = useCallback(async () => {
+  const loadMoreDetectedFaces = useCallback(() => {
     if (!id) return;
-    await loadMore(detectedFacesListKey, (cursor) =>
-      getPersonFaces(Number(id), cursor ?? null, 20, facesSortByRef.current),
-    );
-  }, [id, loadMore, detectedFacesListKey]);
+    loadMoreFaces();
+  }, [id, loadMoreFaces]);
 
   const fetchFacesForMedia = useCallback(
     async (mediaId: number): Promise<FaceRead[]> => {
@@ -181,16 +234,14 @@ export const usePersonDetailPage = () => {
   );
 
   const handleFacesSortChange = useCallback(
-    async (sort: string) => {
+    async (sort: FacesSortBy) => {
       if (!id) return;
       setFacesSortBy(sort);
+      // The fetcher reads the ref, so the reload uses the new order.
       facesSortByRef.current = sort;
-      clearList(detectedFacesListKey);
-      await fetchInitial(detectedFacesListKey, () =>
-        getPersonFaces(Number(id), null, 20, sort),
-      );
+      reloadDetectedFaces();
     },
-    [id, detectedFacesListKey, clearList, fetchInitial],
+    [id, reloadDetectedFaces, setFacesSortBy],
   );
 
   const fetchSuggestedFaces = useCallback(
@@ -350,7 +401,6 @@ export const usePersonDetailPage = () => {
         await Promise.all([
           loadDetail(controller.signal),
           fetchSuggestedFaces(controller.signal),
-          refreshDetectedFaces(),
         ]);
       } catch (err) {
         if ((err as Error).name !== "AbortError") {
@@ -374,13 +424,7 @@ export const usePersonDetailPage = () => {
     clearList,
     loadDetail,
     fetchSuggestedFaces,
-    refreshDetectedFaces,
   ]);
-
-  useEffect(() => {
-    if (!id) return;
-    void refreshMediaAppearances();
-  }, [id, refreshMediaAppearances]);
 
   useEffect(() => {
     const handler = setTimeout(() => {
@@ -460,7 +504,7 @@ export const usePersonDetailPage = () => {
   const handleDeleteWrapper = async (faceIds: number[]) => {
       try {
         await deleteFace(faceIds);
-        removeItems(detectedFacesListKey, faceIds);
+        removeDetectedFaces(faceIds);
         setSuggestedFaces((prev) => prev.filter((f) => !faceIds.includes(f.id)));
         await Promise.all([
           refreshMediaAppearances(),
@@ -479,7 +523,7 @@ export const usePersonDetailPage = () => {
   const handleDetachWrapper = async (faceIds: number[]) => {
       try {
         await detachFace(faceIds);
-        removeItems(detectedFacesListKey, faceIds);
+        removeDetectedFaces(faceIds);
         setSuggestedFaces((prev) => prev.filter((f) => !faceIds.includes(f.id)));
         await Promise.all([
           refreshMediaAppearances(),

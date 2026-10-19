@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import {
   Alert,
   Box,
@@ -29,6 +29,8 @@ import { BrokenMediaItem } from "../types";
 import { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
 import { getBrokenMedia, resolveBroken, retryBroken } from "../services/broken";
+import { usePagedList } from "../hooks/usePagedList";
+import { useIdSelection } from "../hooks/useIdSelection";
 import ConfirmDialog from "../components/ConfirmDialog";
 import { resolveConfirmCopy, BulkResolveAction, FeedbackSeverity } from "../components/BulkResolveToolbar";
 import { formatBytes } from "../formatUtils";
@@ -37,13 +39,16 @@ const buildThumbUrl = (item: BrokenMediaItem) =>
   `${API}/thumbnails/${item.thumbnail_path ? encodeFilePath(item.thumbnail_path) : `${item.id}.jpg`}`;
 
 const BrokenMediaPage: React.FC = () => {
-  const [items, setItems] = useState<BrokenMediaItem[]>([]);
-  const [total, setTotal] = useState(0);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const list = usePagedList<BrokenMediaItem>(
+    "broken-media",
+    (cursor, signal) => getBrokenMedia({ cursor }, signal),
+    { infiniteScroll: false, refetchOnMount: true }
+  );
+  const { items, isLoading, error, hasMore, loadMore } = list;
+  const total = list.total ?? 0;
+  const selection = useIdSelection<number>();
+  const { selectedIds, toggle: toggleSelection, clear: clearSelection } = selection;
   const [isActionLoading, setIsActionLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [pendingAction, setPendingAction] = useState<{
     action: BulkResolveAction;
     selectAll: boolean;
@@ -54,48 +59,16 @@ const BrokenMediaPage: React.FC = () => {
     severity: FeedbackSeverity;
   }>({ open: false, message: "", severity: "success" });
 
-  const fetchBroken = useCallback(
-    async (cursor: string | null, append: boolean) => {
-      setIsLoading(true);
-      setError(null);
-      try {
-        const data = await getBrokenMedia({ cursor });
-        setItems((prev) => (append ? [...prev, ...data.items] : data.items));
-        setTotal(data.total);
-        setNextCursor(data.next_cursor);
-        if (!append) setSelectedIds(new Set());
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load broken media");
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    []
-  );
+  const reload = () => {
+    clearSelection();
+    list.reload();
+  };
 
-  useEffect(() => {
-    fetchBroken(null, false);
-  }, [fetchBroken]);
-
-  const toggleSelection = (id: number) =>
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
-
-  const selectAllVisible = () => setSelectedIds(new Set(items.map((i) => i.id)));
-  const clearSelection = () => setSelectedIds(new Set());
+  const selectAllVisible = () => selection.selectAll(items.map((i) => i.id));
 
   const removeLocalItems = (ids: number[], removed: number) => {
-    const idSet = new Set(ids);
-    setItems((prev) => prev.filter((item) => !idSet.has(item.id)));
-    setTotal((prev) => Math.max(0, prev - removed));
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      ids.forEach((id) => next.delete(id));
-      return next;
-    });
+    list.removeItems(ids, removed);
+    selection.deselect(ids);
   };
 
   const requestAction = (action: BulkResolveAction, selectAll = false) => {
@@ -118,7 +91,7 @@ const BrokenMediaPage: React.FC = () => {
         severity: result.removed > 0 ? "success" : "warning",
       });
       if (pendingAction.selectAll) {
-        await fetchBroken(null, false);
+        reload();
       } else if (result.removed > 0) {
         removeLocalItems(ids, result.removed);
       }
@@ -161,7 +134,7 @@ const BrokenMediaPage: React.FC = () => {
         message: `Retried ${retried} item(s): ${cleared} recovered, ${stillBroken} still broken`,
         severity: cleared > 0 ? "success" : "warning",
       });
-      await fetchBroken(null, false);
+      reload();
     } catch (err) {
       setSnackbar({
         open: true,
@@ -414,9 +387,9 @@ const BrokenMediaPage: React.FC = () => {
             <CircularProgress size={24} />
           </Box>
         )}
-        {!isLoading && nextCursor && (
+        {!isLoading && hasMore && items.length > 0 && (
           <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
-            <Button onClick={() => fetchBroken(nextCursor, true)}>
+            <Button onClick={loadMore}>
               Load more
             </Button>
           </Box>

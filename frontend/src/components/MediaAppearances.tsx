@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { Box, CircularProgress, Autocomplete, TextField } from "@mui/material";
 import Masonry from "react-masonry-css";
-import { useInView } from "react-intersection-observer";
 
-import { Person, PersonReadSimple, Tag } from "../types";
+import { Media, Person, PersonReadSimple, Tag } from "../types";
 import MediaCard from "./MediaCard";
-import { useListStore, defaultListState } from "../stores/useListStore";
+import { usePagedList } from "../hooks/usePagedList";
 import { getPeople, getPersonMediaAppearances } from "../services/person";
 import { getTags } from "../services/tag";
 import { searchTags } from "../services/search";
@@ -42,11 +41,19 @@ export default function MediaAppearances({
   const [tagOptions, setTagOptions] = useState<Tag[]>([]);
   const [tagQuery, setTagQuery] = useState("");
 
-  const { items, hasMore, isLoading } = useListStore(
-    (state) => state.lists[mediaListKey] || defaultListState
+  // Same key and query as usePersonDetailPage, which refreshes this list
+  // after mutations.
+  const { items, isLoading, loaderRef } = usePagedList<Media>(
+    mediaListKey,
+    (cursor, signal) =>
+      getPersonMediaAppearances(
+        person.id,
+        cursor ?? undefined,
+        filterPeople.map((p) => p.id),
+        filterTags.map((tag) => tag.name),
+        signal
+      )
   );
-  const { fetchInitial, loadMore } = useListStore();
-  const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
 
   useEffect(() => {
     getPeople()
@@ -78,33 +85,6 @@ export default function MediaAppearances({
       active = false;
     };
   }, [tagQuery]);
-
-  useEffect(() => {
-    const filterIds = filterPeople.map((p) => p.id);
-    const tagNames = filterTags.map((tag) => tag.name);
-    fetchInitial(mediaListKey, () =>
-      getPersonMediaAppearances(person.id, undefined, filterIds, tagNames)
-    );
-  }, [mediaListKey, fetchInitial, person.id, filterPeople, filterTags]);
-
-  useEffect(() => {
-    if (inView && hasMore && !isLoading) {
-      const filterIds = filterPeople.map((p) => p.id);
-      const tagNames = filterTags.map((tag) => tag.name);
-      loadMore(mediaListKey, (cursor) =>
-        getPersonMediaAppearances(person.id, cursor, filterIds, tagNames)
-      );
-    }
-  }, [
-    inView,
-    hasMore,
-    isLoading,
-    loadMore,
-    mediaListKey,
-    person.id,
-    filterPeople,
-    filterTags,
-  ]);
 
   return (
     <Box>

@@ -1,29 +1,26 @@
-import { API } from "../config";
 import { format } from "date-fns";
 import {
   CursorPage,
-  TimelineDisplayItem,
+  TimelineEntry,
   TimelineEvent,
   TimelineEventCreate,
   TimelineEventUpdate,
 } from "../types";
+import { apiFetch } from "./api";
 
 export const getPersonTimeline = async (
   personId: number,
-  cursor: string | null
-): Promise<CursorPage<TimelineDisplayItem>> => {
-  const params = new URLSearchParams();
-  if (cursor) {
-    params.append("cursor", cursor);
-  }
-  const response = await fetch(
-    `${API}/api/person/${personId}/timeline?${params.toString()}`
+  cursor: string | null,
+  signal?: AbortSignal
+): Promise<CursorPage<TimelineEntry>> =>
+  apiFetch<CursorPage<TimelineEntry>>(
+    `/api/person/${personId}/timeline`,
+    {
+      query: { cursor },
+      errorMessage: "Failed to fetch person timeline.",
+      signal,
+    }
   );
-  if (!response.ok) {
-    throw new Error("Failed to fetch person timeline.");
-  }
-  return response.json();
-};
 
 export const createTimelineEvent = async (
   personId: number,
@@ -33,15 +30,11 @@ export const createTimelineEvent = async (
     ...eventData,
     event_date: format(eventData.event_date, "yyyy-MM-dd"),
   };
-  const response = await fetch(`${API}/api/person/${personId}/events`, {
+  return apiFetch<TimelineEvent>(`/api/person/${personId}/events`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload), // Send the formatted payload
+    body: payload, // Send the formatted payload
+    errorMessage: "Failed to create timeline event.",
   });
-  if (!response.ok) {
-    throw new Error("Failed to create timeline event.");
-  }
-  return response.json();
 };
 
 export const updateTimelineEvent = async (
@@ -56,29 +49,21 @@ export const updateTimelineEvent = async (
     }),
   };
 
-  const response = await fetch(
-    `${API}/api/person/${personId}/events/${eventId}`,
+  return apiFetch<TimelineEvent>(
+    `/api/person/${personId}/events/${eventId}`,
     {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: payload,
+      errorMessage: "Failed to update timeline event.",
     }
   );
-  if (!response.ok) {
-    throw new Error("Failed to update timeline event.");
-  }
-  return response.json();
 };
 
 export const deleteTimelineEvent = async (
   personId: number,
   eventId: number
-): Promise<void> => {
-  const response = await fetch(
-    `${API}/api/person/${personId}/events/${eventId}`,
-    {
-      method: "DELETE",
-    }
-  );
-  if (!response.ok) throw new Error("Failed to delete timeline event.");
-};
+): Promise<void> =>
+  apiFetch<void>(`/api/person/${personId}/events/${eventId}`, {
+    method: "DELETE",
+    errorMessage: "Failed to delete timeline event.",
+  });

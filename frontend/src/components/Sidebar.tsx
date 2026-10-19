@@ -176,7 +176,7 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
           justifyContent: "center",
         }}
       >
-        <Link to="/">
+        <Link to="/" onClick={onClose}>
           <Box
             component="img"
             src={wordmarkSrc}
@@ -253,6 +253,8 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
                   <ListItemButton
                     component={RouterNavLink}
                     to={item.to}
+                    // In the mobile drawer, close it once a page is chosen.
+                    onClick={onClose}
                     selected={isActive}
                     sx={{
                       borderRadius: 2,

@@ -1,3 +1,4 @@
+import type { ThemeMode } from "./ThemeContext";
 import { createTheme } from "@mui/material";
 
 // Gallery Slate palette and derived tints - Modernized
@@ -50,14 +51,14 @@ export const getTheme = (mode: ThemeMode) => {
       primary: p.primary,
       secondary: p.secondary,
       background: p.background,
-      text: p.text as any,
-      divider: p.divider as any,
-      success: p.success as any,
-      warning: p.warning as any,
-      error: p.error as any,
-      info: p.info as any,
+      text: p.text,
+      divider: p.divider,
+      success: p.success,
+      warning: p.warning,
+      error: p.error,
+      info: p.info,
       // custom field set via module augmentation below
-      accent: p.accent as any,
+      accent: p.accent,
     },
     shape: { borderRadius: 16 }, // Increased border radius
     typography: {
@@ -83,16 +84,16 @@ export const getTheme = (mode: ThemeMode) => {
             // CSS custom properties for app-wide use
             "--color-bg": themeParam.palette.background.default,
             "--color-paper": themeParam.palette.background.paper,
-            "--color-text": themeParam.palette.text.primary as any,
-            "--color-text-secondary": (themeParam.palette.text as any).secondary,
-            "--color-divider": themeParam.palette.divider as any,
+            "--color-text": themeParam.palette.text.primary,
+            "--color-text-secondary": themeParam.palette.text.secondary,
+            "--color-divider": themeParam.palette.divider,
             "--color-primary": themeParam.palette.primary.main,
             "--color-secondary": themeParam.palette.secondary.main,
-            "--color-accent": (themeParam.palette as any).accent.main,
-            "--overlay-hover": (p as any).overlays.hover,
-            "--overlay-active": (p as any).overlays.active,
-            "--overlay-focus": (p as any).overlays.focus,
-            "--overlay-selection": (p as any).overlays.selection,
+            "--color-accent": themeParam.palette.accent.main,
+            "--overlay-hover": p.overlays.hover,
+            "--overlay-active": p.overlays.active,
+            "--overlay-focus": p.overlays.focus,
+            "--overlay-selection": p.overlays.selection,
           },
           '.MuiPaper-root': {
             backgroundColor: themeParam.palette.background.paper,
@@ -110,7 +111,7 @@ export const getTheme = (mode: ThemeMode) => {
             backgroundImage: "none",
             // Glassmorphism effect
             backdropFilter: "blur(12px)",
-            backgroundColor: (p as any).overlays.elevated,
+            backgroundColor: p.overlays.elevated,
             '&.MuiPaper-elevation1': { 
               boxShadow: mode === 'light' 
                 ? '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)' 
@@ -127,7 +128,7 @@ export const getTheme = (mode: ThemeMode) => {
       MuiAppBar: {
         styleOverrides: {
           colorPrimary: {
-            backgroundColor: (p as any).overlays.elevated,
+            backgroundColor: p.overlays.elevated,
             backdropFilter: "blur(12px)",
             color: p.text.primary,
             borderBottom: `1px solid ${p.divider}`,

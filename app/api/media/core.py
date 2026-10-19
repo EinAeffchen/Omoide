@@ -1,14 +1,12 @@
 from pathlib import Path
-from typing import Annotated
 
 from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
-    Query,
     status,
 )
-from sqlalchemy import text, tuple_, union_all
+from sqlalchemy import text
 from sqlalchemy.orm import aliased, selectinload
 from sqlmodel import Session, select
 
@@ -28,75 +26,12 @@ from app.schemas.media import (
     FavoriteUpdate,
     GeoUpdate,
     MediaDetail,
-    MediaNeighbors,
     MediaPreview,
     MediaRead,
 )
 from app.schemas.person import PersonRead
 
 router = APIRouter()
-
-
-@router.get("/{media_id}/neighbors", response_model=MediaNeighbors)
-def get_neighbors(
-    media_id: int,
-    session: Session = Depends(get_session),
-    sort: Annotated[str, Query(enum=["newest", "latest"])] = "newest",
-    filter_people: list[int] | None = Query(
-        [], description="Provide a persons context for navigation"
-    ),
-):
-    if sort == "newest":
-        sort_col = Media.created_at
-        sort_col_name = "created_at"
-    elif sort == "latest":
-        sort_col = Media.inserted_at
-        sort_col_name = "inserted_at"
-    else:
-        raise ValueError(f"Unsupported sort option: {sort}")
-
-    original = session.get(Media, media_id)
-    if not original:
-        raise HTTPException(404, "Media not found")
-
-    original_sort_value = getattr(original, sort_col_name)
-    q = select(Media)
-
-    if filter_people:
-        media_links_union = union_all(
-            select(Face.media_id.label("media_id")).where(
-                Face.person_id.in_(filter_people)
-            ),
-            select(PersonMediaLink.media_id.label("media_id")).where(
-                PersonMediaLink.person_id.in_(filter_people)
-            ),
-        ).subquery()
-        q = q.where(Media.id.in_(select(media_links_union.c.media_id)))
-
-    previous_query = (
-        q
-        .where(tuple_(sort_col, Media.id) > (original_sort_value, original.id))
-        .order_by(sort_col.asc(), Media.id.asc())
-        .limit(1)
-    )
-    next_query = (
-        q
-        .where(tuple_(sort_col, Media.id) < (original_sort_value, original.id))
-        .order_by(sort_col.desc(), Media.id.desc())
-        .limit(1)
-    )
-    prev_row = session.exec(previous_query).first()
-    next_row = session.exec(next_query).first()
-    next_media = None
-    previous_media = None
-    if next_row:
-        next_media = MediaPreview.model_validate(next_row)
-    if prev_row:
-        previous_media = MediaPreview.model_validate(prev_row)
-    return MediaNeighbors(
-        next_media=next_media,
-        previous_media=previous_media,
-    )
 
 
 @router.get("/{media_id}", response_model=MediaDetail)
@@ -186,16 +121,6 @@ def delete_media_record(
     session: Session = Depends(get_session),
 ):
     delete_record(media_id, session)
-
-
-@router.get("/exif/{media_id}", response_model=ExifData)
-def read_exif(media_id: int, session=Depends(get_session)):
-    ex = session.exec(
-        select(ExifData).where(ExifData.media_id == media_id)
-    ).first()
-    if not ex:
-        raise HTTPException(404, "No EXIF data")
-    return ex
 
 
 @router.get("/{media_id}/get-similar", response_model=list[MediaPreview])

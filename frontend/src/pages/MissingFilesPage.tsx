@@ -35,6 +35,8 @@ import {
   getMissingMedia,
   resetMissingFlags,
 } from "../services/missing";
+import { usePagedList } from "../hooks/usePagedList";
+import { useIdSelection } from "../hooks/useIdSelection";
 import { useTaskCompletionVersion, useTaskEvents } from "../TaskEventsContext";
 import ConfirmDialog from "../components/ConfirmDialog";
 import { FeedbackSeverity } from "../components/BulkResolveToolbar";
@@ -67,14 +69,8 @@ const buildThumbUrl = (item: MissingMediaItem) => {
 type MissingBulkKind = "confirm-selected" | "confirm-all" | "reset-all";
 
 const MissingFilesPage: React.FC = () => {
-  const [items, setItems] = useState<MissingMediaItem[]>([]);
   const [summary, setSummary] = useState<MissingSummaryEntry[]>([]);
-  const [totalMissing, setTotalMissing] = useState(0);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
   const [isActionLoading, setIsActionLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [pendingBulk, setPendingBulk] = useState<MissingBulkKind | null>(null);
   const [snackbar, setSnackbar] = useState<{
     open: boolean;
@@ -82,106 +78,63 @@ const MissingFilesPage: React.FC = () => {
     severity: FeedbackSeverity;
   }>({ open: false, message: "", severity: "success" });
 
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [pathFilter, setPathFilter] = useState("");
   const [includeConfirmed, setIncludeConfirmed] = useState(false);
+  // Typing in the path filter only reloads once the user pauses.
+  const [debouncedPath, setDebouncedPath] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedPath(pathFilter.trim()), 300);
+    return () => clearTimeout(t);
+  }, [pathFilter]);
 
-  const refreshKey = useTaskCompletionVersion(["clean_missing_files"]);
   const { activeTasks } = useTaskEvents();
   const cleanupTask = activeTasks.find(
     (task) => task.task_type === "clean_missing_files"
   );
 
-  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
-
-  const generationRef = useRef(0);
-
-  const fetchMissing = useCallback(
-    async (cursor: string | null, append: boolean) => {
-      if (!append) {
-        generationRef.current += 1;
-        setNextCursor(null);
-        setHasMore(false);
-      }
-      const generation = generationRef.current;
-      setIsLoading(true);
-      setError(null);
-      try {
-        const response = await getMissingMedia({
+  const list = usePagedList<MissingMediaItem>(
+    `missing:${includeConfirmed}:${debouncedPath}`,
+    async (cursor, signal) => {
+      const response = await getMissingMedia(
+        {
           cursor,
-          pathPrefix: pathFilter.trim() || undefined,
+          pathPrefix: debouncedPath || undefined,
           includeConfirmed,
-        });
-        if (generation !== generationRef.current) return;
-        setItems((prev) =>
-          append ? [...prev, ...response.items] : response.items
-        );
-        setSummary(response.summary);
-        setTotalMissing(response.total);
-        setNextCursor(response.next_cursor);
-        setHasMore(Boolean(response.next_cursor));
-        if (!append) {
-          clearSelection();
-        }
-      } catch (err) {
-        if (generation !== generationRef.current) return;
-        console.error(err);
-        setError(
-          err instanceof Error ? err.message : "Failed to load missing files"
-        );
-      } finally {
-        if (generation === generationRef.current) {
-          setIsLoading(false);
-        }
-      }
+        },
+        signal
+      );
+      if (cursor === null) setSummary(response.summary);
+      return response;
     },
-    [pathFilter, includeConfirmed, clearSelection]
+    { infiniteScroll: false, refetchOnMount: true }
   );
+  const { items, isLoading, error, hasMore, loadMore, reload: reloadList } = list;
+  const totalMissing = list.total ?? 0;
+  const selection = useIdSelection<number>();
+  const { selectedIds, toggle: toggleSelection, clear: clearSelection } = selection;
 
-  const fetchMissingRef = useRef(fetchMissing);
+  const reload = useCallback(() => {
+    clearSelection();
+    reloadList();
+  }, [clearSelection, reloadList]);
+
+  // A finished cleanup task changes which files are missing.
+  const refreshKey = useTaskCompletionVersion(["clean_missing_files"]);
+  const seenRefreshKey = useRef(refreshKey);
   useEffect(() => {
-    fetchMissingRef.current = fetchMissing;
-  });
+    if (seenRefreshKey.current === refreshKey) return;
+    seenRefreshKey.current = refreshKey;
+    reload();
+  }, [refreshKey, reload]);
 
-  useEffect(() => {
-    fetchMissingRef.current(null, false);
-  }, [refreshKey]);
+  // New filters mean a new list; the old selection no longer applies.
+  useEffect(() => clearSelection(), [includeConfirmed, debouncedPath, clearSelection]);
 
-  const filtersInitializedRef = useRef(false);
-  useEffect(() => {
-    if (!filtersInitializedRef.current) {
-      filtersInitializedRef.current = true;
-      return;
-    }
-    const t = setTimeout(() => fetchMissingRef.current(null, false), 300);
-    return () => clearTimeout(t);
-  }, [pathFilter, includeConfirmed]);
-
-  const toggleSelection = (id: number) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
-  };
-
-  const selectAllVisible = () => {
-    setSelectedIds(new Set(items.map((item) => item.id)));
-  };
+  const selectAllVisible = () => selection.selectAll(items.map((item) => item.id));
 
   const removeLocalItems = (ids: number[], removed: number) => {
-    const idSet = new Set(ids);
-    setItems((prev) => prev.filter((item) => !idSet.has(item.id)));
-    setTotalMissing((prev) => Math.max(0, prev - removed));
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      ids.forEach((id) => next.delete(id));
-      return next;
-    });
+    list.removeItems(ids, removed);
+    selection.deselect(ids);
   };
 
   const showFeedback = (message: string, severity: FeedbackSeverity) =>
@@ -252,7 +205,7 @@ const MissingFilesPage: React.FC = () => {
         deleted > 0 ? "success" : "warning"
       );
       setPendingBulk(null);
-      await fetchMissing(null, false);
+      reload();
     } catch (err) {
       showFeedback(
         err instanceof Error ? err.message : "Failed to confirm filtered media",
@@ -279,7 +232,7 @@ const MissingFilesPage: React.FC = () => {
         cleared > 0 ? "success" : "warning"
       );
       setPendingBulk(null);
-      await fetchMissing(null, false);
+      reload();
     } catch (err) {
       showFeedback(
         err instanceof Error ? err.message : "Failed to reset filtered media",
@@ -572,8 +525,8 @@ const MissingFilesPage: React.FC = () => {
         {!isLoading && hasMore && (
           <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
             <Button
-              onClick={() => fetchMissing(nextCursor, true)}
-              disabled={!nextCursor}
+              onClick={loadMore}
+              disabled={!hasMore}
             >
               Load more
             </Button>

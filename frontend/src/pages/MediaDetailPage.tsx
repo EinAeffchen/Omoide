@@ -14,12 +14,12 @@ import {
   IconButton,
   useTheme,
   useMediaQuery,
-  Fade,
 } from "@mui/material";
 import { ArrowBackIosNew, ArrowForwardIos } from "@mui/icons-material";
 import CloseIcon from "@mui/icons-material/Close";
 
 import { useListStore } from "../stores/useListStore";
+import { useCachedList } from "../hooks/usePagedList";
 import { useTaskCompletionVersion } from "../TaskEventsContext";
 
 import { ActionDialogs } from "../components/ActionDialogs";
@@ -62,13 +62,14 @@ export default function MediaDetailPage() {
 
   // --- 1. STATE MANAGEMENT ---
   const mediaListKey = location.state?.mediaListKey as string | undefined;
-  const listFromStore = useListStore((state) =>
-    mediaListKey ? state.lists[mediaListKey] : undefined
-  );
+  const listFromStore = useCachedList(mediaListKey);
   // A. Global state from Zustand for the list context
-  const items: unknown[] = listFromStore?.items ?? [];
+  const items = useMemo<unknown[]>(
+    () => listFromStore?.items ?? [],
+    [listFromStore]
+  );
 
-  const { removeItem } = useListStore();
+  const removeFromList = useListStore((state) => state.removeItems);
 
   // B. Local state for this specific modal's content
   const preloadedMedia = location.state?.media as Media | null;
@@ -214,6 +215,8 @@ export default function MediaDetailPage() {
       .then((cfg) => setIsBinary(!!cfg.general.is_binary))
       .catch(() => setIsBinary(false));
     return () => controller.abort();
+    // Preloaded media is only used to paint the first frame of a navigation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, location.key, fetchDetail]);
 
   const handleNavigate = useCallback(
@@ -350,7 +353,7 @@ export default function MediaDetailPage() {
   const confirmDeleteRecord = async () => {
     if (!detail || !detail.media) return;
     try {
-      if (mediaListKey) removeItem(mediaListKey, detail.media.id);
+      if (mediaListKey) removeFromList(mediaListKey, [detail.media.id]);
       await deleteMediaRecord(detail.media.id);
       setSnackbar({
         open: true,
@@ -367,7 +370,7 @@ export default function MediaDetailPage() {
   const confirmDeleteFile = async () => {
     if (!detail || !detail.media) return;
     try {
-      if (mediaListKey) removeItem(mediaListKey, detail.media.id);
+      if (mediaListKey) removeFromList(mediaListKey, [detail.media.id]);
       await deleteMediaFile(detail.media.id);
       setSnackbar({ open: true, message: "File deleted", severity: "success" });
       navigateAfterDelete();
@@ -413,7 +416,7 @@ export default function MediaDetailPage() {
         },
       }}
     >
-      <IconButton
+      <IconButton aria-label="Close"
         onClick={handleClose}
         sx={{
           position: "absolute",
@@ -485,7 +488,7 @@ export default function MediaDetailPage() {
                 }}
               >
                 {!isMobile && neighbors.previousId && (
-                  <IconButton
+                  <IconButton aria-label="Previous media"
                     onClick={() => handleNavigate("prev")}
                     disabled={isDetailLoading}
                     sx={{
@@ -541,7 +544,7 @@ export default function MediaDetailPage() {
                 </Box>
                 {showSwipeHint && <SwipeHint />}
                 {!isMobile && neighbors.nextId && (
-                  <IconButton
+                  <IconButton aria-label="Next media"
                     onClick={() => handleNavigate("next")}
                     disabled={isDetailLoading}
                     sx={{

@@ -1,12 +1,7 @@
-import React, {
-  createContext,
-  useCallback,
-  useContext,
-  useMemo,
-  useState,
-} from "react";
+import React from "react";
+import { create } from "zustand";
 
-interface SelectionContextValue {
+interface SelectionState {
   isSelecting: boolean;
   selectedIds: Set<number>;
   toggleSelecting: () => void;
@@ -14,53 +9,41 @@ interface SelectionContextValue {
   clear: () => void;
 }
 
-const defaultValue: SelectionContextValue = {
+/**
+ * App-wide media selection (the header's "select items" mode). A store
+ * rather than React context, so toggling one card only re-renders that card
+ * (via `useIsSelected`) instead of every card on the page.
+ */
+const useSelectionStore = create<SelectionState>((set) => ({
   isSelecting: false,
   selectedIds: new Set(),
-  toggleSelecting: () => {},
-  toggle: () => {},
-  clear: () => {},
-};
+  toggleSelecting: () =>
+    set((state) => ({
+      isSelecting: !state.isSelecting,
+      selectedIds: state.isSelecting ? new Set() : state.selectedIds,
+    })),
+  toggle: (id) =>
+    set((state) => {
+      const selectedIds = new Set(state.selectedIds);
+      if (selectedIds.has(id)) selectedIds.delete(id);
+      else selectedIds.add(id);
+      return { selectedIds };
+    }),
+  clear: () => set({ selectedIds: new Set(), isSelecting: false }),
+}));
 
-export const SelectionContext = createContext<SelectionContextValue>(defaultValue);
-
+/** Kept for API compatibility; the selection no longer needs a provider. */
 export const SelectionProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
-}) => {
-  const [isSelecting, setIsSelecting] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+}) => <>{children}</>;
 
-  const toggleSelecting = useCallback(() => {
-    setIsSelecting((prev) => {
-      if (prev) setSelectedIds(new Set());
-      return !prev;
-    });
-  }, []);
+/** The whole selection; use in toolbars that show counts or act on it. */
+export const useSelection = () => useSelectionStore();
 
-  const toggle = useCallback((id: number) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
+/** Per-item subscription for cards: re-renders only when this id flips. */
+export const useIsSelected = (id: number | undefined) =>
+  useSelectionStore((state) => id !== undefined && state.selectedIds.has(id));
 
-  const clear = useCallback(() => {
-    setSelectedIds(new Set());
-    setIsSelecting(false);
-  }, []);
+export const useIsSelecting = () => useSelectionStore((state) => state.isSelecting);
 
-  const value = useMemo(
-    () => ({ isSelecting, selectedIds, toggleSelecting, toggle, clear }),
-    [isSelecting, selectedIds, toggleSelecting, toggle, clear]
-  );
-
-  return (
-    <SelectionContext.Provider value={value}>
-      {children}
-    </SelectionContext.Provider>
-  );
-};
-
-export const useSelection = () => useContext(SelectionContext);
+export const useToggleSelected = () => useSelectionStore((state) => state.toggle);

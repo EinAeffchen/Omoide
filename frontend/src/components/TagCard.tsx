@@ -152,7 +152,7 @@ export default function TagCard({ tag, onTagDeleted }: TagCardProps) {
         >
           <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
             {!config.PRESENTATION_MODE && (
-            <IconButton
+            <IconButton aria-label="Delete tag"
               onClick={handleOpenConfirmDialog}
               size="small"
               sx={{

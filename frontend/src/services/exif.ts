@@ -1,7 +1,11 @@
-import { API } from "../config";
+import { ExifData } from "../types";
+import { apiFetch } from "./api";
 
-export const getExifData = async (mediaId: number): Promise<any> => {
-  const response = await fetch(`${API}/api/media/${mediaId}/processors/exif`);
-  if (!response.ok) throw new Error("Failed to fetch EXIF data");
-  return response.json();
-};
+export const getExifData = async (
+  mediaId: number,
+  signal?: AbortSignal
+): Promise<ExifData | null> =>
+  apiFetch<ExifData | null>(`/api/media/${mediaId}/processors/exif`, {
+    errorMessage: "Failed to fetch EXIF data",
+    signal,
+  });

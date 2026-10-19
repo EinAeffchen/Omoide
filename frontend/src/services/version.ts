@@ -1,10 +1,10 @@
-import { API } from "../config";
 import { VersionUpdateInfo } from "../types";
+import { apiFetch } from "./api";
 
-export const getVersionUpdateInfo = async (): Promise<VersionUpdateInfo> => {
-  const res = await fetch(`${API}/api/version/update`);
-  if (!res.ok) {
-    throw new Error("Failed to fetch update information");
-  }
-  return res.json();
-};
+export const getVersionUpdateInfo = async (
+  signal?: AbortSignal
+): Promise<VersionUpdateInfo> =>
+  apiFetch<VersionUpdateInfo>("/api/version/update", {
+    errorMessage: "Failed to fetch update information",
+    signal,
+  });

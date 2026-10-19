@@ -220,9 +220,10 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
         msg: `${TASK_LABELS[type] ?? type} started`,
         sev: "success",
       });
-    } catch (err: any) {
+    } catch (err) {
       console.error("Error starting task", type, err);
-      const msg = err?.message || "Failed to start task";
+      const msg =
+        (err instanceof Error && err.message) || "Failed to start task";
       setSnack({ open: true, msg, sev: "error" });
     }
   };
@@ -259,8 +260,12 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
           : `${label} started`,
         sev: "success",
       });
-    } catch (err: any) {
-      setSnack({ open: true, msg: err?.message || "Failed to start processor", sev: "error" });
+    } catch (err) {
+      setSnack({
+        open: true,
+        msg: (err instanceof Error && err.message) || "Failed to start processor",
+        sev: "error",
+      });
     }
   };
 

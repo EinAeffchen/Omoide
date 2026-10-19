@@ -18,12 +18,15 @@ import { formatBytes } from "../formatUtils";
 
 interface DuplicateMediaCardProps {
   media: MediaDuplicate;
+  /** Radios of one group share a name so they act as one radio group. */
+  groupId: number;
   isSelectedAsMaster: boolean;
   onSelectMaster: () => void;
 }
 
 export const DuplicateMediaCard: React.FC<DuplicateMediaCardProps> = ({
   media,
+  groupId,
   isSelectedAsMaster,
   onSelectMaster,
 }) => {
@@ -65,7 +68,7 @@ export const DuplicateMediaCard: React.FC<DuplicateMediaCardProps> = ({
               <Radio
                 checked={isSelectedAsMaster}
                 onChange={onSelectMaster}
-                name={`master-select-${media.group_id}`}
+                name={`master-select-${groupId}`}
               />
             }
             label="Keep this one"

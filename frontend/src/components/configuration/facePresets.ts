@@ -1,0 +1,93 @@
+import { AppConfig } from "../../types";
+
+export type FacePresetKey = "strict" | "normal" | "loose";
+
+export const facePresets: Record<
+  FacePresetKey,
+  Omit<AppConfig["face_recognition"], "preset" | "face_detection_model" | "face_sharpness_filter_enabled" | "face_sharpness_min_variance">
+> = {
+  strict: {
+    face_recognition_min_confidence: 0.6,
+    existing_person_cosine_threshold: 0.68,
+    existing_person_min_cosine_margin: 0.07,
+    rerun_face_iou_dedupe_threshold: 0.7,
+    face_recognition_min_face_pixels: 1600,
+    person_min_face_count: 3,
+    person_min_media_count: 2,
+    person_merge_search_k: 30,
+    person_cluster_max_l2_radius: 0.95,
+    person_merge_percent_similarity: 78,
+    cluster_batch_size: 15000,
+    cluster_seed_min_det_score: 0.65,
+    cluster_seed_min_frontality: 0.35,
+    person_matching_max_prototypes: 3,
+    hdbscan_min_cluster_size: 6,
+    hdbscan_min_samples: 12,
+    hdbscan_cluster_selection_method: "eom",
+    hdbscan_cluster_selection_epsilon: 0.07,
+    hdbscan_min_membership_probability: 0.4,
+    cw_threshold: 0.7,
+    cw_k_neighbors: 10,
+    cw_iterations: 20,
+    cw_min_member_similarity: 0.55,
+  },
+  normal: {
+    face_recognition_min_confidence: 0.5,
+    existing_person_cosine_threshold: 0.62,
+    existing_person_min_cosine_margin: 0.05,
+    rerun_face_iou_dedupe_threshold: 0.7,
+    face_recognition_min_face_pixels: 1600,
+    person_min_face_count: 2,
+    person_min_media_count: 2,
+    person_merge_search_k: 40,
+    person_cluster_max_l2_radius: 1,
+    person_merge_percent_similarity: 72,
+    cluster_batch_size: 15000,
+    cluster_seed_min_det_score: 0.6,
+    cluster_seed_min_frontality: 0.3,
+    person_matching_max_prototypes: 3,
+    hdbscan_min_cluster_size: 6,
+    hdbscan_min_samples: 10,
+    hdbscan_cluster_selection_method: "eom",
+    hdbscan_cluster_selection_epsilon: 0.1,
+    hdbscan_min_membership_probability: 0.3,
+    cw_threshold: 0.65,
+    cw_k_neighbors: 10,
+    cw_iterations: 20,
+    cw_min_member_similarity: 0.5,
+  },
+  loose: {
+    face_recognition_min_confidence: 0.4,
+    existing_person_cosine_threshold: 0.56,
+    existing_person_min_cosine_margin: 0.03,
+    rerun_face_iou_dedupe_threshold: 0.7,
+    face_recognition_min_face_pixels: 1200,
+    person_min_face_count: 2,
+    person_min_media_count: 2,
+    person_merge_search_k: 50,
+    person_cluster_max_l2_radius: 1.04,
+    person_merge_percent_similarity: 68,
+    cluster_batch_size: 15000,
+    cluster_seed_min_det_score: 0.55,
+    cluster_seed_min_frontality: 0.25,
+    person_matching_max_prototypes: 3,
+    hdbscan_min_cluster_size: 4,
+    hdbscan_min_samples: 4,
+    hdbscan_cluster_selection_method: "eom",
+    hdbscan_cluster_selection_epsilon: 0.11,
+    hdbscan_min_membership_probability: 0.2,
+    cw_threshold: 0.62,
+    cw_k_neighbors: 10,
+    cw_iterations: 20,
+    cw_min_member_similarity: 0.45,
+  },
+};
+
+export const facePresetDescriptions: Record<FacePresetKey, string> = {
+  strict:
+    "Highest precision. Requires sharp faces and strong matches before auto-grouping.",
+  normal:
+    "Balanced defaults. Works well for most libraries without over or under clustering.",
+  loose:
+    "Captures more borderline matches. Useful for sparse datasets at the cost of more review.",
+};

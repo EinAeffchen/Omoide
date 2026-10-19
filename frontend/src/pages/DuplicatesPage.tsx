@@ -1,5 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { useInView } from "react-intersection-observer";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Typography,
   Box,
@@ -13,16 +12,27 @@ import {
   MenuItem,
 } from "@mui/material";
 import Grid from "@mui/material/Grid";
-import { useListStore, defaultListState } from "../stores/useListStore";
+import { useListStore } from "../stores/useListStore";
+import { usePagedList } from "../hooks/usePagedList";
+import { isAbortError } from "../services/api";
 import { getDuplicates, getDuplicateStats } from "../services/duplicates";
 import { DuplicateGroup } from "../components/DuplicateGroup"; // Our new smart component
-import { DuplicateStats } from "../types";
+import { DuplicateGroup as DuplicateGroupData, DuplicateStats } from "../types";
 import { useTaskCompletionVersion, useTaskEvents } from "../TaskEventsContext";
 import { formatBytes } from "../formatUtils";
+import { useLocalStoragePreference } from "../hooks/useLocalStoragePreference";
 
 const DuplicatesPage: React.FC = () => {
-  const [sortBy, setSortBy] = useState<"count" | "size">("count");
-  const [mediaType, setMediaType] = useState<"" | "image" | "video">("");
+  const [sortBy, setSortBy] = useLocalStoragePreference(
+    "duplicatesSortBy",
+    ["count", "size"] as const,
+    "count"
+  );
+  const [mediaType, setMediaType] = useLocalStoragePreference(
+    "duplicatesMediaType",
+    ["", "image", "video"] as const,
+    ""
+  );
   const [minCount, setMinCount] = useState<number>(2);
 
   const listKey = useMemo(
@@ -30,14 +40,6 @@ const DuplicatesPage: React.FC = () => {
     [sortBy, mediaType, minCount]
   );
 
-  const {
-    items: duplicateGroups,
-    hasMore,
-    isLoading,
-    error: listError,
-  } = useListStore((state) => state.lists[listKey] || defaultListState);
-  const { fetchInitial, loadMore, removeItem, clearList } = useListStore();
-  const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
   const refreshKey = useTaskCompletionVersion(["find_duplicates", "generate_hashes"]);
   const { activeTasks } = useTaskEvents();
   const duplicateTask = activeTasks.find(
@@ -54,36 +56,51 @@ const DuplicatesPage: React.FC = () => {
 
   const mt = mediaType || undefined;
 
-  useEffect(() => {
-    clearList(listKey);
-    fetchInitial(listKey, () => getDuplicates(null, sortBy, mt, 10, minCount));
-  }, [fetchInitial, listKey, clearList, refreshKey, sortBy, mt, minCount]);
+  const {
+    items: duplicateGroups,
+    hasMore,
+    isLoading,
+    error: listError,
+    loaderRef,
+    loadMore,
+    reload,
+    removeItems,
+  } = usePagedList<DuplicateGroupData>(listKey, (cursor, signal) =>
+    getDuplicates(cursor, sortBy, mt, 10, minCount, signal)
+  );
 
+  // usePagedList only fetches lists that aren't cached yet. Duplicate groups
+  // change behind our back (resolutions elsewhere, detection runs), so
+  // refetch cached lists on every visit/filter change and after a run.
+  const lastRefreshKey = useRef(refreshKey);
   useEffect(() => {
-    if (inView && hasMore && !isLoading) {
-      loadMore(listKey, (cursor) => getDuplicates(cursor, sortBy, mt, 10, minCount));
-    }
-  }, [inView, hasMore, isLoading, loadMore, listKey, sortBy, mt, minCount]);
+    const refreshed = lastRefreshKey.current !== refreshKey;
+    lastRefreshKey.current = refreshKey;
+    const cached = useListStore.getState().lists[listKey];
+    if (refreshed || (cached && !cached.isLoading)) reload();
+  }, [listKey, refreshKey, reload]);
 
+  // A page can come back empty while more groups remain; keep paging.
   useEffect(() => {
-    if (!isLoading && hasMore && duplicateGroups.length === 0) {
-      loadMore(listKey, (cursor) => getDuplicates(cursor, sortBy, mt, 10, minCount));
+    if (!isLoading && hasMore && !listError && duplicateGroups.length === 0) {
+      loadMore();
     }
-  }, [duplicateGroups.length, hasMore, isLoading, loadMore, listKey, sortBy, mt, minCount]);
+  }, [duplicateGroups.length, hasMore, isLoading, listError, loadMore]);
 
   useEffect(() => {
     let isActive = true;
+    const controller = new AbortController();
 
     const loadStats = async () => {
       setIsLoadingStats(true);
       try {
-        const result = await getDuplicateStats();
+        const result = await getDuplicateStats(controller.signal);
         if (isActive) {
           setStats(result);
           setStatsError(null);
         }
       } catch (error) {
-        if (isActive) {
+        if (isActive && !isAbortError(error)) {
           const message =
             error instanceof Error
               ? error.message
@@ -101,12 +118,13 @@ const DuplicatesPage: React.FC = () => {
 
     return () => {
       isActive = false;
+      controller.abort();
     };
   }, [refreshKey]);
 
   // This handler will be passed down to remove a whole group from the UI once it's resolved
   const handleGroupResolved = (groupId: number) => {
-    removeItem(listKey, groupId);
+    removeItems([groupId]);
     setIsLoadingStats(true);
     getDuplicateStats()
       .then((result) => {
@@ -125,10 +143,7 @@ const DuplicatesPage: React.FC = () => {
       });
   };
 
-  const handleRetryLoad = () => {
-    clearList(listKey);
-    fetchInitial(listKey, () => getDuplicates(null, sortBy, mt, 10, minCount));
-  };
+  const handleRetryLoad = reload;
 
   const formatNumber = (value: number) => value.toLocaleString();
 
@@ -183,7 +198,7 @@ const DuplicatesPage: React.FC = () => {
             </Typography>
           )}
           <Grid container spacing={2}>
-            <Grid item xs={12} sm={6} md={3}>
+            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
               <Paper variant="outlined" sx={{ p: 2 }}>
                 <Typography variant="subtitle2" color="text.secondary">
                   Duplicate Groups
@@ -193,7 +208,7 @@ const DuplicatesPage: React.FC = () => {
                 </Typography>
               </Paper>
             </Grid>
-            <Grid item xs={12} sm={6} md={3}>
+            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
               <Paper variant="outlined" sx={{ p: 2 }}>
                 <Typography variant="subtitle2" color="text.secondary">
                   Duplicate Files
@@ -203,7 +218,7 @@ const DuplicatesPage: React.FC = () => {
                 </Typography>
               </Paper>
             </Grid>
-            <Grid item xs={12} sm={6} md={3}>
+            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
               <Paper variant="outlined" sx={{ p: 2 }}>
                 <Typography variant="subtitle2" color="text.secondary">
                   Duplicate Size
@@ -213,7 +228,7 @@ const DuplicatesPage: React.FC = () => {
                 </Typography>
               </Paper>
             </Grid>
-            <Grid item xs={12} sm={6} md={3}>
+            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
               <Paper variant="outlined" sx={{ p: 2 }}>
                 <Typography variant="subtitle2" color="text.secondary">
                   Potential Reclaim
@@ -235,7 +250,7 @@ const DuplicatesPage: React.FC = () => {
             ) : (
               <Grid container spacing={2}>
                 {stats.type_breakdown.map((entry) => (
-                  <Grid key={entry.type} item xs={12} sm={6} md={4}>
+                  <Grid key={entry.type} size={{ xs: 12, sm: 6, md: 4 }}>
                     <Box sx={{ display: "flex", flexDirection: "column" }}>
                       <Typography variant="body1">
                         {typeLabel(entry.type)}

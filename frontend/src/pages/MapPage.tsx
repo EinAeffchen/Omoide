@@ -1,7 +1,7 @@
 import { Box, useTheme } from "@mui/material";
 import { useMemo } from "react";
 import type { LatLngExpression, Map as LeafletMap } from "leaflet";
-import "leaflet/dist/leaflet.css";
+import "../leafletSetup";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   MapContainer,

@@ -12,7 +12,8 @@ export default function PlaceMediaPage() {
   const country = searchParams.get("country");
 
   const fetcher = useCallback(
-    (cursor: string | null) => getPlaceMedia(city, country, cursor),
+    (cursor: string | null, signal: AbortSignal) =>
+      getPlaceMedia(city, country, cursor, signal),
     [city, country]
   );
 

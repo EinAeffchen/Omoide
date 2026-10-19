@@ -37,7 +37,6 @@ from app.schemas.person import (
     PersonBulkDeleteResponse,
     PersonDetail,
     PersonRead,
-    PersonReadSimple,
     PersonUpdate,
     ProfileFace,
 )
@@ -127,13 +126,6 @@ def list_persons(
     return CursorPage(next_cursor=next_cursor, items=items)
 
 
-@router.get("/all-simple", response_model=list[PersonReadSimple])
-def get_all_persons_simple(session: Session = Depends(get_session)):
-    """Returns a lightweight list of all persons for filter selections."""
-    people = session.exec(select(Person).order_by(Person.name)).all()
-    return [PersonReadSimple.model_validate(p) for p in people]
-
-
 @router.get("/{person_id}", response_model=PersonDetail)
 def get_person(person_id: int, session: Session = Depends(get_session)):
     person = session.get(Person, person_id)
@@ -209,22 +201,6 @@ def update_person_favorite(
     safe_commit(session)
     session.refresh(person)
     return PersonRead.model_validate(person)
-
-
-@router.post("/{person_id}/profile_face", response_model=Person)
-def set_profile_face(
-    person_id: int,
-    face_id: int | None,
-    session: Session = Depends(get_session),
-):
-    person = session.get(Person, person_id)
-    if not person:
-        raise HTTPException(404, "Person not found")
-    person.profile_face_id = face_id
-    session.add(person)
-    safe_commit(session)
-    session.refresh(person)
-    return person
 
 
 @router.post(

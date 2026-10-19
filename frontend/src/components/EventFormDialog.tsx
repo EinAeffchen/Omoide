@@ -12,6 +12,8 @@ import {
   FormControlLabel,
 } from "@mui/material";
 import { TimelineEvent } from "../types";
+import { LocalizationProvider } from "@mui/x-date-pickers";
+import { AdapterDateFns } from "@mui/x-date-pickers/AdapterDateFns";
 import { MobileDatePicker } from "@mui/x-date-pickers/MobileDatePicker";
 import { TimelineEventCreate } from "../types"; // Assuming this type is defined
 
@@ -88,70 +90,67 @@ export const EventFormDialog: React.FC<EventFormDialogProps> = ({
     : "Add New Timeline Event";
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
-      <form onSubmit={handleSubmit}>
-        <DialogTitle>{dialogTitle}</DialogTitle>
-        <DialogContent>
-          <TextField
-            autoFocus
-            required
-            margin="dense"
-            name="title"
-            label="Event Title"
-            type="text"
-            fullWidth
-            variant="standard"
-            value={eventData.title}
-            onChange={handleChange}
-          />
-          <MobileDatePicker
-            label="Event Date"
-            value={eventData.event_date}
-            onChange={handleDateChange}
-            renderInput={(params) => (
-              <TextField
-                {...params}
-                margin="dense"
-                fullWidth
-                variant="standard"
-              />
-            )}
-          />
-          <TextField
-            margin="dense"
-            name="description"
-            label="Description (Optional)"
-            type="text"
-            fullWidth
-            multiline
-            rows={3}
-            variant="standard"
-            value={eventData.description}
-            onChange={handleChange}
-          />
-          <FormControlLabel
-            control={
-              <Checkbox
-                checked={eventData.recurrence === "yearly"}
-                onChange={handleRecurrenceChange}
-              />
-            }
-            label="This event recurs yearly (e.g., a birthday)"
-          />
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={onClose} disabled={isSubmitting}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="contained" disabled={isSubmitting}>
-            {isSubmitting
-              ? "Saving..."
-              : isEditMode
-              ? "Save Changes"
-              : "Create Event"}
-          </Button>
-        </DialogActions>
-      </form>
-    </Dialog>
+    <LocalizationProvider dateAdapter={AdapterDateFns}>
+      <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
+        <form onSubmit={handleSubmit}>
+          <DialogTitle>{dialogTitle}</DialogTitle>
+          <DialogContent>
+            <TextField
+              autoFocus
+              required
+              margin="dense"
+              name="title"
+              label="Event Title"
+              type="text"
+              fullWidth
+              variant="standard"
+              value={eventData.title}
+              onChange={handleChange}
+            />
+            <MobileDatePicker
+              label="Event Date"
+              value={eventData.event_date}
+              onChange={handleDateChange}
+              slotProps={{
+                textField: { margin: "dense", fullWidth: true, variant: "standard" },
+              }}
+            />
+            <TextField
+              margin="dense"
+              name="description"
+              label="Description (Optional)"
+              type="text"
+              fullWidth
+              multiline
+              rows={3}
+              variant="standard"
+              value={eventData.description}
+              onChange={handleChange}
+            />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={eventData.recurrence === "yearly"}
+                  onChange={handleRecurrenceChange}
+                />
+              }
+              label="This event recurs yearly (e.g., a birthday)"
+            />
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={onClose} disabled={isSubmitting}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="contained" disabled={isSubmitting}>
+              {isSubmitting
+                ? "Saving..."
+                : isEditMode
+                ? "Save Changes"
+                : "Create Event"}
+            </Button>
+          </DialogActions>
+        </form>
+      </Dialog>
+    </LocalizationProvider>
   );
 };

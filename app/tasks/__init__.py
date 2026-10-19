@@ -17,8 +17,6 @@ from .duplicates import run_duplicate_detection
 from .hashes import generate_hashes
 from .maintenance import (
     clean_missing_files,
-    reset_clustering,
-    reset_processing,
 )
 from .media_processing import (
     run_media_processing,
@@ -41,8 +39,6 @@ __all__ = [
     "create_and_run_task",
     "generate_hashes",
     "merge_similar_persons",
-    "reset_clustering",
-    "reset_processing",
     "run_custom_auto_tagging",
     "run_cleanup_and_chain",
     "schedule_custom_auto_tagging",

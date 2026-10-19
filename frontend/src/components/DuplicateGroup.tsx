@@ -136,6 +136,7 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
           <Grid key={media.id} size={{ xs: 6, sm: 4, md: 3, lg: 2 }}>
             <DuplicateMediaCard
               media={media}
+              groupId={group.group_id}
               isSelectedAsMaster={media.id === masterId}
               onSelectMaster={() => setMasterId(media.id)}
             />

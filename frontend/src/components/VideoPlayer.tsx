@@ -1,9 +1,28 @@
 import { useState, useEffect, useRef } from "react";
 import { Box, CircularProgress, Typography } from "@mui/material";
-import ReactPlayer from "react-player";
+// Only local files are played, so skip the streaming-provider players.
+import ReactPlayer from "react-player/file";
 import { Media } from "../types";
 import { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
+
+/** One scene of the WebVTT track: its time range and preview image URL. */
+interface SceneCue {
+  start: number;
+  end: number;
+  url: string;
+}
+
+/**
+ * Audio-detection properties of a media element. `audioTracks`,
+ * `webkitAudioDecodedByteCount` and `mozHasAudio` are non-standard and only
+ * exist in some browsers, so every field is optional and checked at runtime.
+ */
+interface AudioInfoSource {
+  audioTracks?: { length?: unknown };
+  webkitAudioDecodedByteCount?: unknown;
+  mozHasAudio?: unknown;
+}
 
 const VOLUME_STORAGE_KEY = "smol.video.volume";
 const DEFAULT_VOLUME = 1;
@@ -58,7 +77,7 @@ export function VideoWithPreview({
 
   const [hasAudio, setHasAudio] = useState(true); //Used to calculate timeline width offset
 
-  const [cues, setCues] = useState([]);
+  const [cues, setCues] = useState<SceneCue[]>([]);
   const [volume, setVolume] = useState(() => getStoredVolume());
   const [hoverData, setHoverData] = useState({
     visible: false,
@@ -66,8 +85,8 @@ export function VideoWithPreview({
     x: 0,
   });
 
-  const playerWrapperRef = useRef<any>(null);
-  const playerRef = useRef<any>(null);
+  const playerWrapperRef = useRef<HTMLDivElement>(null);
+  const playerRef = useRef<ReactPlayer>(null);
   const hoverRafRef = useRef<number | null>(null);
   const hoverClientXRef = useRef(0);
   const [isReady, setIsReady] = useState(false);
@@ -99,15 +118,15 @@ export function VideoWithPreview({
     };
   }, []);
 
-  const parseVTT = (data) => {
+  const parseVTT = (data: string): SceneCue[] => {
     const pattern =
       /^(\d{2}:\d{2}:\d{2}\.\d{3}) --> (\d{2}:\d{2}:\d{2}\.\d{3})\n(.*?)$/gm;
-    const toSeconds = (t) => {
+    const toSeconds = (t: string) => {
       const a = t.split(":");
       return +a[0] * 3600 + +a[1] * 60 + +a[2];
     };
     let match;
-    const result = [];
+    const result: SceneCue[] = [];
     while ((match = pattern.exec(data)) !== null) {
       result.push({
         start: toSeconds(match[1]),
@@ -118,7 +137,7 @@ export function VideoWithPreview({
     return result;
   };
 
-  const handleMouseMove = (e) => {
+  const handleMouseMove = (e: React.MouseEvent) => {
     // Throttle hover updates to one per animation frame, but always use the
     // latest cursor position — intermediate mousemove events within the same
     // frame must not be dropped, or the preview lags behind the cursor.
@@ -182,7 +201,7 @@ export function VideoWithPreview({
     setHoverData({ ...hoverData, visible: false });
   };
 
-  const detectHasAudio = (el: any): boolean => {
+  const detectHasAudio = (el: AudioInfoSource | null | undefined): boolean => {
     if (!el) return true;
     if (el.audioTracks && typeof el.audioTracks.length === "number") {
       return el.audioTracks.length > 0;

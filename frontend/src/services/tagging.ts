@@ -1,19 +1,15 @@
-import { API } from "../config";
 import { Tag } from "../types";
+import { apiFetch } from "./api";
 
-export const createTag = async (name: string): Promise<Tag> => {
-  const res = await fetch(`${API}/api/tags/`, {
+export const createTag = async (name: string): Promise<Tag> =>
+  apiFetch<Tag>("/api/tags/", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name }),
+    body: { name },
+    errorMessage: "Failed to create tag",
   });
-  if (!res.ok) throw new Error("Failed to create tag");
-  return res.json();
-};
 
-export const assignTag = async (ownerType: "media" | "person", ownerId: number, tagId: number) => {
-  const res = await fetch(`${API}/api/tags/${ownerType}/${ownerId}/${tagId}`, {
+export const assignTag = async (ownerType: "media" | "person", ownerId: number, tagId: number) =>
+  apiFetch<void>(`/api/tags/${ownerType}/${ownerId}/${tagId}`, {
     method: "POST",
+    errorMessage: "Failed to assign tag",
   });
-  if (!res.ok) throw new Error("Failed to assign tag");
-};

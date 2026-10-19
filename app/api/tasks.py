@@ -28,12 +28,6 @@ from app.tasks import (
     run_single_processor,
 )
 from app.tasks import (
-    reset_clustering as reset_clustering_task,
-)
-from app.tasks import (
-    reset_processing as reset_processing_task,
-)
-from app.tasks import (
     state as task_state,
 )
 
@@ -274,16 +268,6 @@ async def start_backfill_face_quality(
     )
 
 
-@router.post("/reset/processing", summary="Resets media processing status")
-def reset_processing(session: Session = Depends(get_session)):
-    return reset_processing_task(session)
-
-
-@router.post("/reset/clustering", summary="Resets person clustering")
-def reset_clustering(session: Session = Depends(get_session)):
-    return reset_clustering_task(session)
-
-
 @router.post("/{task_id}/cancel", summary="Cancel a running task")
 def cancel_task(
     task_id: str,
@@ -302,11 +286,6 @@ def cancel_task(
     session.add(task)
     safe_commit(session)
     return task
-
-
-@router.get("/", response_model=list[ProcessingTask], summary="List all tasks")
-def list_tasks(session: Session = Depends(get_session)):
-    return session.exec(select(ProcessingTask)).all()
 
 
 @router.get(

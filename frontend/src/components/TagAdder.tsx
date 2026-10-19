@@ -129,11 +129,11 @@ export default function TagAdder({
       onChange={handleSelection}
       inputValue={inputValue}
       onInputChange={(_, newInputValue) => setInputValue(newInputValue)}
-      options={availableOptions}
+      options={availableOptions as TagOption[]}
       loading={loading}
       getOptionLabel={(option) => {
         if (typeof option === "string") return option;
-        if (option.inputValue) return option.name; // For "Create..." text
+        if (option.inputValue) return option.name ?? option.inputValue; // "Create ..." entry
         return option.name ?? "";
       }}
       filterOptions={(opts, params) => {

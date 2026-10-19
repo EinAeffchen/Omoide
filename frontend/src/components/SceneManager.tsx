@@ -241,7 +241,7 @@ export function SceneManager({
       {!loading && filteredScenes.length > 0 && (
         <Grid container spacing={2}>
           {filteredScenes.map((scene) => (
-            <Grid item key={scene.id} xs={6} sm={4} md={3}>
+            <Grid key={scene.id} size={{ xs: 6, sm: 4, md: 3 }}>
               <SceneCard
                 scene={scene}
                 onSeek={() => onSeekRequest(scene.start_time)}

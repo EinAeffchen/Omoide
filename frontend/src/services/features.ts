@@ -1,4 +1,3 @@
-import { API } from "../config";
 import {
   Album,
   CameraCount,
@@ -12,201 +11,219 @@ import {
   PlaceCountry,
   Task,
 } from "../types";
-
-const jsonOrThrow = async <T>(res: Response, what: string): Promise<T> => {
-  if (!res.ok) throw new Error(`Failed to ${what} (${res.status})`);
-  return res.json();
-};
+import { apiFetch } from "./api";
 
 // ---------- memories & highlights ----------
 
-export const getMemories = async (): Promise<MemoryGroup[]> =>
-  jsonOrThrow(await fetch(`${API}/api/memories`), "load memories");
+export const getMemories = async (
+  signal?: AbortSignal
+): Promise<MemoryGroup[]> =>
+  apiFetch<MemoryGroup[]>("/api/memories", {
+    errorMessage: "Failed to load memories",
+    signal,
+  });
 
 export const getHighlights = async (
   year: number,
-  limit = 60
+  limit = 60,
+  signal?: AbortSignal
 ): Promise<Media[]> =>
-  jsonOrThrow(
-    await fetch(`${API}/api/memories/highlights?year=${year}&limit=${limit}`),
-    "load highlights"
-  );
+  apiFetch<Media[]>("/api/memories/highlights", {
+    query: { year, limit },
+    errorMessage: "Failed to load highlights",
+    signal,
+  });
 
-export const getHighlightYears = async (): Promise<HighlightYear[]> =>
-  jsonOrThrow(
-    await fetch(`${API}/api/memories/highlights/years`),
-    "load highlight years"
-  );
+export const getHighlightYears = async (
+  signal?: AbortSignal
+): Promise<HighlightYear[]> =>
+  apiFetch<HighlightYear[]>("/api/memories/highlights/years", {
+    errorMessage: "Failed to load highlight years",
+    signal,
+  });
 
 // ---------- statistics ----------
 
-export const getLibraryStats = async (): Promise<LibraryStats> =>
-  jsonOrThrow(await fetch(`${API}/api/stats`), "load statistics");
+export const getLibraryStats = async (
+  signal?: AbortSignal
+): Promise<LibraryStats> =>
+  apiFetch<LibraryStats>("/api/stats", {
+    errorMessage: "Failed to load statistics",
+    signal,
+  });
 
-export const getCameras = async (): Promise<CameraCount[]> =>
-  jsonOrThrow(await fetch(`${API}/api/stats/cameras`), "load cameras");
+export const getCameras = async (
+  signal?: AbortSignal
+): Promise<CameraCount[]> =>
+  apiFetch<CameraCount[]>("/api/stats/cameras", {
+    errorMessage: "Failed to load cameras",
+    signal,
+  });
 
 // ---------- albums ----------
 
-export const getAlbums = async (): Promise<Album[]> =>
-  jsonOrThrow(await fetch(`${API}/api/albums`), "load albums");
+export const getAlbums = async (signal?: AbortSignal): Promise<Album[]> =>
+  apiFetch<Album[]>("/api/albums", {
+    errorMessage: "Failed to load albums",
+    signal,
+  });
 
-export const getAlbum = async (id: number): Promise<Album> =>
-  jsonOrThrow(await fetch(`${API}/api/albums/${id}`), "load album");
+export const getAlbum = async (
+  id: number,
+  signal?: AbortSignal
+): Promise<Album> =>
+  apiFetch<Album>(`/api/albums/${id}`, {
+    errorMessage: "Failed to load album",
+    signal,
+  });
 
 export const createAlbum = async (
   name: string,
   description?: string
 ): Promise<Album> =>
-  jsonOrThrow(
-    await fetch(`${API}/api/albums`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, description }),
-    }),
-    "create album"
-  );
+  apiFetch<Album>("/api/albums", {
+    method: "POST",
+    body: { name, description },
+    errorMessage: "Failed to create album",
+  });
 
 export const updateAlbum = async (
   id: number,
   patch: { name?: string; description?: string; cover_media_id?: number }
 ): Promise<Album> =>
-  jsonOrThrow(
-    await fetch(`${API}/api/albums/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch),
-    }),
-    "update album"
-  );
+  apiFetch<Album>(`/api/albums/${id}`, {
+    method: "PATCH",
+    body: patch,
+    errorMessage: "Failed to update album",
+  });
 
-export const deleteAlbum = async (id: number): Promise<void> => {
-  const res = await fetch(`${API}/api/albums/${id}`, { method: "DELETE" });
-  if (!res.ok) throw new Error(`Failed to delete album (${res.status})`);
-};
+export const deleteAlbum = async (id: number): Promise<void> =>
+  apiFetch<void>(`/api/albums/${id}`, {
+    method: "DELETE",
+    errorMessage: "Failed to delete album",
+  });
 
 export const addMediaToAlbum = async (
   id: number,
   mediaIds: number[]
 ): Promise<Album> =>
-  jsonOrThrow(
-    await fetch(`${API}/api/albums/${id}/media`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ media_ids: mediaIds }),
-    }),
-    "add media to album"
-  );
+  apiFetch<Album>(`/api/albums/${id}/media`, {
+    method: "POST",
+    body: { media_ids: mediaIds },
+    errorMessage: "Failed to add media to album",
+  });
 
 export const removeMediaFromAlbum = async (
   id: number,
   mediaIds: number[]
 ): Promise<Album> =>
-  jsonOrThrow(
-    await fetch(`${API}/api/albums/${id}/media`, {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ media_ids: mediaIds }),
-    }),
-    "remove media from album"
-  );
+  apiFetch<Album>(`/api/albums/${id}/media`, {
+    method: "DELETE",
+    body: { media_ids: mediaIds },
+    errorMessage: "Failed to remove media from album",
+  });
 
 export const getAlbumMedia = async (
   id: number,
-  cursor: string | null
-): Promise<CursorPage<Media>> => {
-  const params = new URLSearchParams();
-  if (cursor) params.append("cursor", cursor);
-  return jsonOrThrow(
-    await fetch(`${API}/api/albums/${id}/media?${params.toString()}`),
-    "load album media"
-  );
-};
+  cursor: string | null,
+  signal?: AbortSignal
+): Promise<CursorPage<Media>> =>
+  apiFetch<CursorPage<Media>>(`/api/albums/${id}/media`, {
+    query: { cursor },
+    errorMessage: "Failed to load album media",
+    signal,
+  });
 
 // ---------- events ----------
 
 export const getEvents = async (
-  cursor: string | null
-): Promise<EventPage> => {
-  const params = new URLSearchParams();
-  if (cursor) params.append("cursor", cursor);
-  return jsonOrThrow(
-    await fetch(`${API}/api/events?${params.toString()}`),
-    "load events"
-  );
-};
+  cursor: string | null,
+  signal?: AbortSignal
+): Promise<EventPage> =>
+  apiFetch<EventPage>("/api/events", {
+    query: { cursor },
+    errorMessage: "Failed to load events",
+    signal,
+  });
 
-export const getEvent = async (id: number): Promise<EventItem> =>
-  jsonOrThrow(await fetch(`${API}/api/events/${id}`), "load event");
+export const getEvent = async (
+  id: number,
+  signal?: AbortSignal
+): Promise<EventItem> =>
+  apiFetch<EventItem>(`/api/events/${id}`, {
+    errorMessage: "Failed to load event",
+    signal,
+  });
 
 export const getEventMedia = async (
   id: number,
-  cursor: string | null
-): Promise<CursorPage<Media>> => {
-  const params = new URLSearchParams();
-  if (cursor) params.append("cursor", cursor);
-  return jsonOrThrow(
-    await fetch(`${API}/api/events/${id}/media?${params.toString()}`),
-    "load event media"
-  );
-};
+  cursor: string | null,
+  signal?: AbortSignal
+): Promise<CursorPage<Media>> =>
+  apiFetch<CursorPage<Media>>(`/api/events/${id}/media`, {
+    query: { cursor },
+    errorMessage: "Failed to load event media",
+    signal,
+  });
 
 export const updateEvent = async (
   id: number,
   title: string
 ): Promise<EventItem> =>
-  jsonOrThrow(
-    await fetch(`${API}/api/events/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title }),
-    }),
-    "rename event"
-  );
+  apiFetch<EventItem>(`/api/events/${id}`, {
+    method: "PATCH",
+    body: { title },
+    errorMessage: "Failed to rename event",
+  });
 
 export const convertEventToAlbum = async (
   id: number,
   name?: string
 ): Promise<Album> =>
-  jsonOrThrow(
-    await fetch(`${API}/api/events/${id}/convert-to-album`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: name ?? null }),
-    }),
-    "convert event to album"
-  );
+  apiFetch<Album>(`/api/events/${id}/convert-to-album`, {
+    method: "POST",
+    body: { name: name ?? null },
+    errorMessage: "Failed to convert event to album",
+  });
 
 // ---------- places ----------
 
-export const getPlaces = async (): Promise<PlaceCountry[]> =>
-  jsonOrThrow(await fetch(`${API}/api/places`), "load places");
+export const getPlaces = async (
+  signal?: AbortSignal
+): Promise<PlaceCountry[]> =>
+  apiFetch<PlaceCountry[]>("/api/places", {
+    errorMessage: "Failed to load places",
+    signal,
+  });
 
 export const getPlaceMedia = async (
   city: string,
   country: string | null,
-  cursor: string | null
+  cursor: string | null,
+  signal?: AbortSignal
 ): Promise<CursorPage<Media>> => {
+  // `city` is a required backend param and must be sent even when empty
+  // (apiFetch's `query` would drop ""), so build this query string by hand.
   const params = new URLSearchParams();
   params.append("city", city);
   if (country) params.append("country", country);
   if (cursor) params.append("cursor", cursor);
-  return jsonOrThrow(
-    await fetch(`${API}/api/places/media?${params.toString()}`),
-    "load place media"
-  );
+  return apiFetch<CursorPage<Media>>(`/api/places/media?${params}`, {
+    errorMessage: "Failed to load place media",
+    signal,
+  });
 };
 
 // ---------- organize tasks ----------
 
 export const startBuildEvents = async (): Promise<Task> =>
-  jsonOrThrow(
-    await fetch(`${API}/api/tasks/build_events`, { method: "POST" }),
-    "start event clustering"
-  );
+  apiFetch<Task>("/api/tasks/build_events", {
+    method: "POST",
+    errorMessage: "Failed to start event clustering",
+  });
 
 export const startGeocodePlaces = async (): Promise<Task> =>
-  jsonOrThrow(
-    await fetch(`${API}/api/tasks/geocode_places`, { method: "POST" }),
-    "start geocoding"
-  );
+  apiFetch<Task>("/api/tasks/geocode_places", {
+    method: "POST",
+    errorMessage: "Failed to start geocoding",
+  });

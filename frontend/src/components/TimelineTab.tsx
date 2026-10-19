@@ -9,9 +9,7 @@ import {
   TimelineSeparator,
 } from "@mui/lab";
 import { Box, Button, CircularProgress, Typography } from "@mui/material";
-import React, { useEffect, useMemo, useState } from "react";
-import { useInView } from "react-intersection-observer";
-import { EventFormDialog } from "../components/EventFormDialog";
+import React, { Suspense, lazy, useMemo, useState } from "react";
 import ConfirmDialog from "./ConfirmDialog";
 import { EventCard } from "./EventCard";
 import { MediaItemGroup } from "./MediaItemGroup";
@@ -23,8 +21,9 @@ import {
   getPersonTimeline,
   updateTimelineEvent,
 } from "../services/timeline";
-import { defaultListState, useListStore } from "../stores/useListStore";
+import { usePagedList } from "../hooks/usePagedList";
 import {
+  TimelineEntry,
   MediaPreview,
   Person,
   TimelineEvent,
@@ -33,6 +32,13 @@ import {
 } from "../types";
 import config, { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
+
+const EventFormDialog = lazy(() =>
+  import("./EventFormDialog").then((m) => ({ default: m.EventFormDialog }))
+);
+
+// The endpoint returns one entry per media item (grouped by day below) and
+// one per event.
 
 interface TimelineTabProps {
   person: Person;
@@ -44,15 +50,14 @@ export const TimelineTab: React.FC<TimelineTabProps> = ({ person, onDetachMedia:
   const canMutate = !config.PRESENTATION_MODE;
   const onDetachMedia = canMutate ? onDetachMediaProp : undefined;
   const [dayToView, setDayToView] = useState<MediaPreview[] | null>(null);
-  const listKey = useMemo(() => `person-${person.id}-timeline`, [person.id]);
-  const { items, hasMore, isLoading } = useListStore(
-    (state) => state.lists[listKey] || defaultListState
-  );
-  const { fetchInitial, loadMore, clearList } = useListStore();
-  const { ref, inView } = useInView({
-    threshold: 0.5,
-    skip: isLoading || !hasMore,
-  });
+  const listKey = `person-${person.id}-timeline`;
+  const { items, hasMore, isLoading, loaderRef, reload } =
+    usePagedList<TimelineEntry>(
+      listKey,
+      (cursor, signal) =>
+        getPersonTimeline(person.id, cursor, signal),
+      { enabled: Boolean(person.id) }
+    );
 
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [eventToEdit, setEventToEdit] = useState<TimelineEvent | null>(null);
@@ -60,18 +65,6 @@ export const TimelineTab: React.FC<TimelineTabProps> = ({ person, onDetachMedia:
   const [isDeleting, setIsDeleting] = useState(false);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  useEffect(() => {
-    if (person.id) {
-      fetchInitial(listKey, () => getPersonTimeline(person.id, null));
-    }
-  }, [person.id, fetchInitial, listKey, clearList]);
-
-  useEffect(() => {
-    if (inView) {
-      loadMore(listKey, (cursor) => getPersonTimeline(person.id, cursor));
-    }
-  }, [inView, person.id, loadMore, listKey]);
 
   const handleOpenCreateDialog = () => {
     setEventToEdit(null);
@@ -96,8 +89,7 @@ export const TimelineTab: React.FC<TimelineTabProps> = ({ person, onDetachMedia:
     setIsDeleting(true);
     try {
       await deleteTimelineEvent(person.id, eventToDelete.id);
-      clearList(listKey);
-      fetchInitial(listKey, () => getPersonTimeline(person.id, null));
+      reload();
       setEventToDelete(null);
     } catch (error) {
       console.error("Failed to delete timeline event:", error);
@@ -110,12 +102,10 @@ export const TimelineTab: React.FC<TimelineTabProps> = ({ person, onDetachMedia:
     try {
       if (eventToEdit) {
         await updateTimelineEvent(person.id, eventToEdit.id, eventData);
-        clearList(listKey);
-        fetchInitial(listKey, () => getPersonTimeline(person.id, null));
+        reload();
       } else {
         await createTimelineEvent(person.id, eventData);
-        clearList(listKey);
-        fetchInitial(listKey, () => getPersonTimeline(person.id, null));
+        reload();
       }
       handleCloseDialog();
     } finally {
@@ -126,8 +116,7 @@ export const TimelineTab: React.FC<TimelineTabProps> = ({ person, onDetachMedia:
   const handleRemoveMedia = async (mediaId: number) => {
     if (!onDetachMedia) return;
     await onDetachMedia(mediaId);
-    clearList(listKey);
-    fetchInitial(listKey, () => getPersonTimeline(person.id, null));
+    reload();
     // Also remove from current day-view if open
     setDayToView((prev) => {
       if (!prev) return null;
@@ -213,13 +202,18 @@ export const TimelineTab: React.FC<TimelineTabProps> = ({ person, onDetachMedia:
           );
         })}
       </Timeline>
-      <EventFormDialog
-        open={isFormOpen}
-        onClose={handleCloseDialog}
-        onSubmit={handleSubmitEvent}
-        isSubmitting={isSubmitting}
-        initialData={eventToEdit}
-      />
+      {/* The date picker library is only fetched once the form is opened. */}
+      {isFormOpen && (
+        <Suspense fallback={null}>
+          <EventFormDialog
+            open={isFormOpen}
+            onClose={handleCloseDialog}
+            onSubmit={handleSubmitEvent}
+            isSubmitting={isSubmitting}
+            initialData={eventToEdit}
+          />
+        </Suspense>
+      )}
       <ConfirmDialog
         open={!!eventToDelete}
         title="Delete event?"
@@ -290,7 +284,7 @@ export const TimelineTab: React.FC<TimelineTabProps> = ({ person, onDetachMedia:
           )}
         </DialogContent>
       </Dialog>
-      {hasMore && <Box ref={ref} sx={{ height: "1px" }} />}
+      {hasMore && <Box ref={loaderRef} sx={{ height: "1px" }} />}
       {isLoading && (
         <Box sx={{ display: "flex", justifyContent: "center", p: 2 }}>
           <CircularProgress />

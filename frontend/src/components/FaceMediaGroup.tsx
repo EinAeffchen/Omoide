@@ -129,7 +129,7 @@ export default function FaceGroupCard({
       )}
 
       {/* Expand button */}
-      <IconButton
+      <IconButton aria-label="Show or hide all faces from this media"
         size="small"
         onClick={(e) => {
           e.stopPropagation();

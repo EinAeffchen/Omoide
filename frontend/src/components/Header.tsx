@@ -124,7 +124,7 @@ export function Header() {
   const [q, setQ] = useState("");
   const [category, setCategory] = useState<SearchCategory>("media");
   // Force a re-render when runtime config updates (e.g., read-only flag changes)
-  const [configTick, setConfigTick] = useState(0);
+  const [, setConfigTick] = useState(0);
   const navigate = useNavigate();
   const fileInputRef = React.useRef<HTMLInputElement>(null); // Ref for the hidden file input
   const location = useLocation();
@@ -222,7 +222,7 @@ export function Header() {
         )}
 
         <Box sx={{ display: { xs: "flex", md: "none" } }}>
-          <IconButton color="primary" onClick={() => setIsSearchVisible(true)}>
+          <IconButton aria-label="Open search" color="primary" onClick={() => setIsSearchVisible(true)}>
             <SearchIcon />
           </IconButton>
         </Box>
@@ -282,7 +282,7 @@ export function Header() {
 
   const renderSearchHeader = () => (
     <>
-      <IconButton color="primary" onClick={() => setIsSearchVisible(false)}>
+      <IconButton aria-label="Close search" color="primary" onClick={() => setIsSearchVisible(false)}>
         <ArrowBackIcon />
       </IconButton>
       {renderSearchInputs()}

@@ -62,7 +62,7 @@ export function MediaContentTabs(props: MediaContentTabsProps) {
   const isVideo = typeof media?.duration === "number";
 
   // Build tabs dynamically so keys stay stable regardless of feature flags
-  const tabs: { key: string; label: string; icon: React.ReactNode }[] = [];
+  const tabs: { key: string; label: string; icon: React.ReactElement }[] = [];
   if (isVideo) tabs.push({ key: "scenes", label: "Scenes", icon: <MovieIcon /> });
   tabs.push({ key: "similar", label: "Similar", icon: <CollectionsIcon /> });
   if (config.ENABLE_PEOPLE && persons)
@@ -146,7 +146,9 @@ export function MediaContentTabs(props: MediaContentTabsProps) {
             <TagsSection
               media={media}
               onTagAdded={onTagAdded}
-              onUpdate={onTagUpdate}
+              onUpdate={(updated) => {
+                if ("path" in updated) onTagUpdate(updated);
+              }}
             />
           </TabPanel>
 

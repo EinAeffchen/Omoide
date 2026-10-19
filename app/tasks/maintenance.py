@@ -3,80 +3,22 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from sqlalchemy import delete, func, text, update
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 import app.database as db
 from app.records import delete_record
 from app.concurrency import heavy_writer
 from app.config import settings
-from app.database import safe_commit
 from app.logger import logger
 from app.models import (
-    Face,
     Media,
-    Person,
-    PersonRelationship,
-    PersonTagLink,
     ProcessingTask,
-    TimelineEvent,
 )
 
 __all__ = [
     "clean_missing_files",
-    "reset_clustering",
-    "reset_processing",
 ]
-
-
-def reset_processing(session: Session) -> str:
-    with heavy_writer(name="reset_processing"):
-        face_rows = list(session.exec(select(Face.id, Face.thumbnail_path)))
-
-        session.exec(update(Media).values(faces_extracted=False))
-        session.exec(update(Media).values(embeddings_created=False))
-        session.exec(update(Face).values(person_id=None))
-
-        session.exec(delete(PersonTagLink))
-        session.exec(delete(TimelineEvent))
-        session.exec(delete(PersonRelationship))
-        session.exec(delete(Person))
-
-        session.exec(text("DELETE FROM face_embeddings"))
-        session.exec(text("DELETE FROM media_embeddings"))
-        session.exec(delete(Face))
-        safe_commit(session)
-
-        for _, thumb_path in face_rows:
-            if not thumb_path:
-                continue
-            try:
-                path_obj = Path(thumb_path)
-            except Exception:
-                continue
-            if path_obj.exists():
-                try:
-                    path_obj.unlink()
-                except Exception:
-                    logger.debug(
-                        "Failed to remove face thumbnail %s", path_obj
-                    )
-    return "OK"
-
-
-def reset_clustering(session: Session) -> str:
-    with heavy_writer(name="reset_clustering"):
-        session.exec(
-            update(Face).values(person_id=None).where(Face.person_id != None)
-        )
-        session.exec(text("UPDATE face_embeddings SET person_id=-1"))
-        session.exec(text("DELETE FROM person_embeddings"))
-        session.exec(delete(TimelineEvent))
-        session.exec(delete(PersonTagLink))
-        session.exec(delete(PersonRelationship))
-        session.exec(delete(Person))
-        safe_commit(session)
-    return "OK"
 
 
 def clean_missing_files(task_id: str) -> None:

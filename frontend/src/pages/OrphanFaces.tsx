@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Container,
   Box,
@@ -18,8 +18,9 @@ import {
   Snackbar,
 } from "@mui/material";
 import { useNavigate } from "react-router-dom";
-import { useInView } from "react-intersection-observer";
-import { useListStore, defaultListState } from "../stores/useListStore";
+import { useListStore } from "../stores/useListStore";
+import { usePagedList } from "../hooks/usePagedList";
+import { isAbortError } from "../services/api";
 import { getOrphanFaces } from "../services/face";
 import {
   assignFace,
@@ -27,7 +28,7 @@ import {
   deleteFace,
 } from "../services/faceActions";
 import { searchPersonsByName } from "../services/personActions";
-import { Person } from "../types";
+import { FaceRead, Person } from "../types";
 import { FaceGrid } from "../components/FaceGrid"; // Import our DUMB grid component
 import ConfirmDialog from "../components/ConfirmDialog";
 import { API } from "../config";
@@ -43,8 +44,19 @@ export default function OrphanFacesPage() {
     hasMore,
     isLoading,
     error,
-  } = useListStore((state) => state.lists[listKey] || defaultListState);
-  const { fetchInitial, loadMore, removeItems, clearList } = useListStore();
+    loaderRef,
+    reload,
+    removeItems,
+  } = usePagedList<FaceRead>(listKey, (cursor, signal) =>
+    getOrphanFaces(cursor, signal)
+  );
+
+  // Faces get assigned elsewhere, so a cached list is refetched on every visit
+  // (usePagedList itself only loads lists that aren't cached).
+  useEffect(() => {
+    const cached = useListStore.getState().lists[listKey];
+    if (cached && !cached.isLoading) reload();
+  }, [listKey, reload]);
 
   // All UI state is now managed directly by the page
   const [isProcessing, setIsProcessing] = useState(false);
@@ -70,32 +82,13 @@ export default function OrphanFacesPage() {
     setSnackbar({ open: true, message, severity });
   };
 
-  // --- Infinite Scroll ---
-  // The 'skip' option is a crucial fix: it disables the observer while data is loading.
-  const { ref: loaderRef, inView } = useInView({
-    threshold: 0.5,
-    skip: isLoading || !hasMore,
-    rootMargin: "0px 0px 200px 0px",
-  });
-
-  useEffect(() => {
-    clearList(listKey);
-    fetchInitial(listKey, () => getOrphanFaces(null));
-  }, [clearList, fetchInitial, listKey]);
-
-  useEffect(() => {
-    if (inView) {
-      loadMore(listKey, (cursor) => getOrphanFaces(cursor));
-    }
-  }, [inView, loadMore, listKey]);
-
   // --- Action Handlers ---
   const handleBulkDelete = async () => {
     const faceIds = [...selectedFaceIds];
     setIsProcessing(true);
     try {
       await deleteFace(faceIds);
-      removeItems(listKey, faceIds);
+      removeItems(faceIds);
       setSelectedFaceIds([]);
       showMessage(
         `Deleted ${faceIds.length} face${faceIds.length === 1 ? "" : "s"}.`
@@ -118,7 +111,7 @@ export default function OrphanFacesPage() {
       if (!newPerson?.id) {
         throw new Error("Failed to get ID for newly created person.");
       }
-      removeItems(listKey, faceIds);
+      removeItems(faceIds);
       setSelectedFaceIds([]);
       setCreateDialogOpen(false);
       navigate(`/person/${newPerson.id}`, { state: { forceRefresh: true } });
@@ -145,20 +138,17 @@ export default function OrphanFacesPage() {
       setPersonOptions([]);
       return;
     }
-    let active = true;
+    const controller = new AbortController();
     const handle = window.setTimeout(() => {
-      searchPersonsByName(trimmed)
-        .then((results) => {
-          if (active) {
-            setPersonOptions(results);
-          }
-        })
+      searchPersonsByName(trimmed, controller.signal)
+        .then(setPersonOptions)
         .catch((err) => {
+          if (isAbortError(err)) return;
           console.error("Failed to search persons:", err);
         });
     }, 300);
     return () => {
-      active = false;
+      controller.abort();
       window.clearTimeout(handle);
     };
   }, [assignDialogOpen, searchTerm]);
@@ -169,7 +159,7 @@ export default function OrphanFacesPage() {
     setIsProcessing(true);
     try {
       await assignFace(faceIds, person.id);
-      removeItems(listKey, faceIds);
+      removeItems(faceIds);
       setSelectedFaceIds([]);
       setAssignDialogOpen(false);
       setSearchTerm("");
@@ -187,10 +177,7 @@ export default function OrphanFacesPage() {
     }
   };
 
-  const handleRetry = () => {
-    clearList(listKey);
-    fetchInitial(listKey, () => getOrphanFaces(null));
-  };
+  const handleRetry = reload;
 
   const handleToggleSelect = useCallback((faceId: number) => {
     setSelectedFaceIds((prev) =>
@@ -310,7 +297,7 @@ export default function OrphanFacesPage() {
           <CircularProgress />
         </Box>
       )}
-      {hasMore && <Box ref={loaderRef} sx={{ height: "50px" }} />}
+      {hasMore && !error && <Box ref={loaderRef} sx={{ height: "50px" }} />}
 
       {/* --- Dialogs --- */}
       {/* Assign Dialog */}

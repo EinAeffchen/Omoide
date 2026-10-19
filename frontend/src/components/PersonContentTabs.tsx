@@ -12,6 +12,7 @@ import {
 } from "@mui/material";
 import Grid from "@mui/material/Grid";
 import {
+  FacesSortBy,
   FaceRead,
   Media,
   Person,
@@ -87,8 +88,8 @@ interface PersonContentTabsProps {
   hasLoadedRelationships: boolean;
   onLoadRelationships: (depth?: number) => Promise<void> | void;
   onDetachMedia?: (mediaId: number) => Promise<void>;
-  facesSortBy: string;
-  onFacesSortChange: (sort: string) => void;
+  facesSortBy: FacesSortBy;
+  onFacesSortChange: (sort: FacesSortBy) => void;
   onFetchFacesForMedia: (mediaId: number) => Promise<FaceRead[]>;
 }
 
@@ -141,7 +142,7 @@ export function PersonContentTabs({
   const [selectedSimilarIds, setSelectedSimilarIds] = useState<number[]>([]);
 
   const createActionHandler = <
-    T extends (...args: any[]) => Promise<unknown> | void,
+    T extends (...args: never[]) => Promise<unknown> | void,
   >(
     action: T,
   ): ((...args: Parameters<T>) => Promise<void>) => {
@@ -306,7 +307,7 @@ export function PersonContentTabs({
             <Select
               size="small"
               value={facesSortBy}
-              onChange={(e) => onFacesSortChange(e.target.value)}
+              onChange={(e) => onFacesSortChange(e.target.value as FacesSortBy)}
               sx={{ minWidth: 160 }}
             >
               <MenuItem value="id_desc">Newest added</MenuItem>

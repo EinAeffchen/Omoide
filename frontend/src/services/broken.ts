@@ -1,32 +1,27 @@
-import { API } from "../config";
 import { BrokenMediaPage, BrokenResolvePayload } from "../types";
+import { apiFetch } from "./api";
 
-export const getBrokenMedia = async (params: {
-  cursor?: string | null;
-  limit?: number;
-}): Promise<BrokenMediaPage> => {
-  const query = new URLSearchParams();
-  if (params.cursor) query.set("cursor", params.cursor);
-  if (params.limit) query.set("limit", String(params.limit));
-  const res = await fetch(`${API}/api/broken?${query}`);
-  if (!res.ok) throw new Error("Failed to load broken media");
-  return res.json();
-};
+export const getBrokenMedia = async (
+  params: {
+    cursor?: string | null;
+    limit?: number;
+  },
+  signal?: AbortSignal
+): Promise<BrokenMediaPage> =>
+  apiFetch<BrokenMediaPage>("/api/broken", {
+    query: { cursor: params.cursor, limit: params.limit || undefined },
+    errorMessage: "Failed to load broken media",
+    signal,
+  });
 
 export const resolveBroken = async (
   payload: BrokenResolvePayload
-): Promise<{ removed: number }> => {
-  const res = await fetch(`${API}/api/broken/resolve`, {
+): Promise<{ removed: number }> =>
+  apiFetch<{ removed: number }>("/api/broken/resolve", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: payload,
+    errorMessage: "Failed to resolve broken media",
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || "Failed to resolve broken media");
-  }
-  return res.json();
-};
 
 export const retryBroken = async (payload: {
   media_ids?: number[];
@@ -36,15 +31,9 @@ export const retryBroken = async (payload: {
   cleared: number;
   still_broken: number;
   remaining?: number;
-}> => {
-  const res = await fetch(`${API}/api/broken/retry`, {
+}> =>
+  apiFetch("/api/broken/retry", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: payload,
+    errorMessage: "Failed to retry broken media",
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || "Failed to retry broken media");
-  }
-  return res.json();
-};

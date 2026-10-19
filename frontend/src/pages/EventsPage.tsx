@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Alert,
   Box,
@@ -14,10 +14,10 @@ import {
 import TheatersIcon from "@mui/icons-material/Theaters";
 import AutorenewIcon from "@mui/icons-material/Autorenew";
 import { Link } from "react-router-dom";
-import { useInView } from "react-intersection-observer";
 import config, { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
 import { EmptyState } from "../components/EmptyState";
+import { usePagedList } from "../hooks/usePagedList";
 import { getEvents, startBuildEvents } from "../services/features";
 import { useTaskCompletionVersion } from "../TaskEventsContext";
 import { EventItem } from "../types";
@@ -35,52 +35,26 @@ const formatRange = (startIso: string, endIso: string) => {
 };
 
 export default function EventsPage() {
-  const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
-  const [items, setItems] = useState<EventItem[]>([]);
-  const [cursor, setCursor] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState(true);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [snackbar, setSnackbar] = useState("");
+  const [startError, setStartError] = useState<string | null>(null);
+  const { items, hasMore, isLoading, error, loaderRef, reload } =
+    usePagedList<EventItem>("events", getEvents, { refetchOnMount: true });
+
+  // A finished "build events" run replaces the event list.
   const refreshKey = useTaskCompletionVersion(["build_events"]);
-
-  const loadPage = async (fromCursor: string | null, replace: boolean) => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const page = await getEvents(fromCursor);
-      setItems((prev) => (replace ? page.items : [...prev, ...page.items]));
-      setCursor(page.next_cursor);
-      setHasMore(page.next_cursor !== null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load events");
-      setHasMore(false);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
+  const seenRefreshKey = useRef(refreshKey);
   useEffect(() => {
-    setItems([]);
-    setCursor(null);
-    setHasMore(true);
-    void loadPage(null, true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshKey]);
-
-  useEffect(() => {
-    if (inView && hasMore && !isLoading && !error) {
-      void loadPage(cursor, false);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inView, hasMore, isLoading, error, cursor]);
+    if (seenRefreshKey.current === refreshKey) return;
+    seenRefreshKey.current = refreshKey;
+    reload();
+  }, [refreshKey, reload]);
 
   const handleRebuild = async () => {
     try {
       await startBuildEvents();
       setSnackbar("Event clustering started — this page refreshes when done.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to start task");
+      setStartError(err instanceof Error ? err.message : "Failed to start task");
     }
   };
 
@@ -119,9 +93,13 @@ export default function EventsPage() {
         )}
       </Box>
 
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
-          {error}
+      {(error || startError) && (
+        <Alert
+          severity="error"
+          sx={{ mb: 2 }}
+          onClose={startError ? () => setStartError(null) : undefined}
+        >
+          {startError ?? error}
         </Alert>
       )}
 

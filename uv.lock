@@ -832,7 +832,7 @@ wheels = [
 
 [[package]]
 name = "omoide"
-version = "0.7.4"
+version = "0.7.5"
 source = { virtual = "." }
 dependencies = [
     { name = "alembic" },

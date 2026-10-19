@@ -1,50 +1,52 @@
-import { API } from "../config";
 import { Task, TaskFailure, TaskType } from "../types";
+import { apiFetch } from "./api";
 
-export const getActiveTasks = async (): Promise<Task[]> => {
-  const res = await fetch(`${API}/api/tasks/active`);
-  if (!res.ok) throw new Error("Failed to fetch active tasks");
-  return res.json();
-};
+export const getActiveTasks = async (signal?: AbortSignal): Promise<Task[]> =>
+  apiFetch<Task[]>("/api/tasks/active", {
+    errorMessage: "Failed to fetch active tasks",
+    signal,
+  });
 
-export const startTask = async (type: TaskType): Promise<void> => {
-  const res = await fetch(`${API}/api/tasks/${type}`, { method: "POST" });
-  if (!res.ok) throw new Error(`Failed to start task ${type}`);
-};
+export const startTask = async (type: TaskType): Promise<void> =>
+  apiFetch<void>(`/api/tasks/${type}`, {
+    method: "POST",
+    errorMessage: `Failed to start task ${type}`,
+  });
 
 export const runProcessor = async (
   processorName: string,
   force = false
-): Promise<Task> => {
-  const url = `${API}/api/tasks/run_processor/${processorName}?force=${force}`;
-  const res = await fetch(url, { method: "POST" });
-  if (!res.ok) throw new Error(`Failed to start processor ${processorName}`);
-  return res.json();
-};
+): Promise<Task> =>
+  apiFetch<Task>(`/api/tasks/run_processor/${processorName}`, {
+    method: "POST",
+    query: { force },
+    errorMessage: `Failed to start processor ${processorName}`,
+  });
 
 export const runProcessorsForMedia = async (
   mediaIds: number[],
   processorNames: string[]
-): Promise<Task> => {
-  const res = await fetch(`${API}/api/tasks/run_processors_for_media`, {
+): Promise<Task> =>
+  apiFetch<Task>("/api/tasks/run_processors_for_media", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
+    body: {
       media_ids: mediaIds,
       processor_names: processorNames,
-    }),
+    },
+    errorMessage: "Failed to run processors for media",
   });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
-};
 
-export const cancelTask = async (id: string): Promise<void> => {
-  const res = await fetch(`${API}/api/tasks/${id}/cancel`, { method: "POST" });
-  if (!res.ok) throw new Error(`Failed to cancel task ${id}`);
-};
+export const cancelTask = async (id: string): Promise<void> =>
+  apiFetch<void>(`/api/tasks/${id}/cancel`, {
+    method: "POST",
+    errorMessage: `Failed to cancel task ${id}`,
+  });
 
-export const getTaskFailures = async (id: string): Promise<TaskFailure[]> => {
-  const res = await fetch(`${API}/api/tasks/${id}/failures`);
-  if (!res.ok) throw new Error(`Failed to fetch failures for task ${id}`);
-  return res.json();
-};
+export const getTaskFailures = async (
+  id: string,
+  signal?: AbortSignal
+): Promise<TaskFailure[]> =>
+  apiFetch<TaskFailure[]>(`/api/tasks/${id}/failures`, {
+    errorMessage: `Failed to fetch failures for task ${id}`,
+    signal,
+  });

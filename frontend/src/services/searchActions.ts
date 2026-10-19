@@ -1,18 +1,14 @@
-import { API } from "../config";
 import { Media } from "../types";
+import { apiFetch } from "./api";
 
 export const searchByImage = async (file: File): Promise<Media[]> => {
   const formData = new FormData();
   formData.append("file", file);
 
-  const response = await fetch(`${API}/api/search/by-image`, {
+  // FormData is sent as-is (multipart, no JSON Content-Type).
+  return apiFetch<Media[]>("/api/search/by-image", {
     method: "POST",
     body: formData,
+    errorMessage: "Image search failed",
   });
-
-  if (!response.ok) {
-    throw new Error("Image search failed");
-  }
-
-  return response.json();
 };

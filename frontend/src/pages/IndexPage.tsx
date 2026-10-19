@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { useInView } from "react-intersection-observer";
 import { useSearchParams } from "react-router-dom";
 import {
   Alert,
@@ -26,7 +25,8 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 import FolderIcon from "@mui/icons-material/Folder";
 import SearchOffIcon from "@mui/icons-material/SearchOff";
 import CameraAltIcon from "@mui/icons-material/CameraAlt";
-import { useListStore, defaultListState } from "../stores/useListStore";
+import { useListStore } from "../stores/useListStore";
+import { usePagedList } from "../hooks/usePagedList";
 import MediaCard from "../components/MediaCard";
 import FolderCard from "../components/FolderCard";
 import { MediaSkeleton } from "../components/MediaSkeleton";
@@ -42,7 +42,7 @@ import { getCameras } from "../services/features";
 import { useTaskCompletionVersion } from "../TaskEventsContext";
 import { useHomeWidgets } from "../hooks/useHomeWidgets";
 import { HomeWidgetId } from "../homeWidgets";
-import { CameraCount, MediaFolderListing } from "../types";
+import { CameraCount, Media, MediaFolderListing } from "../types";
 
 const breakpointColumnsObj = {
   default: 5,
@@ -53,7 +53,6 @@ const breakpointColumnsObj = {
 };
 
 export default function IndexPage() {
-  const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
   const [tags] = useState<string[]>([]);
   const [searchParams, setSearchParams] = useSearchParams();
   const sortOrder: "newest" | "latest" =
@@ -126,13 +125,7 @@ export default function IndexPage() {
     return `media-${viewMode}-${sortOrder}-${folderKey}-${tagString}-${cameraKey}`;
   }, [sortOrder, tags, viewMode, currentFolder, camera]);
 
-  const listState = useListStore((state) => state.lists[mediaListKey]);
-  const items = listState?.items ?? [];
-  const hasMore = listState?.hasMore ?? defaultListState.hasMore;
-  const isLoading = listState?.isLoading ?? defaultListState.isLoading;
-  const listError = listState?.error ?? defaultListState.error;
-  const { fetchInitial, loadMore, clearList, clearListsByPrefix } =
-    useListStore();
+  const clearListsByPrefix = useListStore((state) => state.clearListsByPrefix);
   const refreshKey = useTaskCompletionVersion(["scan", "process_media"]);
   const [seenRefreshKey, setSeenRefreshKey] = useState(refreshKey);
   const hasNewItems = refreshKey !== seenRefreshKey;
@@ -140,44 +133,21 @@ export default function IndexPage() {
   const folderParam = viewMode === "folders" ? currentFolder ?? "" : null;
   const recursive = viewMode !== "folders";
 
-  // fetchInitial skips lists that already have content, so back-navigation
-  // restores the cached list (and scroll position) instantly.
-  useEffect(() => {
-    if (!recentMediaEnabled) return;
-    fetchInitial(mediaListKey, () =>
-      getMediaList(null, sortOrder, tags, folderParam, recursive, camera)
-    );
-  }, [
-    recentMediaEnabled,
-    mediaListKey,
-    fetchInitial,
-    sortOrder,
-    tags,
-    folderParam,
-    recursive,
-    camera,
-  ]);
-
-  useEffect(() => {
-    if (recentMediaEnabled && inView && hasMore && !isLoading && !listError) {
-      loadMore(mediaListKey, (cursor) =>
-        getMediaList(cursor, sortOrder, tags, folderParam, recursive, camera)
-      ).catch(console.error);
-    }
-  }, [
-    recentMediaEnabled,
-    inView,
-    hasMore,
+  // The list store keeps loaded pages, so back-navigation restores the cached
+  // list (and scroll position) instantly.
+  const {
+    items,
     isLoading,
-    listError,
-    loadMore,
+    hasMore,
+    error: listError,
+    loaderRef,
+    reload: refetchList,
+  } = usePagedList<Media>(
     mediaListKey,
-    sortOrder,
-    tags,
-    folderParam,
-    recursive,
-    camera,
-  ]);
+    (cursor, signal) =>
+      getMediaList(cursor, sortOrder, tags, folderParam, recursive, camera, signal),
+    { enabled: recentMediaEnabled }
+  );
 
   const loadFolders = useCallback(async () => {
     if (!recentMediaEnabled || viewMode !== "folders") {
@@ -201,43 +171,14 @@ export default function IndexPage() {
     void loadFolders();
   }, [loadFolders]);
 
-  const refetchList = useCallback(() => {
-    clearList(mediaListKey);
-    fetchInitial(mediaListKey, () =>
-      getMediaList(null, sortOrder, tags, folderParam, recursive, camera)
-    );
-  }, [
-    clearList,
-    fetchInitial,
-    mediaListKey,
-    sortOrder,
-    tags,
-    folderParam,
-    recursive,
-    camera,
-  ]);
-
   const handleRefresh = useCallback(() => {
     setSeenRefreshKey(refreshKey);
     // Clear every cached media list (both sort orders, folder views), not
     // just the visible one, so switching sort later doesn't show stale data.
     clearListsByPrefix("media-");
-    fetchInitial(mediaListKey, () =>
-      getMediaList(null, sortOrder, tags, folderParam, recursive, camera)
-    );
+    refetchList();
     void loadFolders();
-  }, [
-    refreshKey,
-    clearListsByPrefix,
-    fetchInitial,
-    mediaListKey,
-    sortOrder,
-    tags,
-    folderParam,
-    recursive,
-    camera,
-    loadFolders,
-  ]);
+  }, [refreshKey, clearListsByPrefix, refetchList, loadFolders]);
 
   const handleSortMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
     setSortMenuAnchorEl(event.currentTarget);

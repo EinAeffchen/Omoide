@@ -29,3 +29,36 @@ export function useLocalStoragePreference<T extends string>(
 
   return [value, setValue];
 }
+
+/**
+ * Per-browser numeric view preference (slider positions, page sizes),
+ * clamped to [min, max]. Falls back to `defaultValue` when nothing valid is
+ * stored.
+ */
+export function useLocalStorageNumber(
+  key: string,
+  defaultValue: number,
+  { min = -Infinity, max = Infinity }: { min?: number; max?: number } = {}
+): [number, (value: number) => void] {
+  const [value, setValue] = useState<number>(() => {
+    try {
+      const stored = Number(localStorage.getItem(key));
+      const raw = localStorage.getItem(key);
+      return raw !== null && Number.isFinite(stored)
+        ? Math.min(max, Math.max(min, stored))
+        : defaultValue;
+    } catch {
+      return defaultValue;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(key, String(value));
+    } catch {
+      // Storage unavailable; keep the in-memory value.
+    }
+  }, [key, value]);
+
+  return [value, setValue];
+}

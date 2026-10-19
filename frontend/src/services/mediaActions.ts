@@ -1,57 +1,42 @@
-import { API } from "../config";
 import { Media, Task } from "../types";
+import { apiFetch } from "./api";
 
-export const convertMedia = async (mediaId: number): Promise<Task> => {
-  const res = await fetch(`${API}/api/media/${mediaId}/converter`, {
+export const convertMedia = async (mediaId: number): Promise<Task> =>
+  apiFetch<Task>(`/api/media/${mediaId}/converter`, {
     method: "POST",
+    errorMessage: "Failed to start conversion",
   });
-  if (!res.ok) throw new Error("Failed to start conversion");
-  return res.json();
-};
 
-export const deleteMediaRecord = async (mediaId: number) => {
-  const res = await fetch(`${API}/api/media/${mediaId}`, {
+export const deleteMediaRecord = async (mediaId: number) =>
+  apiFetch<void>(`/api/media/${mediaId}`, {
     method: "DELETE",
+    errorMessage: "Failed to delete media record",
   });
-  if (!res.ok) throw new Error("Failed to delete media record");
-};
 
-export const deleteMediaFile = async (mediaId: number) => {
-  const res = await fetch(`${API}/api/media/${mediaId}/file`, {
+export const deleteMediaFile = async (mediaId: number) =>
+  apiFetch<void>(`/api/media/${mediaId}/file`, {
     method: "DELETE",
+    errorMessage: "Failed to delete media file",
   });
-  if (!res.ok) throw new Error("Failed to delete media file");
-};
 
-export const openMediaFolder = async (mediaId: number): Promise<void> => {
-  const res = await fetch(`${API}/api/media/${mediaId}/open-folder`, {
+export const openMediaFolder = async (mediaId: number): Promise<void> =>
+  apiFetch<void>(`/api/media/${mediaId}/open-folder`, {
     method: "POST",
+    errorMessage: "Failed to open folder",
   });
-  if (!res.ok) {
-    const msg = await res.text().catch(() => "Failed to open folder");
-    throw new Error(msg || "Failed to open folder");
-  }
-};
 
-export const openMediaFile = async (mediaId: number): Promise<void> => {
-  const res = await fetch(`${API}/api/media/${mediaId}/open-file`, {
+export const openMediaFile = async (mediaId: number): Promise<void> =>
+  apiFetch<void>(`/api/media/${mediaId}/open-file`, {
     method: "POST",
+    errorMessage: "Failed to open file",
   });
-  if (!res.ok) {
-    const msg = await res.text().catch(() => "Failed to open file");
-    throw new Error(msg || "Failed to open file");
-  }
-};
 
 export const setMediaFavorite = async (
   mediaId: number,
   isFavorite: boolean
-): Promise<Media> => {
-  const res = await fetch(`${API}/api/media/${mediaId}/favorite`, {
+): Promise<Media> =>
+  apiFetch<Media>(`/api/media/${mediaId}/favorite`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ is_favorite: isFavorite }),
+    body: { is_favorite: isFavorite },
+    errorMessage: "Failed to update favorite",
   });
-  if (!res.ok) throw new Error("Failed to update favorite");
-  return res.json();
-};
