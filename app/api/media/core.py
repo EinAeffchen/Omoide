@@ -11,6 +11,7 @@ from sqlalchemy.orm import aliased, selectinload
 from sqlmodel import Session, select
 
 from app.config import settings
+from app.conversion import existing_converted_copy
 from app.database import get_session, safe_commit
 from app.media_files import update_exif_gps
 from app.models import (
@@ -99,7 +100,12 @@ def get_media(media_id: int, session: Session = Depends(get_session)):
             Face.media_id == media_id, Face.person_id.is_(None)
         ),
     ).all()
-    return MediaDetail(media=media, persons=persons, orphans=orphans)
+    return MediaDetail(
+        media=media,
+        persons=persons,
+        orphans=orphans,
+        converted_available=existing_converted_copy(media.id) is not None,
+    )
 
 
 @router.delete(
@@ -180,10 +186,12 @@ def update_geolocation(
     ).first()
     if not media:
         raise HTTPException(404, "Media not found")
-    try:
-        settings.general.ensure_media_path_writable(Path(media.path))
-    except PermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
+    write_to_file = settings.general.write_location_to_files
+    if write_to_file:
+        try:
+            settings.general.ensure_media_path_writable(Path(media.path))
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
     exif = media.exif
     if exif is None:
         exif = ExifData(media_id=media.id)
@@ -191,7 +199,25 @@ def update_geolocation(
         session.add(exif)
     exif.lat = data.latitude
     exif.lon = data.longitude
-    update_exif_gps(media.path, data.longitude, data.latitude)
+    exif.location_set_manually = True
+    # The place name belonged to the old coordinates; geocoding refills it.
+    exif.city = None
+    exif.country = None
+    try:
+        if write_to_file:
+            update_exif_gps(media.path, data.longitude, data.latitude)
+    except PermissionError as exc:
+        # The media directory is writable in the settings, but the OS refuses
+        # the write (file permissions, owner, or a read-only mount/attribute).
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Cannot write location data to {media.path}: "
+                f"{exc.strerror or exc}. The file or its folder is not "
+                "writable for Omoide (check the file's permissions and "
+                "that the volume is mounted read-write)."
+            ),
+        ) from exc
     session.add(media)
     session.commit()
     session.refresh(media)

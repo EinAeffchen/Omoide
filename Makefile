@@ -7,7 +7,7 @@ VERSION := $(shell type $(subst /,\,$(VERSION_FILE)))
 DOCKER_TARGETS := docker-start docker-down push
 
 .PHONY: up build dev setup docker-start docker-down backup build-image \
-	build-release push alembic-generate alembic-upgrade alembic-downgrade
+	release push alembic-generate alembic-upgrade alembic-downgrade
 
 ifneq (,$(filter $(DOCKER_TARGETS),$(MAKECMDGOALS)))
 	ifndef ENV_FILE
@@ -64,11 +64,18 @@ build-image:
 		--push \
 		.
 
-build-release: build-image
-	git tag v${VERSION} -m "Release v${VERSION}"
+# Set the version, roll CHANGELOG.md, commit, tag, then build and publish.
+# V: patch | minor | major | an exact version like 0.8.0. Without V, the
+# version in app/VERSION is released if it is not tagged yet, else the next
+# patch version.
+release:
+	uv run python scripts/release.py $(V)
+	$(MAKE) push
 
-push: build-release
-	git push origin v${VERSION}
+# Publish an already tagged release (e.g. to retry after a failed image build).
+# Pushing the tag lets CI build the desktop apps and the GitHub release.
+push: build-image
+	git push --atomic origin HEAD v${VERSION}
 
 alembic-generate:
 	echo ${DATA_DIR}

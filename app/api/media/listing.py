@@ -1,4 +1,4 @@
-"""Paged media lists (all, images, videos, favorites, missing GPS) and map locations."""
+"""Paged media lists (all, images, videos, favorites) and map locations."""
 
 from typing import Annotated
 
@@ -20,22 +20,6 @@ def _media_sort_keys(sort: str) -> list[SortKey]:
     """ "newest" orders by capture time, "latest" by when it was added."""
     column = Media.created_at if sort == "newest" else Media.inserted_at
     return [(column, False), (Media.id, False)]
-
-
-@router.get("/missing-geo", response_model=CursorPage)
-def get_missing_geo(
-    session: Session = Depends(get_session),
-    cursor: str | None = Query(
-        None, description="Opaque cursor from the previous page's `next_cursor`"
-    ),
-    limit: int = Query(100, ge=1, le=200),
-):
-    stmt = select(Media).join(ExifData).where(ExifData.lat.is_(None))
-    results, next_cursor = paginate(
-        session, stmt, _media_sort_keys("latest"), cursor=cursor, limit=limit
-    )
-
-    return CursorPage(items=results, next_cursor=next_cursor)
 
 
 @router.get("/", response_model=CursorPage)

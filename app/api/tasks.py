@@ -30,6 +30,7 @@ from app.tasks import (
 from app.tasks import (
     state as task_state,
 )
+from app.tasks.conversion import run_convert_unplayable_videos
 
 router = APIRouter()
 
@@ -231,6 +232,28 @@ async def start_processors_for_media(
         callable_task=lambda task_id: run_processors_for_media(
             task_id, body.processor_names, body.media_ids
         ),
+    )
+
+
+@router.post(
+    "/convert_videos",
+    response_model=ProcessingTask,
+    summary="Convert every video the browser cannot play (configured mode)",
+)
+def start_convert_videos(
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+):
+    if settings.video.auto_convert == "off":
+        raise HTTPException(
+            status_code=400,
+            detail="Choose a video conversion mode in the settings first.",
+        )
+    return create_and_run_task(
+        session=session,
+        background_tasks=background_tasks,
+        task_type="convert_videos",
+        callable_task=run_convert_unplayable_videos,
     )
 
 

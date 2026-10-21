@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from "react";
-import { Box, CircularProgress, Typography } from "@mui/material";
-// Only local files are played, so skip the streaming-provider players.
-import ReactPlayer from "react-player/file";
+import { Box, Button, CircularProgress, Typography } from "@mui/material";
+import ReactPlayer from "../localFilePlayer";
+import type FilePlayerInstance from "react-player/file";
 import { Media } from "../types";
-import { API } from "../config";
+import appConfig, { API } from "../config";
+import { StreamingVideo } from "./StreamingVideo";
 import { encodeFilePath } from "../urlUtils";
 
 /** One scene of the WebVTT track: its time range and preview image URL. */
@@ -55,6 +56,8 @@ interface VideoWithPreviewProps {
   autoplay?: boolean;
   seekRequest?: { time: number; seq: number } | null;
   onProgress?: (playedSeconds: number) => void;
+  /** A browser-playable copy was kept when converting; play that instead. */
+  convertedAvailable?: boolean;
 }
 
 export function VideoWithPreview({
@@ -63,12 +66,24 @@ export function VideoWithPreview({
   autoplay = false,
   seekRequest,
   onProgress,
+  convertedAvailable = false,
 }: VideoWithPreviewProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [playbackError, setPlaybackError] = useState(false);
-  const mediaUrl = media
-    ? `${API}/originals/${encodeFilePath(media.path)}`
-    : `${API}/static/brand/404.png`;
+  // Converting on the fly because the browser cannot play the file itself.
+  const [streaming, setStreaming] = useState(false);
+  const lastPositionRef = useRef(initialTime);
+  const mediaUrl = !media
+    ? `${API}/static/brand/404.png`
+    : convertedAvailable
+      ? `${API}/api/media/${media.id}/converted`
+      : `${API}/originals/${encodeFilePath(media.path)}`;
+
+  const handleUnplayable = () => {
+    setIsLoading(false);
+    if (appConfig.VIDEO_CONVERT_ON_THE_FLY) setStreaming(true);
+    else setPlaybackError(true);
+  };
 
   const scenesUrl = `${API}/api/media/${media.id}/scenes.vtt`;
   const thumbnailUrl = media.thumbnail_path
@@ -86,7 +101,7 @@ export function VideoWithPreview({
   });
 
   const playerWrapperRef = useRef<HTMLDivElement>(null);
-  const playerRef = useRef<ReactPlayer>(null);
+  const playerRef = useRef<FilePlayerInstance>(null);
   const hoverRafRef = useRef<number | null>(null);
   const hoverClientXRef = useRef(0);
   const [isReady, setIsReady] = useState(false);
@@ -220,6 +235,16 @@ export function VideoWithPreview({
     const internalPlayer = playerRef.current?.getInternalPlayer();
     setHasAudio(detectHasAudio(internalPlayer));
     setIsReady(true);
+    // An undecodable video track (e.g. HEVC) still loads: audio plays over a
+    // black picture and the decoded width stays 0.
+    if (
+      internalPlayer instanceof HTMLVideoElement &&
+      internalPlayer.readyState >= HTMLMediaElement.HAVE_METADATA &&
+      internalPlayer.videoWidth === 0
+    ) {
+      internalPlayer.pause();
+      handleUnplayable();
+    }
   };
 
   const handleVolumeChange = (nextVolume: number) => {
@@ -274,6 +299,19 @@ export function VideoWithPreview({
     return <Typography color="text.secondary">No video available</Typography>;
   }
 
+  if (streaming) {
+    return (
+      <StreamingVideo
+        media={media}
+        startAt={lastPositionRef.current}
+        seekRequest={seekRequest}
+        initialVolume={volume}
+        onVolumeChange={handleVolumeChange}
+        onProgress={onProgress}
+      />
+    );
+  }
+
   return (
     <Box
       ref={playerWrapperRef}
@@ -322,8 +360,19 @@ export function VideoWithPreview({
           <Typography variant="body1" align="center">
             This format cannot be played in the browser.
           </Typography>
+          <Button
+            variant="contained"
+            onClick={() => {
+              setPlaybackError(false);
+              setStreaming(true);
+            }}
+          >
+            Play converted version
+          </Button>
           <Typography variant="body2" align="center" color="inherit">
-            Use the Open file button in the toolbar to play it in your default
+            Omoide converts it while it plays; the file is not changed. To do
+            this automatically, enable it under Settings → Video. You can also
+            use the Open file button in the toolbar to play it in your default
             application.
           </Typography>
         </Box>
@@ -340,8 +389,11 @@ export function VideoWithPreview({
         style={{ position: "absolute", top: 0, left: 0 }} // Disable pointer events on the player itself
         light={autoplay ? false : thumbnailUrl}
         onReady={handleReady}
-        onProgress={({ playedSeconds }) => onProgress?.(playedSeconds)}
-        onError={() => { setIsLoading(false); setPlaybackError(true); }}
+        onProgress={({ playedSeconds }) => {
+          lastPositionRef.current = playedSeconds;
+          onProgress?.(playedSeconds);
+        }}
+        onError={handleUnplayable}
         // The config track is not needed for the manual implementation
       />
 

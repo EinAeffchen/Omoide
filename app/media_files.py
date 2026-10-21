@@ -314,6 +314,10 @@ def update_exif_gps(path: str, lon: float, lat: float):
     try:
         # Write the EXIF block in place without re-encoding the pixel data.
         piexif.insert(exif_bytes, str(path))
+    except PermissionError:
+        # Not a format problem: re-saving would fail the same way and hide
+        # the real reason, so let the caller report it.
+        raise
     except Exception:
         # Non-JPEG formats: re-save with the updated EXIF attached to the
         # original (un-transposed) image so the Orientation tag stays valid.

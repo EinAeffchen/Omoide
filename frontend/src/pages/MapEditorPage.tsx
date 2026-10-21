@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
+import { Link as RouterLink, useSearchParams } from "react-router-dom";
 import {
   MapContainer,
   TileLayer,
@@ -19,14 +20,27 @@ import {
   Snackbar,
   Alert,
   CircularProgress,
+  FormControl,
+  InputLabel,
+  Link,
+  MenuItem,
+  Select,
+  Tooltip,
 } from "@mui/material";
-import { MediaPreview } from "../types";
 import {
+  FolderWriteStatus,
+  MissingGeoFolder,
+  MissingGeoMedia,
+  MissingGeoSort,
+} from "../types";
+import {
+  getMissingGeoFolders,
   getMissingGeoMedia,
   updateMediaGeolocation,
 } from "../services/mapEditor";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import CancelIcon from "@mui/icons-material/Cancel";
+import LockIcon from "@mui/icons-material/Lock";
 import L from "leaflet";
 import { usePagedList } from "../hooks/usePagedList";
 import { API } from "../config";
@@ -36,7 +50,7 @@ function MapClickHandler({
   selected,
   onMapClick,
 }: {
-  selected: MediaPreview | null;
+  selected: MissingGeoMedia | null;
   onMapClick: (latlng: L.LatLng) => void;
 }) {
   useMapEvents({
@@ -58,6 +72,44 @@ interface NominatimResult {
   boundingbox?: string[];
 }
 
+const SORT_LABELS: Record<MissingGeoSort, string> = {
+  latest: "Recently added",
+  newest: "Taken, newest first",
+  oldest: "Taken, oldest first",
+  path: "Folder & file name",
+};
+
+const isSort = (value: string | null): value is MissingGeoSort =>
+  value !== null && value in SORT_LABELS;
+
+/** Whether `mediaPath` lies in `folder` (a forward-slash folder path). */
+const isInFolder = (mediaPath: string, folder: string) =>
+  mediaPath
+    .replace(/\\/g, "/")
+    .toLowerCase()
+    .startsWith(`${folder.replace(/\/$/, "").toLowerCase()}/`);
+
+function WriteStatusIcon({
+  status,
+  reason,
+}: {
+  status: FolderWriteStatus | null;
+  reason: string | null;
+}) {
+  if (status !== "blocked" && status !== "mixed") return null;
+  return (
+    <Tooltip title={reason ?? ""}>
+      <LockIcon
+        fontSize="small"
+        color={status === "blocked" ? "error" : "warning"}
+        aria-label={
+          status === "blocked" ? "Write-protected" : "Partly write-protected"
+        }
+      />
+    </Tooltip>
+  );
+}
+
 function FitBounds({ bounds }: { bounds: L.LatLngBoundsExpression | null }) {
   const map = useMap();
   useEffect(() => {
@@ -69,8 +121,36 @@ function FitBounds({ bounds }: { bounds: L.LatLngBoundsExpression | null }) {
 }
 
 export default function MapEditorPage() {
+  // Filter State (kept in the URL so it survives navigating away and back)
+  const [searchParams, setSearchParams] = useSearchParams();
+  const folder = searchParams.get("folder");
+  const sortParam = searchParams.get("sort");
+  const sort: MissingGeoSort = isSort(sortParam) ? sortParam : "latest";
+
+  const [folders, setFolders] = useState<MissingGeoFolder[]>([]);
+  const [foldersLoading, setFoldersLoading] = useState(true);
+  useEffect(() => {
+    const controller = new AbortController();
+    getMissingGeoFolders(controller.signal)
+      .then((data) => setFolders(data.folders))
+      .catch((err) => {
+        if (!controller.signal.aborted) console.error(err);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setFoldersLoading(false);
+      });
+    return () => controller.abort();
+  }, []);
+  const selectedFolder = useMemo(
+    () => folders.find((f) => f.path === folder) ?? null,
+    [folders, folder]
+  );
+  const blockedFolderCount = folders.filter(
+    (f) => f.write_status === "blocked"
+  ).length;
+
   // Core State
-  const listKey = "media-missing-geolocation";
+  const listKey = `media-missing-geolocation:${sort}:${folder ?? ""}`;
 
   const {
     items: orphans,
@@ -79,11 +159,13 @@ export default function MapEditorPage() {
     error,
     loaderRef,
     removeItems,
-  } = usePagedList<MediaPreview>(listKey, (cursor, signal) =>
-    getMissingGeoMedia(cursor, signal)
+  } = usePagedList<MissingGeoMedia>(listKey, (cursor, signal) =>
+    getMissingGeoMedia(cursor, { folder, sort }, signal)
   );
 
-  const [selectedMedia, setSelectedMedia] = useState<MediaPreview | null>(null);
+  const [selectedMedia, setSelectedMedia] = useState<MissingGeoMedia | null>(
+    null
+  );
   const [newPosition, setNewPosition] = useState<L.LatLng | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -126,7 +208,21 @@ export default function MapEditorPage() {
     return () => clearTimeout(handler);
   }, [searchInput]);
 
-  const handleSelectMedia = (media: MediaPreview) => {
+  const updateFilter = (key: "folder" | "sort", value: string | null) => {
+    setSearchParams(
+      (params) => {
+        const next = new URLSearchParams(params);
+        if (value) next.set(key, value);
+        else next.delete(key);
+        return next;
+      },
+      { replace: true }
+    );
+    setSelectedMedia(null);
+    setNewPosition(null);
+  };
+
+  const handleSelectMedia = (media: MissingGeoMedia) => {
     setSelectedMedia(media);
     setNewPosition(null);
   };
@@ -147,6 +243,16 @@ export default function MapEditorPage() {
 
       // The media now has a location: drop it from the cached list
       removeItems([selectedMedia.id]);
+      const savedPath = selectedMedia.path;
+      setFolders((current) =>
+        current
+          .map((f) =>
+            isInFolder(savedPath, f.path)
+              ? { ...f, media_count: f.media_count - 1 }
+              : f
+          )
+          .filter((f) => f.media_count > 0)
+      );
 
       setSnackbar({
         open: true,
@@ -155,10 +261,11 @@ export default function MapEditorPage() {
       });
       setSelectedMedia(null);
       setNewPosition(null);
-    } catch {
+    } catch (err) {
       setSnackbar({
         open: true,
-        message: "Failed to save location",
+        // The server explains refusals (e.g. a file Omoide may not write to).
+        message: err instanceof Error ? err.message : "Failed to save location",
         severity: "error",
       });
     } finally {
@@ -250,6 +357,92 @@ export default function MapEditorPage() {
             />
           )}
         />
+        <Autocomplete
+          sx={{ mb: 1.5 }}
+          size="small"
+          options={folders}
+          value={selectedFolder}
+          loading={foldersLoading}
+          onChange={(_, value) => updateFilter("folder", value?.path ?? null)}
+          getOptionLabel={(f) => f.path}
+          isOptionEqualToValue={(a, b) => a.path === b.path}
+          noOptionsText="No un-located media left"
+          renderOption={({ key, ...props }, f) => (
+            <Box
+              component="li"
+              key={key}
+              {...props}
+              sx={{ gap: 1, pl: `${1 + f.depth * 1.5}rem !important` }}
+            >
+              <Typography
+                variant="body2"
+                noWrap
+                title={f.path}
+                sx={{ flexGrow: 1, minWidth: 0 }}
+              >
+                {f.name}
+              </Typography>
+              <WriteStatusIcon
+                status={f.write_status}
+                reason={f.write_block_reason}
+              />
+              <Typography variant="caption" color="text.secondary">
+                {f.media_count}
+              </Typography>
+            </Box>
+          )}
+          renderInput={(params) => (
+            <TextField
+              {...params}
+              label="Folder"
+              placeholder="All folders"
+              slotProps={{ inputLabel: { shrink: true } }}
+            />
+          )}
+        />
+        <FormControl size="small" fullWidth sx={{ mb: 1 }}>
+          <InputLabel id="missing-geo-sort-label">Order</InputLabel>
+          <Select
+            labelId="missing-geo-sort-label"
+            label="Order"
+            value={sort}
+            onChange={(e) => updateFilter("sort", e.target.value)}
+          >
+            {(Object.keys(SORT_LABELS) as MissingGeoSort[]).map((key) => (
+              <MenuItem key={key} value={key}>
+                {SORT_LABELS[key]}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+        {selectedFolder?.write_status === "blocked" ? (
+          <Alert severity="warning" sx={{ mb: 1 }}>
+            {selectedFolder.write_block_reason} Locations can't be written
+            here. Turn off "Write Locations into Files" in{" "}
+            <Link component={RouterLink} to="/configuration">
+              Configuration
+            </Link>{" "}
+            to store them only in Omoide.
+          </Alert>
+        ) : (
+          blockedFolderCount > 0 &&
+          !selectedFolder && (
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ mb: 1, display: "flex", alignItems: "center", gap: 0.5 }}
+            >
+              <LockIcon sx={{ fontSize: 14 }} color="error" />
+              {blockedFolderCount} write-protected folder
+              {blockedFolderCount === 1 ? "" : "s"}, marked in the folder list
+            </Typography>
+          )
+        )}
+        {selectedMedia?.write_block_reason && (
+          <Alert severity="error" sx={{ mb: 1 }}>
+            {selectedMedia.write_block_reason}
+          </Alert>
+        )}
         <Box sx={{ overflowY: "auto", flexGrow: 1 }}>
           <Box
             sx={{
@@ -264,15 +457,17 @@ export default function MapEditorPage() {
                 ? `${API}/thumbnails/${encodeFilePath(m.thumbnail_path)}`
                 : `${API}/thumbnails/${m.id}.jpg`;
 
-              return (
+              const tile = (
                 <Box
-                  key={m.id}
                   component="img"
                   // Use the correctly determined URL
                   src={thumbUrl}
                   alt={`Un-located media ${m.id}`}
+                  title={m.write_block_reason ? undefined : m.path}
                   onClick={() => handleSelectMedia(m)}
                   sx={{
+                    display: "block",
+                    opacity: m.write_block_reason ? 0.5 : 1,
                     width: "100%",
                     height: "auto",
                     aspectRatio: "1 / 1",
@@ -289,6 +484,30 @@ export default function MapEditorPage() {
                     },
                   }}
                 />
+              );
+
+              if (!m.write_block_reason) {
+                return <Box key={m.id}>{tile}</Box>;
+              }
+              return (
+                <Tooltip key={m.id} title={m.write_block_reason}>
+                  <Box sx={{ position: "relative" }}>
+                    {tile}
+                    <LockIcon
+                      fontSize="small"
+                      color="error"
+                      sx={{
+                        position: "absolute",
+                        top: 6,
+                        right: 6,
+                        pointerEvents: "none",
+                        bgcolor: "background.paper",
+                        borderRadius: "50%",
+                        p: 0.25,
+                      }}
+                    />
+                  </Box>
+                </Tooltip>
               );
             })}
           </Box>
@@ -332,7 +551,9 @@ export default function MapEditorPage() {
               <Popup>
                 <Box sx={{ textAlign: "center" }}>
                   <Typography variant="body2" gutterBottom>
-                    Set location for this photo?
+                    {selectedMedia.write_block_reason
+                      ? "This file is write-protected."
+                      : "Set location for this photo?"}
                   </Typography>
                   <Box
                     component="img"
@@ -362,7 +583,7 @@ export default function MapEditorPage() {
                       size="small"
                       onClick={saveGeo}
                       color="primary"
-                      disabled={saving}
+                      disabled={saving || !!selectedMedia.write_block_reason}
                       title="Confirm"
                     >
                       {saving ? (
@@ -381,7 +602,7 @@ export default function MapEditorPage() {
 
       <Snackbar
         open={snackbar.open}
-        autoHideDuration={4000}
+        autoHideDuration={snackbar.severity === "error" ? 10000 : 4000}
         onClose={() => setSnackbar({ ...snackbar, open: false })}
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       >

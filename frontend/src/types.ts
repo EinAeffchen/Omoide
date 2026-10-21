@@ -1,3 +1,6 @@
+/** How unplayable videos are converted ("off" = not automatically). */
+export type VideoConversionMode = "off" | "keep_original" | "replace_original";
+
 /** Sort orders offered for a person's detected faces. */
 export type FacesSortBy = "id_desc" | "date_desc" | "date_asc";
 
@@ -136,6 +139,8 @@ export interface MediaDetail {
   media: Media;
   persons: Person[];
   orphans: Face[];
+  /** A browser-playable copy exists at /api/media/{id}/converted. */
+  converted_available?: boolean;
 }
 
 export type TaskType =
@@ -153,7 +158,9 @@ export type TaskType =
   | "backfill_face_quality"
   | "build_events"
   | "geocode_places"
-  | "export_person_media";
+  | "export_person_media"
+  | "convert_media"
+  | "convert_videos";
 export type TaskStatus =
   | "pending"
   | "running"
@@ -343,6 +350,33 @@ export interface CursorPage<T> {
   next_cursor: string | null;
 }
 
+export interface MissingGeoMedia extends MediaPreview {
+  /** Why a location cannot be written into the file; null when it can. */
+  write_block_reason: string | null;
+}
+
+export type MissingGeoSort = "latest" | "newest" | "oldest" | "path";
+
+export type FolderWriteStatus = "writable" | "blocked" | "mixed";
+
+export interface MissingGeoFolder {
+  /** Forward-slash path, passed back as the `folder` filter. */
+  path: string;
+  name: string;
+  /** 0 for a configured media directory. */
+  depth: number;
+  /** Un-located media in this folder and its subfolders. */
+  media_count: number;
+  /** null when locations are only stored in the database. */
+  write_status: FolderWriteStatus | null;
+  write_block_reason: string | null;
+}
+
+export interface MissingGeoFolders {
+  folders: MissingGeoFolder[];
+  write_to_files: boolean;
+}
+
 export interface MissingMediaItem {
   id: number;
   path: string;
@@ -496,6 +530,7 @@ export interface AppConfig {
     presentation_mode: boolean;
     enable_people: boolean;
     meme_mode: boolean;
+    write_location_to_files: boolean;
     is_docker: boolean;
     is_binary: boolean;
     domain: string;
@@ -581,6 +616,8 @@ export interface AppConfig {
   video: {
     auto_scene_detection: boolean;
     max_frames_per_video: number;
+    convert_on_the_fly: boolean;
+    auto_convert: VideoConversionMode;
   };
   processors: {
     exif_processor_active: boolean;

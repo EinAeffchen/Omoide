@@ -5,7 +5,7 @@ import shutil
 import sys
 from enum import Enum
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, PlainSerializer, computed_field, field_validator
 
@@ -173,6 +173,10 @@ class GeneralSettings(BaseModel):
     # Prefer GPU acceleration when available.
     # Maximum nodes to request for the person relationship graph
     person_relationship_max_nodes: int = 100
+    # Write locations set in the map editor into the media file's EXIF data.
+    # When off they are only stored in Omoide's database (works for read-only
+    # media directories too).
+    write_location_to_files: bool = True
     # Which host the system runs on. Mostly only relevant if hosted online.
     domain: str = f"http://localhost:{port}"
     # Optional override to point at a specific ffmpeg binary
@@ -619,6 +623,9 @@ class EventSettings(BaseModel):
     preserve_renamed_on_rebuild: bool = True
 
 
+VideoConversionMode = Literal["off", "keep_original", "replace_original"]
+
+
 class VideoSettings(BaseModel):
     """These settings control the video processing. By default we automatically
     detect scenes in a video and retrieve thumbnails for the scene overlay
@@ -634,6 +641,13 @@ class VideoSettings(BaseModel):
     # scene length used here the precision loss is negligible. 0 = analyze
     # every frame.
     scene_detection_frame_skip: int = 2
+    # Convert videos the browser cannot play (e.g. HEVC, AVI, WMV) with ffmpeg
+    # while they play. Leaves files untouched; seeking restarts the conversion.
+    convert_on_the_fly: bool = False
+    # Convert unplayable videos in the background after scans:
+    # "off"; "keep_original" stores a playable copy in Omoide's data folder;
+    # "replace_original" replaces the original file with the converted MP4.
+    auto_convert: VideoConversionMode = "off"
 
 
 class ContentProcessorSettings(BaseModel):

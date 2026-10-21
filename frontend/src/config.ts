@@ -78,6 +78,14 @@ const config = {
     return getBooleanEnvDefaultTrue(window.runtimeConfig?.VITE_GROUP_FACES_BY_VIDEO);
   },
 
+  /** Convert videos the browser cannot play while they play. */
+  get VIDEO_CONVERT_ON_THE_FLY(): boolean {
+    if (import.meta.env.DEV) {
+      return getBooleanEnv(import.meta.env.VITE_VIDEO_CONVERT_ON_THE_FLY);
+    }
+    return getBooleanEnv(window.runtimeConfig?.VIDEO_CONVERT_ON_THE_FLY);
+  },
+
   get APP_VERSION(): string {
     if (import.meta.env.DEV) {
       return import.meta.env.VITE_APP_VERSION ?? "dev";

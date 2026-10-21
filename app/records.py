@@ -7,6 +7,7 @@ from sqlalchemy import or_
 from sqlmodel import Session, delete, select, text, update
 
 from app.config import settings
+from app.conversion import existing_converted_copy
 from app.database import safe_commit
 from app.logger import logger
 from app.models import (
@@ -39,6 +40,9 @@ def delete_record(media_id, session: Session):
     thumb = Path(settings.general.thumb_dir / thumbnail)
     if thumb.is_file():
         to_unlink.append(thumb)
+    converted = existing_converted_copy(media.id)
+    if converted is not None:
+        to_unlink.append(converted)
     faces = session.exec(select(Face).where(Face.media_id == media.id)).all()
     affected_person_ids: set[int] = set()
     linked_person_ids = session.exec(

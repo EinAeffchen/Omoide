@@ -110,6 +110,14 @@ export default function GeneralSection({
             }
             description="Displays animated GIFs in grids by loading the original files."
           />
+          <SwitchSetting
+            label="Write Locations into Files"
+            checked={config.general.write_location_to_files}
+            onChange={(checked) =>
+              onValueChange("general", "write_location_to_files", checked)
+            }
+            description="Locations set in the map editor are also written into the photo's EXIF data. When off they are only stored in Omoide's database; the files stay untouched (this also works for read-only directories)."
+          />
         </FormGroup>
       </Grid>
       <Grid size={{ xs: 12, sm: 6 }}>

@@ -270,6 +270,12 @@ class ExifData(SQLModel, table=True):
     # GPS
     lat: float | None = Field(default=None, index=True)
     lon: float | None = Field(default=None, index=True)
+    # Set in the map editor rather than read from the file; survives
+    # re-running the EXIF processor (the file may not contain it).
+    location_set_manually: bool = Field(default=False)
+    # False while a forced EXIF re-run is pending for a row kept only for its
+    # manual location.
+    extracted: bool = Field(default=True)
 
     # reverse-geocoded place (filled by the geocode_places task)
     city: str | None = Field(default=None, index=True)

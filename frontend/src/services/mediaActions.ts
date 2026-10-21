@@ -1,9 +1,14 @@
-import { Media, Task } from "../types";
+import { VideoConversionMode, Media, Task } from "../types";
 import { apiFetch } from "./api";
 
-export const convertMedia = async (mediaId: number): Promise<Task> =>
+/** Convert one video. The caller must pick whether the original is kept. */
+export const convertMedia = async (
+  mediaId: number,
+  mode: Exclude<VideoConversionMode, "off">
+): Promise<Task> =>
   apiFetch<Task>(`/api/media/${mediaId}/converter`, {
     method: "POST",
+    body: { mode },
     errorMessage: "Failed to start conversion",
   });
 

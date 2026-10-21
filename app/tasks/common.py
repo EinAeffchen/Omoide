@@ -64,6 +64,8 @@ def create_and_run_task(
         "build_events",
         "geocode_places",
         "export_person_media",
+        "convert_media",
+        "convert_videos",
     ],
     callable_task: Callable[[str], None],
 ) -> ProcessingTask:

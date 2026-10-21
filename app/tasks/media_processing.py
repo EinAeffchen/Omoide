@@ -270,6 +270,21 @@ def run_media_processing_and_chain(task_id: str) -> None:
         from .person_clustering import run_person_clustering
 
         run_person_clustering(next_task.id)
+    if settings.video.auto_convert != "off":
+        logger.info(
+            "Converting unplayable videos (%s)...", settings.video.auto_convert
+        )
+        with Session(db.engine) as new_session:
+            convert_task = ProcessingTask(
+                task_type="convert_videos", total=0, processed=0
+            )
+            new_session.add(convert_task)
+            new_session.commit()
+            new_session.refresh(convert_task)
+
+        from .conversion import run_convert_unplayable_videos
+
+        run_convert_unplayable_videos(convert_task.id)
     logger.info("Task chain completed")
 
 

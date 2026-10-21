@@ -322,20 +322,20 @@ export default function MediaDetailPage() {
   };
 
   const closeDialog = () => setDialogType(null);
-  const confirmConvert = async () => {
+  const confirmConvert = async (mode: "keep_original" | "replace_original") => {
     if (!detail || !detail.media) return;
     try {
-      const t = await convertMedia(detail.media.id);
+      const t = await convertMedia(detail.media.id, mode);
       setTask(t);
       setSnackbar({
         open: true,
         message: "Conversion started",
         severity: "success",
       });
-    } catch {
+    } catch (err) {
       setSnackbar({
         open: true,
-        message: "Conversion failed",
+        message: err instanceof Error ? err.message : "Conversion failed",
         severity: "error",
       });
     } finally {
@@ -540,6 +540,7 @@ export default function MediaDetailPage() {
                     autoplay={shouldAutoplayVideo}
                     seekRequest={seekRequest}
                     onProgress={handleVideoProgress}
+                    convertedAvailable={detail.converted_available}
                   />
                 </Box>
                 {showSwipeHint && <SwipeHint />}

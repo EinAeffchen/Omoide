@@ -200,10 +200,46 @@ class ExifProcessor(MediaProcessor):
     def _has_record(self, media_id: int, session: Session) -> bool:
         return (
             session.exec(
-                select(ExifData).where(ExifData.media_id == media_id)
+                select(ExifData).where(
+                    ExifData.media_id == media_id, ExifData.extracted.is_(True)
+                )
             ).first()
             is not None
         )
+
+    @staticmethod
+    def _take_pending_manual_row(
+        media_id: int, session: Session
+    ) -> ExifData | None:
+        """Remove and return a row kept by reset_for_media for its manual
+        location, so a fresh extraction can be merged with it."""
+        row = session.exec(
+            select(ExifData).where(
+                ExifData.media_id == media_id, ExifData.extracted.is_(False)
+            )
+        ).first()
+        if row is not None:
+            session.delete(row)
+            session.flush()
+        return row
+
+    @staticmethod
+    def _restore_manual_location(
+        manual: ExifData | None, media_id: int, session: Session
+    ) -> None:
+        if manual is None:
+            return
+        rec = session.exec(
+            select(ExifData).where(ExifData.media_id == media_id)
+        ).first()
+        if rec is None:
+            rec = ExifData(media_id=media_id)
+        # A location set by hand wins over (or replaces missing) file GPS.
+        rec.lat, rec.lon = manual.lat, manual.lon
+        rec.location_set_manually = True
+        rec.extracted = True
+        session.add(rec)
+        safe_commit(session)
 
     def process(
         self,
@@ -213,6 +249,7 @@ class ExifProcessor(MediaProcessor):
     ):
         if self._has_record(media.id, session):
             return True
+        manual = self._take_pending_manual_row(media.id, session)
 
         fn = Path(media.filename)
         suffix = fn.suffix.lower()
@@ -227,16 +264,26 @@ class ExifProcessor(MediaProcessor):
             # instead of retrying it forever.
             session.add(ExifData(media_id=media.id))
             safe_commit(session)
+        self._restore_manual_location(manual, media.id, session)
         return True
 
     def get_pending_condition(self):
-        return Media.id.not_in(select(ExifData.media_id))
+        return Media.id.not_in(
+            select(ExifData.media_id).where(ExifData.extracted.is_(True))
+        )
 
     def reset_for_media(self, media: Media, session: Session) -> None:
         existing = session.exec(
             select(ExifData).where(ExifData.media_id == media.id)
         ).first()
-        if existing:
+        if not existing:
+            return
+        if existing.location_set_manually:
+            # The location may exist only in the database: keep it and mark
+            # the row for re-extraction instead of deleting it.
+            existing.extracted = False
+            session.add(existing)
+        else:
             session.delete(existing)
 
     def load_model(self):

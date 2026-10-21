@@ -572,6 +572,9 @@ async def spa_catch_all(full_path: str):
             bool(settings.general.enable_people)
         ),
         "VITE_API_MEME_MODE": _bool_to_js(bool(settings.general.meme_mode)),
+        "VIDEO_CONVERT_ON_THE_FLY": _bool_to_js(
+            bool(settings.video.convert_on_the_fly)
+        ),
         "VITE_API_EVENTS_ENABLED": _bool_to_js(
             bool(settings.events.events_enabled)
         ),

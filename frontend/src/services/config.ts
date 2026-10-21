@@ -64,6 +64,7 @@ export const reloadConfig = async (): Promise<AppConfig> => {
       PERSON_RELATIONSHIP_MAX_NODES: String(
         latest.general.person_relationship_max_nodes ?? 100
       ),
+      VIDEO_CONVERT_ON_THE_FLY: String(!!latest.video.convert_on_the_fly),
     } as RuntimeConfig;
 
     // Emit a lightweight event that components can listen to if they need

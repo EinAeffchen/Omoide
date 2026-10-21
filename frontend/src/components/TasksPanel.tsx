@@ -73,6 +73,8 @@ const TASK_LABELS: TaskLabels = {
   build_events: "Cluster Events",
   geocode_places: "Geocode Places",
   export_person_media: "Export Person Media",
+  convert_media: "Convert Video",
+  convert_videos: "Convert Unplayable Videos",
 };
 
 const PROCESSOR_ACTIONS = [
