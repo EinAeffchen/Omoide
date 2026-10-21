@@ -187,6 +187,15 @@ def commits_since_last_tag() -> list[str]:
 
 def release(target: str, dry_run: bool, assume_yes: bool) -> None:
     current = current_version()
+    # A previous run tagged the release but `make push` failed (e.g. Docker
+    # was not running): publishing is what is left, not a new version.
+    if target == "auto" and tag_exists(current):
+        pushed = git("ls-remote", "--tags", "origin", f"refs/tags/v{current}")
+        if not pushed:
+            sys.exit(
+                f"v{current} is tagged but not pushed yet. Run `make push` to "
+                "publish it, or pass V=patch|minor|major for a new release."
+            )
     version = next_version(current, target)
     if tag_exists(version):
         sys.exit(f"v{version} is already tagged.")
