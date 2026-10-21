@@ -7,6 +7,14 @@ User-facing changes per release. Add entries under "Unreleased" as you go;
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [0.7.6] - 2026-10-21
+
+### Added
+
 - Videos the browser can't play (e.g. HEVC, AVI, WMV) can be converted with ffmpeg: on the fly while playing, or automatically after scans into a playable copy or replacing the original (Configuration → Video).
 - Map editor: filter un-located media by folder and choose the order (recently added, date taken, folder & file name).
 - Map editor: folders and files Omoide can't write locations into are marked with a lock and the reason (read-only media directory, OS permissions, read-only drive).
